@@ -1,0 +1,308 @@
+<html>
+<link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
+
+<head>
+    <title>BOM Uploader</title>
+</head>
+
+<body>
+
+    <div class="w3-container">
+
+        <div id="assembly" class="w3-content w3-center">
+            <h1>Assembly Selection</h1>
+            If you do not see your assembly listed below, refresh your page in 5 seconds.<p>
+            <label for="epics">Assembly :</label>
+            <select name="epics" id="epics" onchange="epicChanged()">
+                <option value="0">Select assembly...</option>
+            </select>
+        </div>
+
+        <div id="stories" class="w3-content w3-center">
+            <h1>Jira Part List</h1>
+            <button class="w3-button w3-black" id="btn_updateFromCAD" onclick="updateFromCAD()" disabled>Update parts from CAD</button>
+            <button class="w3-button w3-black" id="btn_saveStories" onclick="saveStories()" disabled>Save changes</button>
+            <table id="story_table" class="w3-table">
+                <thead>
+                    <tr>
+                        <th>Key</th>
+                        <th>Qty</th>
+                        <th>Summary</th>
+                        <th>Material</th>
+                        <th>Machinery</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+
+</body>
+
+<script>
+
+let jira_base_url = 'https://jira.valor6800.com';
+
+let story_table = document.getElementById("story_table").getElementsByTagName('tbody')[0];
+
+function httpGET(url, cb) {
+    let xhttp = new XMLHttpRequest();
+    xhttp.onreadystatechange = cb;
+    xhttp.open("GET", url, true);
+    xhttp.send();
+}
+
+function httpPOST(url, data, cb) {
+    let xhttp = new XMLHttpRequest();
+    xhttp.onreadystatechange = cb;
+    xhttp.open("POST", url);
+    xhttp.setRequestHeader("Content-Type", "application/json");
+    xhttp.send(data);
+}
+
+function httpPUT(url, data, cb) {
+    let xhttp = new XMLHttpRequest();
+    xhttp.onreadystatechange = cb;
+    xhttp.open("PUT", url);
+    xhttp.setRequestHeader("Content-Type", "application/json");
+    xhttp.send(data);
+}
+
+function generateChangeLog(story, bom_item) {
+    let changes = { count: 0 };
+
+    if (story.quantity != bom_item.quantity) {
+        changes.count++;
+        changes.quantity = bom_item.quantity;
+    }
+
+    if (story.machinery != bom_item.machinery) {
+        changes.count ++;
+        changes.machinery = bom_item.machinery;
+    }
+
+    if (story.material != bom_item.material) {
+        changes.count++;
+        changes.material = bom_item.material;
+    }
+
+    return changes;
+}
+
+function getStatusBadge(status) {
+    let color = 'dark-grey';
+    if (status == 'New')
+        color = 'green';
+    if (status == 'Changes')
+        color = 'orange';
+    if (status == 'Updated')
+        color = 'blue';
+    return '<span class="w3-tag w3-' + color + ' w3-round-large w3-center">' + status + '</span></td>';
+}
+
+function getMachineryDropdown(partNumber, selected) {
+    let dropdown = `
+        <select id="${partNumber}-dropdown" onchange="machineryChanged(this)">
+            <option value="None">None</option>
+            <option value="CNC Mill">CNC Mill</option>
+            <option value="CNC Router">CNC Router</option>
+            <option value="Manual Mill">Manual Mill</option>
+            <option value="Manual Lathe">Manual Lathe</option>
+            <option value="3D Printer">3D Printer</option>
+            <option value="Manual">Manual</option>
+        </select>
+    `;
+    return dropdown;
+}
+
+function machineryChanged(selected) {
+    selected.parentElement.parentElement.cells[5].innerHTML = getStatusBadge('Changes');
+}
+
+function insertItemInTable(item) {
+    let row = story_table.insertRow(-1);
+    row.setAttribute('id', item.partNumber, 0);
+
+    let cell_key = row.insertCell(-1);
+    cell_key.innerHTML = '<a href="' + jira_base_url + '/browse/' + item.key + '">' + item.key + '</a>';
+
+    let cell_quantity = row.insertCell(-1);
+    cell_quantity.innerHTML = item.quantity;
+
+    let cell_summary = row.insertCell(-1);
+    cell_summary.innerHTML = item.summary;
+
+    let cell_material = row.insertCell(-1);
+    cell_material.innerHTML = item.material;
+
+    let cell_machinery = row.insertCell(-1);
+    cell_machinery.innerHTML = getMachineryDropdown(item.partNumber);
+    document.getElementById(item.partNumber + '-dropdown').value = item.machinery;
+
+    let status = 'Exists';
+    if (item.key == 'N/A')
+        status = 'New';
+
+    let cell_status = row.insertCell(-1);
+    cell_status.innerHTML = getStatusBadge(status);
+}
+
+function updateItemInTable(partNumber, changes) {
+    var row = document.getElementById(partNumber);
+    for (const [key, item] of Object.entries(changes)) {
+        if (key != 'count') {
+            if (key == 'quantity') {
+                row.cells[1].innerHTML = item;
+                row.cells[5].innerHTML = getStatusBadge('Changes');
+            }
+            // if (key == 'material') {
+            //     row.cells[3].innerHTML = item;
+            //     row.cells[5].innerHTML = getStatusBadge('Changes');
+            // }
+            // if (key == 'machinery') {
+            //     row.cells[4].innerHTML = getMachineryDropdown(partNumber);
+            //     document.getElementById(partNumber + '-dropdown').value = item;
+            //     row.cells[5].innerHTML = getStatusBadge('Changes');
+            // }
+        }
+    }
+}
+
+function updateFromCAD() {
+    document.getElementById("btn_updateFromCAD").disabled = true;
+
+    let epic = JSON.parse(document.getElementById("epics").value);
+
+    let documentId = epic.d;
+    let workspaceId = epic.w;
+    let elementId = epic.e;
+
+    httpGET('api/bom?documentId=' + documentId +
+                '&workspaceId=' + workspaceId +
+                '&elementId=' + elementId, function() {
+
+        if (this.readyState == 4 && this.status == 200) {
+            let bom_obj = JSON.parse(this.response);
+
+            for (const [key, item] of Object.entries(bom_obj)) {
+
+                let xhr = new XMLHttpRequest();
+                xhr.onreadystatechange = function() {
+                    if (xhr.readyState == 4 && xhr.status == 200) {
+                        let stories = JSON.parse(xhr.response);
+                        let item = this;
+
+                        // Jira ticket already exists for this BOM item
+                        if (stories.length > 0) {
+                            // Compare against previous ticket
+                            let changes = generateChangeLog(stories[0], item);
+                            if (changes.count > 0) {
+                                updateItemInTable(item.partNumber, changes);
+                            }
+
+                        // Create jira ticket
+                        } else {
+                            this.key = 'N/A'
+                            this.summary = '[' + this.partNumber + '] ' + this.name;
+                            insertItemInTable(this);
+                        }
+                    }
+                }.bind(item);
+                xhr.open("GET", 'api/stories?partNumber=' + item.partNumber, true);
+                xhr.send();
+            }
+            document.getElementById("btn_saveStories").disabled = false;
+        }
+    });
+}
+
+function jiraCreated(results) {
+    if (this.readyState == 4 && this.status == 200) {
+        let payload = JSON.parse(this.response);
+        var row = document.getElementById(payload.partNumber);
+        row.cells[0].innerHTML = '<a href="' + jira_base_url + '/browse/' + payload.key + '">' + payload.key + '</a>'
+        row.cells[5].innerHTML = getStatusBadge('Updated');
+    }
+}
+
+function jiraUpdated() {
+    if (this.readyState == 4 && this.status == 200) {
+        var row = document.getElementById(this.response);
+        row.cells[5].innerHTML = getStatusBadge('Updated');
+    }
+}
+
+function jiraNewStory(partNumber) {
+    let row = document.getElementById(partNumber);
+    let payload = {
+        epic: JSON.parse(document.getElementById("epics").value).key,
+        quantity: parseInt(row.cells[1].innerHTML),
+        summary: row.cells[2].innerHTML,
+        material: row.cells[3].innerHTML,
+        machinery: row.cells[4].childNodes[1].value
+    };
+    httpPOST('api/stories', JSON.stringify(payload), jiraCreated);
+}
+
+function jiraUpdateStory(partNumber, key) {
+    let row = document.getElementById(partNumber);
+    let payload = {
+        quantity: parseInt(row.cells[1].innerHTML),
+        summary: row.cells[2].innerHTML,
+        material: row.cells[3].innerHTML,
+        machinery: row.cells[4].childNodes[1].value
+    };
+    httpPUT('api/stories?key=' + key, JSON.stringify(payload), jiraUpdated);
+}
+
+function saveStories() {
+    for (var i = 0, row; row = story_table.rows[i]; i++) {
+
+        if (row.cells[5].innerHTML.includes('Changes')) {
+            jiraUpdateStory(row.id, row.cells[0].getElementsByTagName('a')[0].innerHTML);
+
+        } else if (row.cells[5].innerHTML.includes('New')) {
+            jiraNewStory(row.id);
+        }
+    }
+}
+
+function epicChanged() {
+    document.getElementById("btn_updateFromCAD").disabled = false;
+    document.getElementById("btn_saveStories").disabled = true;
+    story_table.innerHTML = "";
+
+    let selected_epic = JSON.parse(document.getElementById("epics").value).key;
+    httpGET('api/stories?key=' + selected_epic, function() {
+        if (this.readyState == 4 && this.status == 200) {
+            let results = JSON.parse(this.response);
+            for (var [key,value] of Object.entries(results)) {
+                value.partNumber = value.summary.substring(
+                    value.summary.indexOf("[") + 1, 
+                    value.summary.lastIndexOf("]")
+                );
+                insertItemInTable(value);
+            }
+        }
+    });
+}
+
+httpGET('api/epics', function() {
+    if (this.readyState == 4 && this.status == 200) {
+        let results = JSON.parse(this.response);
+        let dropdown = document.getElementById('epics');
+        for (var [key,value] of Object.entries(results)) {
+            let opt = document.createElement('option');
+            opt.value = JSON.stringify(value);
+            opt.text = value.summary;
+            dropdown.options.add(opt);
+        }
+    }
+});
+
+</script>
+
+</html>
