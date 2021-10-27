@@ -219,10 +219,13 @@
             const startDate = Date.parse("2021-04-01T00:00:00.000+00:00");
             for (var i in results.items) {
                 const createdAt = Date.parse(results.items[i].createdAt);
-                if (createdAt > startDate && /([0-9]{4})/.test(results.items[i].name)) {
+                if (!results.items[i].name.includes('[21F]'))
+                    continue;
+                let name = results.items[i].name.replace('[21F]', '');
+                if (createdAt > startDate && /([0-9]{4})/.test(name)) {
                     documents.push({
                         d: results.items[i].id,
-                        name: results.items[i].name,
+                        name: name,
                     });
                 }
             }
@@ -347,7 +350,7 @@
         }
 
         getDocuments(cb) {
-            this.onshape_httpGET('/api/documents?filter=9&owner=' + this.ONSHAPE_TEAM_ID + '&sortColumn=createdAt&sortOrder=desc',
+            this.onshape_httpGET('/api/documents?q=%5B21F%5D&filter=9&owner=' + this.ONSHAPE_TEAM_ID + '&sortColumn=createdAt&sortOrder=desc',
                                  this.parseDocuments.bind(cb));
         }
 
@@ -357,17 +360,17 @@
         }
 
         getAssemblies(d, w, cb) {
-            this.onshape_httpGET('/api/documents/d/' + d + '/w/' + w + '/elements?elementType=ASSEMBLY&withThumbnails=false',
+            this.onshape_httpGET('/api/documents/d/' + d + '/w/' + w + '/elements?elementType=ASSEMBLY',
                                  this.parseAssemblies.bind(cb));
         }
 
         syncEpics() {
             this.getDocuments(function(results) {
                 for (const [key, item] of Object.entries(results)) {
-                    this.d = item.d;
-                    this.getWorkspace(item.d, function(results) {
+                    let d = item.d;
+                    this.getWorkspace(d, function(results) {
                         this.w = results;
-                        this.getAssemblies(this.d, this.w, function(results) {
+                        this.ctx.getAssemblies(this.d, this.w, function(results) {
                             for (const [key, item] of Object.entries(results)) {
                                 this.e = item.e;
                                 let partNumber = item.name.substring(
@@ -375,7 +378,7 @@
                                     item.name.lastIndexOf("]")
                                 );
                                 this.name = item.name;
-                                this.getEpic(partNumber, function(results) {
+                                this.ctx.getEpic(partNumber, function(results) {
                                     if (Object.keys(results).length == 0) {
                                         let payload = {
                                             summary: this.name,
@@ -385,12 +388,12 @@
                                                 e: this.e
                                             })
                                         };
-                                        this.postEpic(payload, function(results) { });
+                                        this.ctx.postEpic(payload, function(results) { });
                                     }
                                 }.bind(this));
                             }
                         }.bind(this));
-                    }.bind(this));
+                    }.bind({ctx: this, d: d}));
                 }
             }.bind(this));
         }
