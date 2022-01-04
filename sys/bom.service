@@ -1,0 +1,10 @@
+[Unit]
+Description=Valor BOM uploader
+
+[Service]
+ExecStart=/home/mray/2021-bom-uploader/sys/runner.sh
+Restart=always
+WorkingDirectory=/home/mray/2021-bom-uploader
+
+[Install]
+WantedBy=multi-user.target
