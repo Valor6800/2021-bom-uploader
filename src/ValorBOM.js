@@ -292,6 +292,10 @@
                         part.machinery = 'CNC Router';
                         part.material = 'Wood';
                     }
+                    if (part.material.toLowerCase().includes('polycarbonate')) {
+                        part.machinery = 'CNC Router';
+                        part.material = 'Polycarbonate';
+                    }
                     if (part.material.toLowerCase().includes('7075')) {
                         part.machinery = 'Manual Lathe';
                         part.material = 'AL 7075';
