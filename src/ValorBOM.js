@@ -164,6 +164,7 @@
             };
             request(options, function (error, response) {
                 if (error) throw new Error(error);
+                console.log(response);
                 cb(JSON.parse(response.body));
             });
         }
@@ -180,6 +181,7 @@
             };
             request(options, function (error, response) {
                 if (error) throw new Error(error);
+                console.log(response);
                 cb();
             });
         }
@@ -434,9 +436,9 @@
                     "customfield_10700": {
                         "value": payload.material
                     },
-                    "customfield_10900": {
+                    "customfield_10900": [{
                         "value": payload.powdercoat
-                    }
+                    }]
                 }
             };
             this.jira_httpPOST('/rest/api/latest/issue', data, cb);
