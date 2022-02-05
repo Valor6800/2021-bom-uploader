@@ -192,7 +192,7 @@
                 let id = epic.id;
                 let summary = epic.fields.summary;
                 let description = JSON.parse(epic.fields.description);
-                if (description)
+                if (description && summary.includes('['))
                     epics[id] = {'summary': summary, 'key': key, 'd': description.d, 'w': description.w, 'e': description.e};
             }
             this(epics);
@@ -216,12 +216,12 @@
 
         parseDocuments(results) {
             let documents = [];
-            const startDate = Date.parse("2021-04-01T00:00:00.000+00:00");
+            const startDate = Date.parse("2022-01-01T00:00:00.000+00:00");
             for (var i in results.items) {
                 const createdAt = Date.parse(results.items[i].createdAt);
-                if (!results.items[i].name.includes('[21F]'))
+                if (!results.items[i].name.includes('[22S]'))
                     continue;
-                let name = results.items[i].name.replace('[21F]', '');
+                let name = results.items[i].name.replace('[22S]', '').trim();
                 if (createdAt > startDate && /([0-9]{4})/.test(name)) {
                     documents.push({
                         d: results.items[i].id,
@@ -241,10 +241,12 @@
             for (const [key, item] of Object.entries(results)) {
                 let valor_part = /([0-9]{4})/.test(item.name);
                 if (valor_part) {
-                    assemblies.push({
-                        e: item.id,
-                        name: item.name,
-                    });
+                    if (item.name.includes('[')) {
+                        assemblies.push({
+                            e: item.id,
+                            name: item.name,
+                        });
+                    }
                 }
             }
             this(assemblies);
@@ -358,7 +360,7 @@
         }
 
         getDocuments(cb) {
-            this.onshape_httpGET('/api/documents?q=%5B21F%5D&filter=9&owner=' + this.ONSHAPE_TEAM_ID + '&sortColumn=createdAt&sortOrder=desc',
+            this.onshape_httpGET('/api/documents?q=%5B22S%5D&filter=9&owner=' + this.ONSHAPE_TEAM_ID + '&sortColumn=createdAt&sortOrder=desc',
                                  this.parseDocuments.bind(cb));
         }
 
@@ -375,35 +377,39 @@
         syncEpics() {
             this.getDocuments(function(results) {
                 for (const [key, item] of Object.entries(results)) {
-                    let d = item.d;
-                    this.getWorkspace(d, function(results) {
-                        this.w = results;
-                        this.ctx.getAssemblies(this.d, this.w, function(results) {
+                    let worker1 = {};
+                    worker1.d = item.d;
+                    this.ctx.getWorkspace(worker1.d, function(results) {
+                        let worker2 = {d: this.worker.d};
+                        worker2.w = results;
+                        this.ctx.getAssemblies(worker2.d, worker2.w, function(results) {
                             for (const [key, item] of Object.entries(results)) {
-                                this.e = item.e;
+                                let worker3 = {d: this.worker.d, w: this.worker.w};
+                                worker3.e = item.e;
                                 let partNumber = item.name.substring(
                                     item.name.indexOf("[") + 1, 
                                     item.name.lastIndexOf("]")
                                 );
-                                this.name = item.name;
+                                worker3.name = item.name;
                                 this.ctx.getEpic(partNumber, function(results) {
                                     if (Object.keys(results).length == 0) {
                                         let payload = {
-                                            summary: this.name,
+                                            summary: this.worker.name,
                                             description: JSON.stringify({
-                                                d: this.d,
-                                                w: this.w,
-                                                e: this.e
+                                                d: this.worker.d,
+                                                w: this.worker.w,
+                                                e: this.worker.e
                                             })
                                         };
+                                        console.log('NEW EPIC', payload);
                                         this.ctx.postEpic(payload, function(results) { });
                                     }
-                                }.bind(this));
+                                }.bind({ctx: this.ctx, worker: worker3}));
                             }
-                        }.bind(this));
-                    }.bind({ctx: this, d: d}));
+                        }.bind({ctx: this.ctx, worker: worker2}));
+                    }.bind({ctx: this.ctx, worker: worker1}));
                 }
-            }.bind(this));
+            }.bind({ctx: this}));
         }
 
         postStory(payload, cb) {
