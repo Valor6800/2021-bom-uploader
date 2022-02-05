@@ -30,6 +30,7 @@
                         <th>Summary</th>
                         <th>Material</th>
                         <th>Machinery</th>
+                        <th>Powdercoat</th>
                         <th>Status</th>
                     </tr>
                 </thead>
@@ -89,6 +90,11 @@ function generateChangeLog(story, bom_item) {
         changes.material = bom_item.material;
     }
 
+    if (story.powdercoat != bom_item.powdercoat) {
+        changes.count++;
+        changes.powdercoat = bom_item.powdercoat;
+    }
+
     return changes;
 }
 
@@ -105,7 +111,7 @@ function getStatusBadge(status) {
 
 function getMachineryDropdown(partNumber, selected) {
     let dropdown = `
-        <select id="${partNumber}-dropdown" onchange="machineryChanged(this)">
+        <select id="${partNumber}-machinery-dropdown" onchange="machineryChanged(this)">
             <option value="None">None</option>
             <option value="CNC Mill">CNC Mill</option>
             <option value="CNC Router">CNC Router</option>
@@ -118,8 +124,23 @@ function getMachineryDropdown(partNumber, selected) {
     return dropdown;
 }
 
+function getPowdercoatDropdown(partNumber, selected) {
+    let dropdown = `
+        <select id="${partNumber}-powdercoat-dropdown" onchange="powdercoatChanged(this)">
+            <option value="None">None</option>
+            <option value="Matte Black">Matte Black</option>
+            <option value="Glossy White">Glossy White</option>
+        </select>
+    `;
+    return dropdown;
+}
+
 function machineryChanged(selected) {
-    selected.parentElement.parentElement.cells[5].innerHTML = getStatusBadge('Changes');
+    selected.parentElement.parentElement.cells[6].innerHTML = getStatusBadge('Changes');
+}
+
+function powdercoatChanged(selected) {
+    selected.parentElement.parentElement.cells[6].innerHTML = getStatusBadge('Changes');
 }
 
 function insertItemInTable(item) {
@@ -140,7 +161,11 @@ function insertItemInTable(item) {
 
     let cell_machinery = row.insertCell(-1);
     cell_machinery.innerHTML = getMachineryDropdown(item.partNumber);
-    document.getElementById(item.partNumber + '-dropdown').value = item.machinery;
+    document.getElementById(item.partNumber + '-machinery-dropdown').value = item.machinery;
+
+    let cell_powdercoat = row.insertCell(-1);
+    cell_powdercoat.innerHTML = getPowdercoatDropdown(item.partNumber);
+    document.getElementById(item.partNumber + '-powdercoat-dropdown').value = item.powdercoat;
 
     let status = 'Exists';
     if (item.key == 'N/A')
@@ -156,17 +181,8 @@ function updateItemInTable(partNumber, changes) {
         if (key != 'count') {
             if (key == 'quantity') {
                 row.cells[1].innerHTML = item;
-                row.cells[5].innerHTML = getStatusBadge('Changes');
+                row.cells[6].innerHTML = getStatusBadge('Changes');
             }
-            // if (key == 'material') {
-            //     row.cells[3].innerHTML = item;
-            //     row.cells[5].innerHTML = getStatusBadge('Changes');
-            // }
-            // if (key == 'machinery') {
-            //     row.cells[4].innerHTML = getMachineryDropdown(partNumber);
-            //     document.getElementById(partNumber + '-dropdown').value = item;
-            //     row.cells[5].innerHTML = getStatusBadge('Changes');
-            // }
         }
     }
 }
@@ -224,14 +240,14 @@ function jiraCreated(results) {
         let payload = JSON.parse(this.response);
         var row = document.getElementById(payload.partNumber);
         row.cells[0].innerHTML = '<a href="' + jira_base_url + '/browse/' + payload.key + '">' + payload.key + '</a>'
-        row.cells[5].innerHTML = getStatusBadge('Updated');
+        row.cells[6].innerHTML = getStatusBadge('Updated');
     }
 }
 
 function jiraUpdated() {
     if (this.readyState == 4 && this.status == 200) {
         var row = document.getElementById(this.response);
-        row.cells[5].innerHTML = getStatusBadge('Updated');
+        row.cells[6].innerHTML = getStatusBadge('Updated');
     }
 }
 
@@ -242,7 +258,8 @@ function jiraNewStory(partNumber) {
         quantity: parseInt(row.cells[1].innerHTML),
         summary: row.cells[2].innerHTML,
         material: row.cells[3].innerHTML,
-        machinery: row.cells[4].childNodes[1].value
+        machinery: row.cells[4].childNodes[1].value,
+        powdercoat: row.cells[5].childNodes[1].value
     };
     httpPOST('api/stories', JSON.stringify(payload), jiraCreated);
 }
@@ -253,7 +270,8 @@ function jiraUpdateStory(partNumber, key) {
         quantity: parseInt(row.cells[1].innerHTML),
         summary: row.cells[2].innerHTML,
         material: row.cells[3].innerHTML,
-        machinery: row.cells[4].childNodes[1].value
+        machinery: row.cells[4].childNodes[1].value,
+        powdercoat: row.cells[5].childNodes[1].value
     };
     httpPUT('api/stories?key=' + key, JSON.stringify(payload), jiraUpdated);
 }
@@ -261,10 +279,10 @@ function jiraUpdateStory(partNumber, key) {
 function saveStories() {
     for (var i = 0, row; row = story_table.rows[i]; i++) {
 
-        if (row.cells[5].innerHTML.includes('Changes')) {
+        if (row.cells[6].innerHTML.includes('Changes')) {
             jiraUpdateStory(row.id, row.cells[0].getElementsByTagName('a')[0].innerHTML);
 
-        } else if (row.cells[5].innerHTML.includes('New')) {
+        } else if (row.cells[6].innerHTML.includes('New')) {
             jiraNewStory(row.id);
         }
     }

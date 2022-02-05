@@ -207,6 +207,7 @@
                     material: story.fields.customfield_10700.value,
                     summary: story.fields.summary,
                     machinery: story.fields.customfield_10200[0].value,
+                    powdercoat: story.fields.customfield_10900 ? story.fields.customfield_10900[0].value : 'None',
                     quantity: story.fields.customfield_10202,
                     project: story.fields.project.key
                 });
@@ -279,7 +280,8 @@
                         name: item.name,
                         partNumber: item.partNumber,
                         material: item.material.displayName,
-                        machinery: 'None'
+                        machinery: 'None',
+                        powdercoat: 'None'
                     };
                     if (part.material.toLowerCase().includes('6061')) {
                         part.machinery = 'CNC Router';
@@ -431,6 +433,9 @@
                     "customfield_10102": payload.epic,
                     "customfield_10700": {
                         "value": payload.material
+                    },
+                    "customfield_10900": {
+                        "value": payload.powdercoat
                     }
                 }
             };
@@ -466,7 +471,12 @@
                     "customfield_10202": payload.quantity,
                     "customfield_10700": {
                         "value": payload.material
-                    }
+                    },
+                    "customfield_10900": [
+                        {
+                        "value": payload.powdercoat
+                        }
+                    ]
                 }
             };
             this.jira_httpPUT('/rest/api/latest/issue/' + key, data, cb);

@@ -43,8 +43,7 @@ app.post('/api/stories', (req, res) => {
         req.body.summary.lastIndexOf("]")
     );
     bom.postStory(req.body, function(results) {
-    	console.log(results);
-	this.res.send({key: results.key, partNumber: this.partNumber});
+	   this.res.send({key: results.key, partNumber: this.partNumber});
     }.bind({res: res, partNumber: partNumber}));
 });
 
