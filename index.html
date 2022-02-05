@@ -166,7 +166,7 @@ function insertItemInTable(item) {
     let cell_powdercoat = row.insertCell(-1);
     cell_powdercoat.innerHTML = getPowdercoatDropdown(item.partNumber);
     document.getElementById(item.partNumber + '-powdercoat-dropdown').value = item.powdercoat;
-    if (!item.material.includes('AL'))
+    if (!item.material.includes('AL 6061'))
         document.getElementById(item.partNumber + '-powdercoat-dropdown').disabled = true;
 
     let status = 'Exists';
