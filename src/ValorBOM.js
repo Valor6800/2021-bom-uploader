@@ -283,6 +283,10 @@
                         part.machinery = 'CNC Router';
                         part.material = 'AL 6061';
                     }
+                    if (part.material.toLowerCase().includes('pla')) {
+                        part.machinery = '3D Printer';
+                        part.material = 'PLA';
+                    }
                     if (part.material.toLowerCase().includes('nylon')) {
                         part.machinery = '3D Printer';
                         part.material = 'Nylon';
@@ -294,7 +298,7 @@
                     }
                     if (part.material.toLowerCase().includes('polycarbonate')) {
                         part.machinery = 'CNC Router';
-                        part.material = 'Polycarbonate';
+                        part.material = 'Polycarb';
                     }
                     if (part.material.toLowerCase().includes('7075')) {
                         part.machinery = 'Manual Lathe';
