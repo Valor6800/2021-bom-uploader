@@ -131,7 +131,6 @@
             };
             request(options, function (error, response) {
                 if (error) throw new Error(error);
-                console.log(response);
                 cb(JSON.parse(response.body));
             });
 
@@ -164,7 +163,6 @@
             };
             request(options, function (error, response) {
                 if (error) throw new Error(error);
-                console.log(response);
                 cb(JSON.parse(response.body));
             });
         }
@@ -236,7 +234,14 @@
         }
 
         parseWorkspaces(results) {
-            this(results.find(o => o.name === 'Main').id);
+            let payload = [];
+            for (var key in results) {
+                payload.push({
+                    id: results[key].id,
+                    name: results[key].name
+                })
+            }
+            this(payload);
         }
 
         parseAssemblies(results) {
@@ -343,9 +348,9 @@
                          this.parseEpics.bind(cb));
         }
 
-        getEpic(partNumber, cb) {
+        getEpic(partNumber, branch, cb) {
             this.jira_httpGET('/rest/api/latest/search?jql=project = ' + this.project_key +
-                         ' AND issuetype = Epic AND text ~ "' + partNumber + '"',
+                         ' AND issuetype = Epic AND text ~ "' + partNumber + '" AND text ~ "' + branch + '"',
                          this.parseEpics.bind(cb));
         }
 
@@ -384,33 +389,37 @@
                     let worker1 = {};
                     worker1.d = item.d;
                     this.ctx.getWorkspace(worker1.d, function(results) {
-                        let worker2 = {d: this.worker.d};
-                        worker2.w = results;
-                        this.ctx.getAssemblies(worker2.d, worker2.w, function(results) {
-                            for (const [key, item] of Object.entries(results)) {
-                                let worker3 = {d: this.worker.d, w: this.worker.w};
-                                worker3.e = item.e;
-                                let partNumber = item.name.substring(
-                                    item.name.indexOf("[") + 1, 
-                                    item.name.lastIndexOf("]")
-                                );
-                                worker3.name = item.name;
-                                this.ctx.getEpic(partNumber, function(results) {
-                                    if (Object.keys(results).length == 0) {
-                                        let payload = {
-                                            summary: this.worker.name,
-                                            description: JSON.stringify({
-                                                d: this.worker.d,
-                                                w: this.worker.w,
-                                                e: this.worker.e
-                                            })
-                                        };
-                                        console.log('NEW EPIC', payload);
-                                        this.ctx.postEpic(payload, function(results) { });
-                                    }
-                                }.bind({ctx: this.ctx, worker: worker3}));
-                            }
-                        }.bind({ctx: this.ctx, worker: worker2}));
+                        for (const [key, item] of Object.entries(results)) {
+                            let worker2 = {d: this.worker.d};
+                            worker2.w = item.id;
+                            worker2.branch = item.name;
+                            this.ctx.getAssemblies(worker2.d, worker2.w, function(results) {
+                                for (const [key, item] of Object.entries(results)) {
+                                    let worker3 = {d: this.worker.d, w: this.worker.w, branch: this.worker.branch};
+                                    worker3.e = item.e;
+                                    let partNumber = item.name.substring(
+                                        item.name.indexOf("[") + 1, 
+                                        item.name.lastIndexOf("]")
+                                    );
+                                    worker3.partNumber = partNumber;
+                                    worker3.name = item.name;
+                                    this.ctx.getEpic(worker3.partNumber, worker3.branch, function(results) {
+                                        if (Object.keys(results).length == 0) {
+                                            let payload = {
+                                                summary: `(${this.worker.branch})${this.worker.name}`,
+                                                description: JSON.stringify({
+                                                    d: this.worker.d,
+                                                    w: this.worker.w,
+                                                    e: this.worker.e
+                                                })
+                                            };
+                                            console.log('NEW EPIC', payload);
+                                            this.ctx.postEpic(payload, function(results) { });
+                                        }
+                                    }.bind({ctx: this.ctx, worker: worker3}));
+                                }
+                            }.bind({ctx: this.ctx, worker: worker2}));
+                        }
                     }.bind({ctx: this.ctx, worker: worker1}));
                 }
             }.bind({ctx: this}));
