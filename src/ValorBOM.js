@@ -220,9 +220,9 @@
             const startDate = Date.parse("2022-01-01T00:00:00.000+00:00");
             for (var i in results.items) {
                 const createdAt = Date.parse(results.items[i].createdAt);
-                if (!results.items[i].name.includes('[22S]'))
+                if (!results.items[i].name.includes(`[${process.env.SEASON_ID}]`))
                     continue;
-                let name = results.items[i].name.replace('[22S]', '').trim();
+                let name = results.items[i].name.replace(`[${process.env.SEASON_ID}]`, '').trim();
                 if (createdAt > startDate && /([0-9]{4})/.test(name)) {
                     documents.push({
                         d: results.items[i].id,
@@ -369,7 +369,7 @@
         }
 
         getDocuments(cb) {
-            this.onshape_httpGET('/api/documents?q=%5B22S%5D&filter=9&owner=' + this.ONSHAPE_TEAM_ID + '&sortColumn=createdAt&sortOrder=desc',
+            this.onshape_httpGET(`/api/documents?q=%5B${process.env.SEASON_ID}%5D&filter=9&owner=${this.ONSHAPE_TEAM_ID}&sortColumn=createdAt&sortOrder=desc`,
                                  this.parseDocuments.bind(cb));
         }
 
