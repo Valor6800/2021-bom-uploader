@@ -179,7 +179,6 @@
             };
             request(options, function (error, response) {
                 if (error) throw new Error(error);
-                console.log(response);
                 cb();
             });
         }
@@ -343,26 +342,25 @@
         }
 
         getEpics(cb) {
-            this.jira_httpGET('/rest/api/latest/search?jql=project = ' + this.project_key +
+            this.jira_httpGET('/rest/api/latest/search?jql=project = ' + process.env.PROJECT_KEY +
                          ' AND issuetype = Epic',
                          this.parseEpics.bind(cb));
         }
 
         getEpic(partNumber, branch, cb) {
-            this.jira_httpGET('/rest/api/latest/search?jql=project = ' + this.project_key +
-                         ' AND issuetype = Epic AND text ~ "' + partNumber + '" AND text ~ "' + branch + '"',
+            this.jira_httpGET(`/rest/api/latest/search?jql = project=${process.env.PROJECT_KEY} AND issuetype = Epic AND text ~ "(${branch})" AND text ~ "${partNumber}"`,
                          this.parseEpics.bind(cb));
         }
 
         getStoriesByPartNumber(part_number, cb) {
-            this.jira_httpGET('/rest/api/latest/search?jql=project = ' + this.project_key +
+            this.jira_httpGET('/rest/api/latest/search?jql=project = ' + process.env.PROJECT_KEY +
                          ' AND summary ~ ' + part_number +
                          ' AND issuetype = Story',
                          this.parseStories.bind(cb));
         }
 
         getStoriesByEpic(id, cb) {
-            this.jira_httpGET('/rest/api/latest/search?jql=project = ' + this.project_key +
+            this.jira_httpGET('/rest/api/latest/search?jql=project = ' + process.env.PROJECT_KEY +
                          ' AND issuetype = Story' +
                          ' AND "Epic Link"=' + id,
                          this.parseStories.bind(cb));
