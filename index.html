@@ -22,6 +22,7 @@
             <h1>Jira Part List</h1>
             <button class="w3-button w3-black" id="btn_updateFromCAD" onclick="updateFromCAD()" disabled>Update parts from CAD</button>
             <button class="w3-button w3-black" id="btn_saveStories" onclick="saveStories()" disabled>Save changes</button>
+            <button class="w3-button w3-black" id="btn_duplicateToComp" onclick="duplicateToComp()" disabled>Make CompBot Version</button>
             <table id="story_table" class="w3-table">
                 <thead>
                     <tr>
@@ -31,6 +32,7 @@
                         <th>Material</th>
                         <th>Machinery</th>
                         <th>Powdercoat</th>
+                        <th>Thickness</th>
                         <th>Status</th>
                     </tr>
                 </thead>
@@ -95,6 +97,11 @@ function generateChangeLog(story, bom_item) {
         changes.powdercoat = bom_item.powdercoat;
     }
 
+    if (story.thickness != bom_item.thickness) {
+        changes.count++;
+        changes.thickness = bom_item.thickness;
+    }
+
     return changes;
 }
 
@@ -128,19 +135,37 @@ function getPowdercoatDropdown(partNumber, selected) {
     let dropdown = `
         <select id="${partNumber}-powdercoat-dropdown" onchange="powdercoatChanged(this)">
             <option value="None">None</option>
-            <option value="Matte Black">Matte Black</option>
-            <option value="Glossy White">Glossy White</option>
+            <option value="Black">Black</option>
+            <option value="Gold">Gold</option>
+        </select>
+    `;
+    return dropdown;
+}
+
+function getThicknessDropdown(partNumber, selected) {
+    let dropdown = `
+        <select id="${partNumber}-thickness-dropdown" onchange="thicknessChanged(this)">
+            <option value="None">None</option>
+            <option value="0.060">0.060</option>
+            <option value="0.090">0.090</option>
+            <option value="0.125">0.125</option>
+            <option value="0.1875">0.1875</option>
+            <option value="0.250">0.250</option>
         </select>
     `;
     return dropdown;
 }
 
 function machineryChanged(selected) {
-    selected.parentElement.parentElement.cells[6].innerHTML = getStatusBadge('Changes');
+    selected.parentElement.parentElement.cells[7].innerHTML = getStatusBadge('Changes');
 }
 
 function powdercoatChanged(selected) {
-    selected.parentElement.parentElement.cells[6].innerHTML = getStatusBadge('Changes');
+    selected.parentElement.parentElement.cells[7].innerHTML = getStatusBadge('Changes');
+}
+
+function thicknessChanged(selected) {
+    selected.parentElement.parentElement.cells[7].innerHTML = getStatusBadge('Changes');
 }
 
 function insertItemInTable(item) {
@@ -169,6 +194,12 @@ function insertItemInTable(item) {
     if (!item.material.includes('AL 6061'))
         document.getElementById(item.partNumber + '-powdercoat-dropdown').disabled = true;
 
+    let cell_thickness = row.insertCell(-1);
+    cell_thickness.innerHTML = getThicknessDropdown(item.partNumber);
+    document.getElementById(item.partNumber + '-thickness-dropdown').value = item.thickness;
+    if (!(item.material.includes('AL 6061') || item.material.includes('Polycarb') || item.material.includes('Wood')))
+        document.getElementById(item.partNumber + '-thickness-dropdown').disabled = true;
+
     let status = 'Exists';
     if (item.key == 'N/A')
         status = 'New';
@@ -183,7 +214,7 @@ function updateItemInTable(partNumber, changes) {
         if (key != 'count') {
             if (key == 'quantity') {
                 row.cells[1].innerHTML = item;
-                row.cells[6].innerHTML = getStatusBadge('Changes');
+                row.cells[7].innerHTML = getStatusBadge('Changes');
             }
         }
     }
@@ -242,14 +273,14 @@ function jiraCreated(results) {
         let payload = JSON.parse(this.response);
         var row = document.getElementById(payload.partNumber);
         row.cells[0].innerHTML = '<a href="' + jira_base_url + '/browse/' + payload.key + '">' + payload.key + '</a>'
-        row.cells[6].innerHTML = getStatusBadge('Updated');
+        row.cells[7].innerHTML = getStatusBadge('Updated');
     }
 }
 
 function jiraUpdated() {
     if (this.readyState == 4 && this.status == 200) {
         var row = document.getElementById(this.response);
-        row.cells[6].innerHTML = getStatusBadge('Updated');
+        row.cells[7].innerHTML = getStatusBadge('Updated');
     }
 }
 
@@ -261,7 +292,8 @@ function jiraNewStory(partNumber) {
         summary: row.cells[2].innerHTML,
         material: row.cells[3].innerHTML,
         machinery: row.cells[4].childNodes[1].value,
-        powdercoat: row.cells[5].childNodes[1].value
+        powdercoat: row.cells[5].childNodes[1].value,
+        thickness: row.cells[6].childNodes[1].value
     };
     httpPOST('api/stories', JSON.stringify(payload), jiraCreated);
 }
@@ -273,7 +305,8 @@ function jiraUpdateStory(partNumber, key) {
         summary: row.cells[2].innerHTML,
         material: row.cells[3].innerHTML,
         machinery: row.cells[4].childNodes[1].value,
-        powdercoat: row.cells[5].childNodes[1].value
+        powdercoat: row.cells[5].childNodes[1].value,
+        thickness: row.cells[6].childNodes[1].value
     };
     httpPUT('api/stories?key=' + key, JSON.stringify(payload), jiraUpdated);
 }
@@ -281,10 +314,10 @@ function jiraUpdateStory(partNumber, key) {
 function saveStories() {
     for (var i = 0, row; row = story_table.rows[i]; i++) {
 
-        if (row.cells[6].innerHTML.includes('Changes')) {
+        if (row.cells[7].innerHTML.includes('Changes')) {
             jiraUpdateStory(row.id, row.cells[0].getElementsByTagName('a')[0].innerHTML);
 
-        } else if (row.cells[6].innerHTML.includes('New')) {
+        } else if (row.cells[7].innerHTML.includes('New')) {
             jiraNewStory(row.id);
         }
     }
