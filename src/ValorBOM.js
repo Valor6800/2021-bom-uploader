@@ -1,5 +1,7 @@
 'use strict';
 
+const res = require('express/lib/response');
+
 (function() {
     var root = this;
 
@@ -208,6 +210,7 @@
                     machinery: story.fields.customfield_10200[0].value,
                     powdercoat: story.fields.customfield_10900 ? story.fields.customfield_10900[0].value : 'None',
                     quantity: story.fields.customfield_10202,
+                    thickness: story.fields.customfield_11001,
                     project: story.fields.project.key
                 });
             }
@@ -233,14 +236,7 @@
         }
 
         parseWorkspaces(results) {
-            let payload = [];
-            for (var key in results) {
-                payload.push({
-                    id: results[key].id,
-                    name: results[key].name
-                })
-            }
-            this(payload);
+            this(results.find(o => o.name === 'Main'));
         }
 
         parseAssemblies(results) {
@@ -249,10 +245,10 @@
                 let valor_part = /([0-9]{4})/.test(item.name);
                 if (valor_part) {
                     if (item.name.includes('[')) {
-                        assemblies.push({
-                            e: item.id,
-                            name: item.name,
-                        });
+                            assemblies.push({
+                                e: item.id,
+                                name: item.name,
+                            });
                     }
                 }
             }
@@ -286,6 +282,7 @@
                         name: item.name,
                         partNumber: item.partNumber,
                         material: item.material.displayName,
+                        thickness: 'None',
                         machinery: 'None',
                         powdercoat: 'None'
                     };
@@ -322,47 +319,32 @@
         }
 
         getSTL(documentId, workspaceId, elementId, partId, cb) {
-            // let partId = 'JHD';
-
-            let url = '/api/parts/d/' + documentId +
-                      '/w/' + workspaceId +
-                      '/e/' + elementId +
-                      '/partid/' + partId +
-                      '/stl/?grouping=true&scale=1.0&units=millimeter&mode=binary';
-
+            let url = `/api/parts/d/${documentId}/w/${workspaceId}/e/${elementId}/partid/${partId}/stl/?grouping=true&scale=1.0&units=millimeter&mode=binary`;
             this.onshape_httpEXPORT(url, cb);
         }
 
         getBOM(documentId, workspaceId, elementId, cb) {
-            let url = '/api/assemblies/d/' + documentId +
-                      '/w/' + workspaceId +
-                      '/e/' + elementId +
-                      '/bom?indented=false';
+            let url = `/api/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom?multiLevel=true`;
             this.onshape_httpGET(url, this.parseBOM.bind(cb));
         }
 
         getEpics(cb) {
-            this.jira_httpGET('/rest/api/latest/search?jql=project = ' + process.env.PROJECT_KEY +
-                         ' AND issuetype = Epic',
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Epic`,
                          this.parseEpics.bind(cb));
         }
 
-        getEpic(partNumber, branch, cb) {
-            this.jira_httpGET(`/rest/api/latest/search?jql = project=${process.env.PROJECT_KEY} AND issuetype = Epic AND text ~ "(${branch})" AND text ~ "${partNumber}"`,
+        getEpic(partNumber, cb) {
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Epic AND text ~ "${partNumber}"`,
                          this.parseEpics.bind(cb));
         }
 
         getStoriesByPartNumber(part_number, cb) {
-            this.jira_httpGET('/rest/api/latest/search?jql=project = ' + process.env.PROJECT_KEY +
-                         ' AND summary ~ ' + part_number +
-                         ' AND issuetype = Story',
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND summary ~ ${part_number} AND issuetype = Story`,
                          this.parseStories.bind(cb));
         }
 
         getStoriesByEpic(id, cb) {
-            this.jira_httpGET('/rest/api/latest/search?jql=project = ' + process.env.PROJECT_KEY +
-                         ' AND issuetype = Story' +
-                         ' AND "Epic Link"=' + id,
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Story AND "Epic Link"=${id}`,
                          this.parseStories.bind(cb));
         }
 
@@ -372,12 +354,12 @@
         }
 
         getWorkspace(d, cb) {
-            this.onshape_httpGET('/api/documents/d/' + d + '/workspaces',
+            this.onshape_httpGET(`/api/documents/d/${d}/workspaces`,
                                  this.parseWorkspaces.bind(cb));
         }
 
         getAssemblies(d, w, cb) {
-            this.onshape_httpGET('/api/documents/d/' + d + '/w/' + w + '/elements?elementType=ASSEMBLY',
+            this.onshape_httpGET(`/api/documents/d/${d}/w/${w}/elements?elementType=ASSEMBLY`,
                                  this.parseAssemblies.bind(cb));
         }
 
@@ -386,38 +368,37 @@
                 for (const [key, item] of Object.entries(results)) {
                     let worker1 = {};
                     worker1.d = item.d;
-                    this.ctx.getWorkspace(worker1.d, function(results) {
-                        for (const [key, item] of Object.entries(results)) {
-                            let worker2 = {d: this.worker.d};
-                            worker2.w = item.id;
-                            worker2.branch = item.name;
-                            this.ctx.getAssemblies(worker2.d, worker2.w, function(results) {
-                                for (const [key, item] of Object.entries(results)) {
-                                    let worker3 = {d: this.worker.d, w: this.worker.w, branch: this.worker.branch};
-                                    worker3.e = item.e;
-                                    let partNumber = item.name.substring(
-                                        item.name.indexOf("[") + 1, 
-                                        item.name.lastIndexOf("]")
-                                    );
-                                    worker3.partNumber = partNumber;
-                                    worker3.name = item.name;
-                                    this.ctx.getEpic(worker3.partNumber, worker3.branch, function(results) {
-                                        if (Object.keys(results).length == 0) {
-                                            let payload = {
-                                                summary: `(${this.worker.branch})${this.worker.name}`,
-                                                description: JSON.stringify({
-                                                    d: this.worker.d,
-                                                    w: this.worker.w,
-                                                    e: this.worker.e
-                                                })
-                                            };
-                                            console.log('NEW EPIC', payload);
-                                            this.ctx.postEpic(payload, function(results) { });
-                                        }
-                                    }.bind({ctx: this.ctx, worker: worker3}));
-                                }
-                            }.bind({ctx: this.ctx, worker: worker2}));
-                        }
+                    this.ctx.getWorkspace(worker1.d, function(item) {
+                        if (!item) return;
+                        let worker2 = {d: this.worker.d};
+                        worker2.w = item.id;
+                        this.ctx.getAssemblies(worker2.d, worker2.w, function(results) {
+                            for (const [key, item] of Object.entries(results)) {
+                                let worker3 = {d: this.worker.d, w: this.worker.w};
+                                worker3.e = item.e;
+                                let partNumber = item.name.substring(
+                                    item.name.indexOf("[") + 1, 
+                                    item.name.lastIndexOf("]")
+                                );
+                                worker3.partNumber = partNumber;
+                                worker3.name = item.name;
+                                this.ctx.getEpic(worker3.partNumber, function(results) {
+                                    if (Object.keys(results).length == 0) {
+                                        let payload = {
+                                            summary: this.worker.name,
+                                            description: JSON.stringify({
+                                                d: this.worker.d,
+                                                w: this.worker.w,
+                                                e: this.worker.e
+                                            })
+                                        };
+                                        this.ctx.postEpic(payload, function(results) {
+                                            console.log("CREATE EPIC", results)
+                                        });
+                                    }
+                                }.bind({ctx: this.ctx, worker: worker3}));
+                            }
+                        }.bind({ctx: this.ctx, worker: worker2}));
                     }.bind({ctx: this.ctx, worker: worker1}));
                 }
             }.bind({ctx: this}));
@@ -442,6 +423,9 @@
                     "customfield_10102": payload.epic,
                     "customfield_10700": {
                         "value": payload.material
+                    },
+                    "customfield_11001": {
+                        "value": payload.thickness
                     },
                     "customfield_10900": [{
                         "value": payload.powdercoat
@@ -480,6 +464,9 @@
                     "customfield_10202": payload.quantity,
                     "customfield_10700": {
                         "value": payload.material
+                    },
+                    "customfield_11001": {
+                        "value": payload.thickness
                     },
                     "customfield_10900": [
                         {
