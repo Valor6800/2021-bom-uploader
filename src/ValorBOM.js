@@ -346,6 +346,8 @@ const res = require('express/lib/response');
                     itemNum = part.item.substring(0, part.item.lastIndexOf('.'));
                 if (itemNum > 0) {
                     part.epic = epics[itemNum].partNumber;
+                } else {
+                    part.epic = Math.round(parseInt(part.partNumber)/1000)*1000;
                 }
             }
 
