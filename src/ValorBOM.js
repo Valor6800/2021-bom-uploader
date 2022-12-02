@@ -460,14 +460,13 @@ const res = require('express/lib/response');
                     "customfield_10700": {
                         "value": payload.material
                     },
-                    "customfield_11003": {
-                        "value": payload.thickness
-                    },
                     "customfield_10900": [{
                         "value": payload.powdercoat
                     }]
                 }
             };
+            if (payload.thickness && payload.thickness != 'None')
+                data.fields['customfield_11003'] = {'value': payload.thickness};
             this.jira_httpPOST('/rest/api/latest/issue', data, cb);
         }
 
@@ -501,9 +500,6 @@ const res = require('express/lib/response');
                     "customfield_10700": {
                         "value": payload.material
                     },
-                    "customfield_11003": {
-                        "value": payload.thickness
-                    },
                     "customfield_10900": [
                         {
                         "value": payload.powdercoat
@@ -511,6 +507,8 @@ const res = require('express/lib/response');
                     ]
                 }
             };
+            if (payload.thickness && payload.thickness != 'None')
+                data.fields['customfield_11003'] = {'value': payload.thickness};
             this.jira_httpPUT('/rest/api/latest/issue/' + key, data, cb);
         }
 
