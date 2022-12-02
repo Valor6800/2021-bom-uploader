@@ -9,7 +9,7 @@
 
     <div class="w3-container">
 
-        <div id="assembly" class="w3-content w3-center">
+        <div id="assembly" class="w3-center">
             <h1>Assembly Selection</h1>
             If you do not see your assembly listed below, refresh your page in 5 seconds.<p>
             <label for="epics">Assembly :</label>
@@ -18,7 +18,7 @@
             </select>
         </div>
 
-        <div id="stories" class="w3-content w3-center">
+        <div id="stories" class="w3-center">
             <h1>Jira Part List</h1>
             <button class="w3-button w3-black" id="btn_updateFromCAD" onclick="updateFromCAD()" disabled>Update parts from CAD</button>
             <button class="w3-button w3-black" id="btn_saveStories" onclick="saveStories()" disabled>Save changes</button>
@@ -27,6 +27,7 @@
                 <thead>
                     <tr>
                         <th>Key</th>
+                        <th>Epic</th>
                         <th>Qty</th>
                         <th>Summary</th>
                         <th>Material</th>
@@ -47,9 +48,13 @@
 
 <script>
 
+let MASTER_COLUMNS = 9;
+
 let jira_base_url = 'https://jira.valor6800.com';
 
 let story_table = document.getElementById("story_table").getElementsByTagName('tbody')[0];
+
+let allEpics = {};
 
 function httpGET(url, cb) {
     let xhttp = new XMLHttpRequest();
@@ -157,15 +162,15 @@ function getThicknessDropdown(partNumber, selected) {
 }
 
 function machineryChanged(selected) {
-    selected.parentElement.parentElement.cells[7].innerHTML = getStatusBadge('Changes');
+    selected.parentElement.parentElement.cells[MASTER_COLUMNS - 1].innerHTML = getStatusBadge('Changes');
 }
 
 function powdercoatChanged(selected) {
-    selected.parentElement.parentElement.cells[7].innerHTML = getStatusBadge('Changes');
+    selected.parentElement.parentElement.cells[MASTER_COLUMNS - 1].innerHTML = getStatusBadge('Changes');
 }
 
 function thicknessChanged(selected) {
-    selected.parentElement.parentElement.cells[7].innerHTML = getStatusBadge('Changes');
+    selected.parentElement.parentElement.cells[MASTER_COLUMNS - 1].innerHTML = getStatusBadge('Changes');
 }
 
 function insertItemInTable(item) {
@@ -174,6 +179,9 @@ function insertItemInTable(item) {
 
     let cell_key = row.insertCell(-1);
     cell_key.innerHTML = '<a href="' + jira_base_url + '/browse/' + item.key + '">' + item.key + '</a>';
+
+    let epic = row.insertCell(-1);
+    epic.innerHTML = item.epic;
 
     let cell_quantity = row.insertCell(-1);
     cell_quantity.innerHTML = item.quantity;
@@ -195,6 +203,7 @@ function insertItemInTable(item) {
         document.getElementById(item.partNumber + '-powdercoat-dropdown').disabled = true;
 
     let cell_thickness = row.insertCell(-1);
+    console.log(item)
     cell_thickness.innerHTML = getThicknessDropdown(item.partNumber);
     document.getElementById(item.partNumber + '-thickness-dropdown').value = item.thickness;
     if (!(item.material.includes('AL 6061') || item.material.includes('Polycarb') || item.material.includes('Wood')))
@@ -213,8 +222,8 @@ function updateItemInTable(partNumber, changes) {
     for (const [key, item] of Object.entries(changes)) {
         if (key != 'count') {
             if (key == 'quantity') {
-                row.cells[1].innerHTML = item;
-                row.cells[7].innerHTML = getStatusBadge('Changes');
+                row.cells[2].innerHTML = item;
+                row.cells[MASTER_COLUMNS - 1].innerHTML = getStatusBadge('Changes');
             }
         }
     }
@@ -237,7 +246,6 @@ function updateFromCAD() {
             let bom_obj = JSON.parse(this.response);
 
             for (const [key, item] of Object.entries(bom_obj)) {
-
                 let xhr = new XMLHttpRequest();
                 xhr.onreadystatechange = function() {
                     if (xhr.readyState == 4 && xhr.status == 200) {
@@ -273,40 +281,41 @@ function jiraCreated(results) {
         let payload = JSON.parse(this.response);
         var row = document.getElementById(payload.partNumber);
         row.cells[0].innerHTML = '<a href="' + jira_base_url + '/browse/' + payload.key + '">' + payload.key + '</a>'
-        row.cells[7].innerHTML = getStatusBadge('Updated');
+        row.cells[MASTER_COLUMNS - 1].innerHTML = getStatusBadge('Updated');
     }
 }
 
 function jiraUpdated() {
     if (this.readyState == 4 && this.status == 200) {
         var row = document.getElementById(this.response);
-        row.cells[7].innerHTML = getStatusBadge('Updated');
+        row.cells[MASTER_COLUMNS - 1].innerHTML = getStatusBadge('Updated');
     }
 }
 
 function jiraNewStory(partNumber) {
     let row = document.getElementById(partNumber);
     let payload = {
-        epic: JSON.parse(document.getElementById("epics").value).key,
-        quantity: parseInt(row.cells[1].innerHTML),
-        summary: row.cells[2].innerHTML,
-        material: row.cells[3].innerHTML,
-        machinery: row.cells[4].childNodes[1].value,
-        powdercoat: row.cells[5].childNodes[1].value,
-        thickness: row.cells[6].childNodes[1].value
+        epic: allEpics[row.cells[1].innerHTML].key,
+        quantity: parseInt(row.cells[2].innerHTML),
+        summary: row.cells[3].innerHTML,
+        material: row.cells[4].innerHTML,
+        machinery: row.cells[5].childNodes[1].value,
+        powdercoat: row.cells[6].childNodes[1].value,
+        thickness: row.cells[7].childNodes[1].value
     };
+    console.log(payload)
     httpPOST('api/stories', JSON.stringify(payload), jiraCreated);
 }
 
 function jiraUpdateStory(partNumber, key) {
     let row = document.getElementById(partNumber);
     let payload = {
-        quantity: parseInt(row.cells[1].innerHTML),
-        summary: row.cells[2].innerHTML,
-        material: row.cells[3].innerHTML,
-        machinery: row.cells[4].childNodes[1].value,
-        powdercoat: row.cells[5].childNodes[1].value,
-        thickness: row.cells[6].childNodes[1].value
+        quantity: parseInt(row.cells[2].innerHTML),
+        summary: row.cells[3].innerHTML,
+        material: row.cells[4].innerHTML,
+        machinery: row.cells[5].childNodes[1].value,
+        powdercoat: row.cells[6].childNodes[1].value,
+        thickness: row.cells[7].childNodes[1].value
     };
     httpPUT('api/stories?key=' + key, JSON.stringify(payload), jiraUpdated);
 }
@@ -314,10 +323,10 @@ function jiraUpdateStory(partNumber, key) {
 function saveStories() {
     for (var i = 0, row; row = story_table.rows[i]; i++) {
 
-        if (row.cells[7].innerHTML.includes('Changes')) {
+        if (row.cells[MASTER_COLUMNS - 1].innerHTML.includes('Changes')) {
             jiraUpdateStory(row.id, row.cells[0].getElementsByTagName('a')[0].innerHTML);
 
-        } else if (row.cells[7].innerHTML.includes('New')) {
+        } else if (row.cells[MASTER_COLUMNS - 1].innerHTML.includes('New')) {
             jiraNewStory(row.id);
         }
     }
@@ -325,10 +334,9 @@ function saveStories() {
 
 function epicChanged() {
     document.getElementById("btn_updateFromCAD").disabled = false;
-    document.getElementById("btn_saveStories").disabled = true;
     story_table.innerHTML = "";
 
-    let selected_epic = JSON.parse(document.getElementById("epics").value).key;
+    let selected_epic = JSON.parse(document.getElementById("epics").value).partNumber;
     httpGET('api/stories?key=' + selected_epic, function() {
         if (this.readyState == 4 && this.status == 200) {
             let results = JSON.parse(this.response);
@@ -339,19 +347,22 @@ function epicChanged() {
                 );
                 insertItemInTable(value);
             }
+            document.getElementById("btn_saveStories").disabled = true;
         }
     });
 }
 
 httpGET('api/epics', function() {
     if (this.readyState == 4 && this.status == 200) {
-        let results = JSON.parse(this.response);
+        allEpics = JSON.parse(this.response);
         let dropdown = document.getElementById('epics');
-        for (var [key,value] of Object.entries(results)) {
-            let opt = document.createElement('option');
-            opt.value = JSON.stringify(value);
-            opt.text = value.summary;
-            dropdown.options.add(opt);
+        for (var [key,value] of Object.entries(allEpics)) {
+            if (value.isEpic) {
+                let opt = document.createElement('option');
+                opt.value = JSON.stringify(value);
+                opt.text = value.summary;
+                dropdown.options.add(opt);
+            }
         }
     }
 });

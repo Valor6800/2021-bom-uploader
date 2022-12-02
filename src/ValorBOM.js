@@ -192,9 +192,14 @@ const res = require('express/lib/response');
                 let key = epic.key;
                 let id = epic.id;
                 let summary = epic.fields.summary;
+                let partNumber = summary.substring(
+                    summary.indexOf("[") + 1, 
+                    summary.lastIndexOf("]")
+                );
+                let isEpic = Math.round(parseInt(partNumber)/1000)*1000 == parseInt(partNumber);
                 let description = JSON.parse(epic.fields.description);
                 if (description && summary.includes('['))
-                    epics[id] = {'summary': summary, 'key': key, 'd': description.d, 'w': description.w, 'e': description.e};
+                    epics[partNumber] = {'summary': summary, 'key': key, 'd': description.d, 'w': description.w, 'e': description.e, 'partNumber': partNumber, 'isEpic': isEpic};
             }
             this(epics);
         }
@@ -205,12 +210,13 @@ const res = require('express/lib/response');
                 let story = results.issues[i];
                 stories.push({
                     key: story.key,
+                    epic: 'N/A',
                     material: story.fields.customfield_10700.value,
                     summary: story.fields.summary,
                     machinery: story.fields.customfield_10200[0].value,
                     powdercoat: story.fields.customfield_10900 ? story.fields.customfield_10900[0].value : 'None',
                     quantity: story.fields.customfield_10202,
-                    thickness: story.fields.customfield_11001,
+                    thickness: story.fields.customfield_11003 ? story.fields.customfield_11003.value : 'None',
                     project: story.fields.project.key
                 });
             }
@@ -245,10 +251,16 @@ const res = require('express/lib/response');
                 let valor_part = /([0-9]{4})/.test(item.name);
                 if (valor_part) {
                     if (item.name.includes('[')) {
+                        let partNumber = item.name.substring(
+                            item.name.indexOf("[") + 1, 
+                            item.name.lastIndexOf("]")
+                        );
+                        if (Math.round(parseInt(partNumber)/1000)*1000 == parseInt(partNumber)) {
                             assemblies.push({
                                 e: item.id,
                                 name: item.name,
                             });
+                        }
                     }
                 }
             }
@@ -257,6 +269,7 @@ const res = require('express/lib/response');
 
         parseBOM(results) {
             let bom = { };
+            let epics = { };
 
             let found = results.bomTable.headers.some(el => el.propertyName === 'quantity') &
                         results.bomTable.headers.some(el => el.propertyName === 'partNumber') &
@@ -274,18 +287,22 @@ const res = require('express/lib/response');
             for (var i in items) {
                 let item = items[i];
 
-                let valor_part = /^([A-Z0-9]{5})$/.test(item.partNumber);
+                let valor_part =  /^([A-Z0-9]{5})$/.test(item.partNumber);
+                let valor_epic = /^([A-Z0-9]{4})$/.test(item.partNumber);
 
-                if (valor_part) {
+                if (valor_part || valor_epic) {
                     let part = {
                         quantity: item.quantity,
                         name: item.name,
                         partNumber: item.partNumber,
-                        material: item.material.displayName,
+                        material: 'None',
                         thickness: 'None',
                         machinery: 'None',
-                        powdercoat: 'None'
+                        powdercoat: 'None',
+                        item: item.item
                     };
+                    if (item.material.displayName)
+                        part.material = item.material.displayName;
                     if (part.material.toLowerCase().includes('6061')) {
                         part.machinery = 'CNC Router';
                         part.material = 'AL 6061';
@@ -311,7 +328,24 @@ const res = require('express/lib/response');
                         part.machinery = 'Manual Lathe';
                         part.material = 'AL 7075';
                     }
-                    bom[item.item] = part;
+
+                    if (valor_epic) {
+                        epics[item.item] = part;
+                    } else {
+                        if (item.partNumber in bom)
+                            bom[item.partNumber].quantity += part.quantity
+                        else
+                            bom[item.partNumber] = part;
+                    }
+                }
+            }
+
+            for (const [partNumber, part] of Object.entries(bom)) {
+                let itemNum = 0;
+                if (part.item.lastIndexOf('.') >= 0)
+                    itemNum = part.item.substring(0, part.item.lastIndexOf('.'));
+                if (itemNum > 0) {
+                    part.epic = epics[itemNum].partNumber;
                 }
             }
 
@@ -343,8 +377,8 @@ const res = require('express/lib/response');
                          this.parseStories.bind(cb));
         }
 
-        getStoriesByEpic(id, cb) {
-            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Story AND "Epic Link"=${id}`,
+        getStoriesByEpic(part_number, cb) {
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Story AND summary ~ "${parseInt(part_number/1000)}???? ?*"`,
                          this.parseStories.bind(cb));
         }
 
@@ -424,7 +458,7 @@ const res = require('express/lib/response');
                     "customfield_10700": {
                         "value": payload.material
                     },
-                    "customfield_11001": {
+                    "customfield_11003": {
                         "value": payload.thickness
                     },
                     "customfield_10900": [{
@@ -465,7 +499,7 @@ const res = require('express/lib/response');
                     "customfield_10700": {
                         "value": payload.material
                     },
-                    "customfield_11001": {
+                    "customfield_11003": {
                         "value": payload.thickness
                     },
                     "customfield_10900": [
