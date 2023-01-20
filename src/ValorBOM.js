@@ -211,7 +211,7 @@ const res = require('express/lib/response');
                 stories.push({
                     key: story.key,
                     epic: 'N/A',
-                    material: story.fields.customfield_10700.value,
+                    material: story.fields.customfield_10700 ? story.fields.customfield_10700.value : 'None',
                     summary: story.fields.summary,
                     machinery: story.fields.customfield_10200[0].value,
                     powdercoat: story.fields.customfield_10900 ? story.fields.customfield_10900[0].value : 'None',
@@ -344,7 +344,7 @@ const res = require('express/lib/response');
                 let itemNum = 0;
                 if (part.item.lastIndexOf('.') >= 0)
                     itemNum = part.item.substring(0, part.item.lastIndexOf('.'));
-                if (itemNum > 0) {
+                if (itemNum > 0 && epics[itemNum]) {
                     part.epic = epics[itemNum].partNumber;
                 } else {
                     part.epic = Math.round(parseInt(part.partNumber)/1000)*1000;
