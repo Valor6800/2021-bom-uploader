@@ -213,7 +213,7 @@ const res = require('express/lib/response');
                     epic: 'N/A',
                     material: story.fields.customfield_10700 ? story.fields.customfield_10700.value : 'None',
                     summary: story.fields.summary,
-                    machinery: story.fields.customfield_10200[0].value,
+                    machinery: story.fields.customfield_10200 ? story.fields.customfield_10200[0].value : 'None',
                     powdercoat: story.fields.customfield_10900 ? story.fields.customfield_10900[0].value : 'None',
                     quantity: story.fields.customfield_10202,
                     thickness: story.fields.customfield_11003 ? story.fields.customfield_11003.value : 'None',
