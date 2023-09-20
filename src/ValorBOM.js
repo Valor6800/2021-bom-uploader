@@ -144,7 +144,7 @@ const res = require('express/lib/response');
                 'url': this.jira_base_url + url,
                 'headers': {
                     'Content-Type': 'application/json',
-                    'Authorization': 'Basic ' + this.JIRA_KEY,
+                    'Authorization': 'Bearer ' + this.JIRA_KEY,
                 }
             };
             request(options, function (error, response) {
@@ -159,7 +159,7 @@ const res = require('express/lib/response');
               'url': this.jira_base_url + url,
               'headers': {
                 'Content-Type': 'application/json',
-                'Authorization': 'Basic ' + this.JIRA_KEY,
+                'Authorization': 'Bearer ' + this.JIRA_KEY,
               },
               body: JSON.stringify(data)
             };
@@ -175,7 +175,7 @@ const res = require('express/lib/response');
               'url': this.jira_base_url + url,
               'headers': {
                 'Content-Type': 'application/json',
-                'Authorization': 'Basic ' + this.JIRA_KEY,
+                'Authorization': 'Bearer ' + this.JIRA_KEY,
               },
               body: JSON.stringify(data)
             };
@@ -211,12 +211,12 @@ const res = require('express/lib/response');
                 stories.push({
                     key: story.key,
                     epic: 'N/A',
-                    material: story.fields.customfield_10700 ? story.fields.customfield_10700.value : 'None',
+                    material: story.fields['customfield_10202'] ? story.fields['customfield_10202'].value : 'None',
                     summary: story.fields.summary,
-                    machinery: story.fields.customfield_10200 ? story.fields.customfield_10200[0].value : 'None',
-                    powdercoat: story.fields.customfield_10900 ? story.fields.customfield_10900[0].value : 'None',
-                    quantity: story.fields.customfield_10202,
-                    thickness: story.fields.customfield_11003 ? story.fields.customfield_11003.value : 'None',
+                    machinery: story.fields['customfield_10201'] ? story.fields['customfield_10201'][0].value : 'None',
+                    powdercoat: story.fields['customfield_10204'] ? story.fields['customfield_10204'].value : 'None',
+                    quantity: story.fields['customfield_10206'],
+                    thickness: story.fields['customfield_10207'] ? story.fields['customfield_10207'].value : 'None',
                     project: story.fields.project.key
                 });
             }
@@ -225,7 +225,7 @@ const res = require('express/lib/response');
 
         parseDocuments(results) {
             let documents = [];
-            const startDate = Date.parse("2022-01-01T00:00:00.000+00:00");
+            const startDate = Date.parse("2023-01-01T00:00:00.000+00:00");
             for (var i in results.items) {
                 const createdAt = Date.parse(results.items[i].createdAt);
                 if (!results.items[i].name.includes(`[${process.env.SEASON_ID}]`))
@@ -365,22 +365,22 @@ const res = require('express/lib/response');
         }
 
         getEpics(cb) {
-            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Epic`,
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Assembly`,
                          this.parseEpics.bind(cb));
         }
 
         getEpic(partNumber, cb) {
-            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Epic AND text ~ "${partNumber}"`,
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Assembly AND text ~ "${partNumber}"`,
                          this.parseEpics.bind(cb));
         }
 
         getStoriesByPartNumber(part_number, cb) {
-            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND summary ~ ${part_number} AND issuetype = Story`,
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND summary ~ ${part_number} AND issuetype = Part`,
                          this.parseStories.bind(cb));
         }
 
         getStoriesByEpic(part_number, cb) {
-            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Story AND summary ~ "${parseInt(part_number/1000)}???? ?*"`,
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Part AND summary ~ "${parseInt(part_number/1000)}???? ?*"`,
                          this.parseStories.bind(cb));
         }
 
@@ -448,25 +448,24 @@ const res = require('express/lib/response');
                     },
                     "summary": payload.summary,
                     "issuetype": {
-                        "name": "Story"
+                        "name": "Part"
                     },
-                    "customfield_10200": [
+                    "customfield_10201": [
                         {
                             "value": payload.machinery
                         }
                     ],
-                    "customfield_10202": payload.quantity,
-                    "customfield_10102": payload.epic,
-                    "customfield_10700": {
+                    "customfield_10206": payload.quantity,
+                    "customfield_10110": payload.epic,
+                    "customfield_10202": {
                         "value": payload.material
-                    },
-                    "customfield_10900": [{
-                        "value": payload.powdercoat
-                    }]
+                    }
                 }
             };
+            if (payload.powdercoat && payload.powdercoat != 'None')
+                data.fields['customfield_10204'] = {'value': payload.powdercoat};
             if (payload.thickness && payload.thickness != 'None')
-                data.fields['customfield_11003'] = {'value': payload.thickness};
+                data.fields['customfield_10207'] = {'value': payload.thickness};
             this.jira_httpPOST('/rest/api/latest/issue', data, cb);
         }
 
@@ -478,7 +477,7 @@ const res = require('express/lib/response');
                     },
                     "summary": payload.summary,
                     "issuetype": {
-                        "name": "Epic"
+                        "name": "Assembly"
                     },
                     "customfield_10104": payload.summary,
                     "description": payload.description,
@@ -491,24 +490,21 @@ const res = require('express/lib/response');
             let data = {
                 "fields": {
                     "summary": payload.summary,
-                    "customfield_10200": [
+                    "customfield_10201": [
                         {
                             "value": payload.machinery
                         }
                     ],
-                    "customfield_10202": payload.quantity,
-                    "customfield_10700": {
+                    "customfield_10206": payload.quantity,
+                    "customfield_10202": {
                         "value": payload.material
-                    },
-                    "customfield_10900": [
-                        {
-                        "value": payload.powdercoat
-                        }
-                    ]
+                    }
                 }
             };
+            if (payload.powdercoat && payload.powdercoat != 'None')
+                data.fields['customfield_10204'] = {'value': payload.powdercoat};
             if (payload.thickness && payload.thickness != 'None')
-                data.fields['customfield_11003'] = {'value': payload.thickness};
+                data.fields['customfield_10207'] = {'value': payload.thickness};
             this.jira_httpPUT('/rest/api/latest/issue/' + key, data, cb);
         }
 
