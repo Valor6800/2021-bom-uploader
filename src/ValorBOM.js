@@ -196,7 +196,7 @@ const res = require('express/lib/response');
                     summary.indexOf("[") + 1, 
                     summary.lastIndexOf("]")
                 );
-                let isEpic = Math.round(parseInt(partNumber)/1000)*1000 == parseInt(partNumber);
+                let isEpic = Math.round(parseInt(partNumber)/100)*100 == parseInt(partNumber);
                 let description = JSON.parse(epic.fields.description);
                 if (description && summary.includes('['))
                     epics[partNumber] = {'summary': summary, 'key': key, 'd': description.d, 'w': description.w, 'e': description.e, 'partNumber': partNumber, 'isEpic': isEpic};
@@ -225,7 +225,7 @@ const res = require('express/lib/response');
 
         parseDocuments(results) {
             let documents = [];
-            const startDate = Date.parse("2023-01-01T00:00:00.000+00:00");
+            const startDate = Date.parse("2024-11-01T00:00:00.000+00:00");
             for (var i in results.items) {
                 const createdAt = Date.parse(results.items[i].createdAt);
                 if (!results.items[i].name.includes(`[${process.env.SEASON_ID}]`))
@@ -255,7 +255,7 @@ const res = require('express/lib/response');
                             item.name.indexOf("[") + 1, 
                             item.name.lastIndexOf("]")
                         );
-                        if (Math.round(parseInt(partNumber)/1000)*1000 == parseInt(partNumber)) {
+                        if (Math.round(parseInt(partNumber)/100)*100 == parseInt(partNumber)) {
                             assemblies.push({
                                 e: item.id,
                                 name: item.name,
@@ -347,10 +347,9 @@ const res = require('express/lib/response');
                 if (itemNum > 0 && epics[itemNum]) {
                     part.epic = epics[itemNum].partNumber;
                 } else {
-                    part.epic = Math.round(parseInt(part.partNumber)/1000)*1000;
+                    part.epic = Math.round(parseInt(part.partNumber)/100)*100;
                 }
             }
-
             this(bom);
         }
 
@@ -380,7 +379,7 @@ const res = require('express/lib/response');
         }
 
         getStoriesByEpic(part_number, cb) {
-            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Part AND summary ~ "${parseInt(part_number/1000)}???? ?*"`,
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Part AND summary ~ "${parseInt(part_number/100)}??? ?*"`,
                          this.parseStories.bind(cb));
         }
 
