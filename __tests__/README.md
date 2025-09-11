@@ -24,7 +24,40 @@ npm run test:watch
 
 # Run tests with coverage report
 npm run test:coverage
+
+# Run live integration tests (requires environment variables)
+npm run test:live
 ```
+
+## Live Integration Tests
+
+The test suite includes live integration tests that make actual HTTP calls to real endpoints. These tests are skipped by default and only run when explicitly enabled.
+
+To run the live tests:
+
+1. Copy `.env.example` to `.env` in the project root
+2. Fill in the environment variables with your actual API keys and credentials
+3. Run `npm run test:live`
+
+The live tests will verify that your API connections are working correctly and that the ValorBOM class can interact with the real Onshape and JIRA APIs.
+
+### Live Test Behavior
+
+The live tests have different behaviors depending on your configuration:
+
+1. **When `ENABLE_LIVE_TESTS=false` (default)**: All live tests are skipped completely.
+
+2. **When `ENABLE_LIVE_TESTS=true` but using placeholder credentials**:
+   - Tests are marked as skipped with a message indicating placeholder credentials are being used
+   - No actual API calls are made
+   - This is useful for verifying the test structure without making real API calls
+
+3. **When `ENABLE_LIVE_TESTS=true` and using real credentials**:
+   - Tests make actual API calls to the specified endpoints
+   - Tests validate the responses from the real APIs
+   - This is useful for verifying that your API connections are working correctly
+
+**Note:** Live tests with real credentials require valid API keys and internet connectivity. They may also incur API usage costs depending on your service agreements.
 
 ## Test Files
 
@@ -93,3 +126,21 @@ request.mockImplementation((options, callback) => {
 ## Coverage Reports
 
 Coverage reports are generated in the `coverage` directory when running `npm run test:coverage`. These reports show which parts of the code are covered by tests and which are not.
+
+## Test Types
+
+The test suite includes several types of tests:
+
+- **Unit Tests**: Test individual functions and methods in isolation
+- **Integration Tests**: Test multiple components working together with mocked external dependencies
+- **Live Integration Tests**: Test the system with real external dependencies (actual API calls)
+
+Each type of test serves a different purpose:
+
+| Test Type | File Pattern | Purpose | Dependencies |
+|-----------|--------------|---------|--------------|
+| Unit | `ValorBOM.*.test.js` | Test individual functions | Mocked |
+| Integration | `ValorBOM.integration.test.js` | Test workflows | Mocked |
+| Live | `ValorBOM.live.test.js` | Test real API connections | Real APIs |
+
+It's recommended to run the unit and integration tests during development and the live tests before deployment to ensure everything works with the real APIs.
