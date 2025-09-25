@@ -11,6 +11,18 @@
 
         <div id="assembly" class="w3-center">
             <h1>Assembly Selection</h1>
+            <label for="seasonTypes">Architecture :</label>
+            <select name="seasonTypes" id="seasonTypes" onchange="prereqChanged()">
+                <option value="R" selected>Robot</option>
+                <option value="F">Facility</option>
+                <option value="P" disabled>Prototype</option>
+            </select>
+            <label for="years">Year :</label>
+            <select name="years" id="years" onchange="prereqChanged()">
+                <option value="25">2025</option>
+                <option value="26" selected>2026</option>
+                <option value="27">2027</option>
+            </select>
             If you do not see your assembly listed below, refresh your page in 5 seconds.<p>
             <!-- <div class="danger" style="background-color: #ffdddd; border-left: 6px solid #f44336;">
                 <p><strong>PAY ATTENTION!</strong> The quantities are multiplied by 2 from CAD - we are building 2 robots. If you are building a 1-off part, change the number</p>
@@ -59,10 +71,6 @@ let MASTER_COLUMNS = 9;
 let BOT_MULTIPLIER = 1;
 
 let jira_base_url = 'https://jira.valor6800.com';
-
-let story_table = document.getElementById("story_table").getElementsByTagName('tbody')[0];
-
-let allEpics = {};
 
 function httpGET(url, cb) {
     let xhttp = new XMLHttpRequest();
@@ -129,16 +137,16 @@ function getStatusBadge(status) {
     return '<span class="w3-tag w3-' + color + ' w3-round-large w3-center">' + status + '</span></td>';
 }
 
-function getQuantityEditor(partNumber, selected) {
+function getQuantityEditor(fullPartNumber, selected) {
     let editor = `
-        <input type="number" size=3 id="${partNumber}-quantity-editor" onchange="quantityChanged(this)" />
+        <input type="number" size=3 id="${fullPartNumber}-quantity-editor" onchange="quantityChanged(this)" />
     `;
     return editor
 }
 
-function getMachineryDropdown(partNumber, selected) {
+function getMachineryDropdown(fullPartNumber, selected) {
     let dropdown = `
-        <select id="${partNumber}-machinery-dropdown" onchange="machineryChanged(this)">
+        <select id="${fullPartNumber}-machinery-dropdown" onchange="machineryChanged(this)">
             <option value="None">None</option>
             <option value="CNC Mill">CNC Mill</option>
             <option value="CNC Router">CNC Router</option>
@@ -151,9 +159,9 @@ function getMachineryDropdown(partNumber, selected) {
     return dropdown;
 }
 
-function getPowdercoatDropdown(partNumber, selected) {
+function getPowdercoatDropdown(fullPartNumber, selected) {
     let dropdown = `
-        <select id="${partNumber}-powdercoat-dropdown" onchange="powdercoatChanged(this)">
+        <select id="${fullPartNumber}-powdercoat-dropdown" onchange="powdercoatChanged(this)">
             <option value="None">None</option>
             <option value="Black">Black</option>
             <option value="Gold">Gold</option>
@@ -162,9 +170,9 @@ function getPowdercoatDropdown(partNumber, selected) {
     return dropdown;
 }
 
-function getThicknessDropdown(partNumber, selected) {
+function getThicknessDropdown(fullPartNumber, selected) {
     let dropdown = `
-        <select id="${partNumber}-thickness-dropdown" onchange="thicknessChanged(this)">
+        <select id="${fullPartNumber}-thickness-dropdown" onchange="thicknessChanged(this)">
             <option value="None">None</option>
             <option value="0.060">0.060</option>
             <option value="0.090">0.090</option>
@@ -197,8 +205,8 @@ function quantityChanged(selected) {
 }
 
 function insertItemInTable(item, multiplier) {
-    let row = story_table.insertRow(-1);
-    row.setAttribute('id', item.partNumber, 0);
+    let row = document.getElementById("story_table").getElementsByTagName('tbody')[0].insertRow(-1);
+    row.setAttribute('id', item.fullPartNumber, 0);
 
     let cell_key = row.insertCell(-1);
     cell_key.innerHTML = '<a href="' + jira_base_url + '/browse/' + item.key + '">' + item.key + '</a>';
@@ -207,8 +215,8 @@ function insertItemInTable(item, multiplier) {
     epic.innerHTML = item.epic;
 
     let cell_quantity = row.insertCell(-1);
-    cell_quantity.innerHTML = getQuantityEditor(item.partNumber);
-    document.getElementById(item.partNumber + '-quantity-editor').value = item.quantity * multiplier;
+    cell_quantity.innerHTML = getQuantityEditor(item.fullPartNumber);
+    document.getElementById(item.fullPartNumber + '-quantity-editor').value = item.quantity * multiplier;
 
     let cell_summary = row.insertCell(-1);
     cell_summary.innerHTML = item.summary;
@@ -217,21 +225,20 @@ function insertItemInTable(item, multiplier) {
     cell_material.innerHTML = item.material;
 
     let cell_machinery = row.insertCell(-1);
-    cell_machinery.innerHTML = getMachineryDropdown(item.partNumber);
-    document.getElementById(item.partNumber + '-machinery-dropdown').value = item.machinery;
+    cell_machinery.innerHTML = getMachineryDropdown(item.fullPartNumber);
+    document.getElementById(item.fullPartNumber + '-machinery-dropdown').value = item.machinery;
 
     let cell_powdercoat = row.insertCell(-1);
-    cell_powdercoat.innerHTML = getPowdercoatDropdown(item.partNumber);
-    document.getElementById(item.partNumber + '-powdercoat-dropdown').value = item.powdercoat;
+    cell_powdercoat.innerHTML = getPowdercoatDropdown(item.fullPartNumber);
+    document.getElementById(item.fullPartNumber + '-powdercoat-dropdown').value = item.powdercoat;
     if (!item.material.includes('AL 6061'))
-        document.getElementById(item.partNumber + '-powdercoat-dropdown').disabled = true;
+        document.getElementById(item.fullPartNumber + '-powdercoat-dropdown').disabled = true;
 
     let cell_thickness = row.insertCell(-1);
-    console.log(item)
-    cell_thickness.innerHTML = getThicknessDropdown(item.partNumber);
-    document.getElementById(item.partNumber + '-thickness-dropdown').value = item.thickness;
+    cell_thickness.innerHTML = getThicknessDropdown(item.fullPartNumber);
+    document.getElementById(item.fullPartNumber + '-thickness-dropdown').value = item.thickness;
     if (!(item.material.includes('AL 6061') || item.material.includes('Polycarb') || item.material.includes('Wood')))
-        document.getElementById(item.partNumber + '-thickness-dropdown').disabled = true;
+        document.getElementById(item.fullPartNumber + '-thickness-dropdown').disabled = true;
 
     let status = 'Exists';
     if (item.key == 'N/A')
@@ -241,8 +248,8 @@ function insertItemInTable(item, multiplier) {
     cell_status.innerHTML = getStatusBadge(status);
 }
 
-function updateItemInTable(partNumber, changes) {
-    var row = document.getElementById(partNumber);
+function updateItemInTable(fullPartNumber, changes) {
+    var row = document.getElementById(fullPartNumber);
     for (const [key, item] of Object.entries(changes)) {
         if (key != 'count') {
             if (key == 'quantity') {
@@ -262,7 +269,7 @@ function updateFromCAD() {
     let workspaceId = epic.w;
     let elementId = epic.e;
 
-    httpGET('api/bom?documentId=' + documentId +
+    httpGET('api/bom?epicKey=' + epic.key + '&documentId=' + documentId +
                 '&workspaceId=' + workspaceId +
                 '&elementId=' + elementId, function() {
 
@@ -281,18 +288,18 @@ function updateFromCAD() {
                             // Compare against previous ticket
                             let changes = generateChangeLog(stories[0], item);
                             if (changes.count > 0) {
-                                updateItemInTable(item.partNumber, changes);
+                                updateItemInTable(item.fullPartNumber, changes);
                             }
 
                         // Create jira ticket
                         } else {
                             this.key = 'N/A'
-                            this.summary = '[' + this.partNumber + '] ' + this.name;
+                            this.summary = this.fullPartNumber + ' ' + this.name;
                             insertItemInTable(this, BOT_MULTIPLIER);
                         }
                     }
                 }.bind(item);
-                xhr.open("GET", 'api/stories?partNumber=' + item.partNumber, true);
+                xhr.open("GET", 'api/stories?partNumber=' + item.fullPartNumber, true);
                 xhr.send();
             }
             document.getElementById("btn_saveStories").disabled = false;
@@ -303,7 +310,7 @@ function updateFromCAD() {
 function jiraCreated(results) {
     if (this.readyState == 4 && this.status == 200) {
         let payload = JSON.parse(this.response);
-        var row = document.getElementById(payload.partNumber);
+        var row = document.getElementById(payload.fullPartNumber);
         row.cells[0].innerHTML = '<a href="' + jira_base_url + '/browse/' + payload.key + '">' + payload.key + '</a>'
         row.cells[MASTER_COLUMNS - 1].innerHTML = getStatusBadge('Updated');
     }
@@ -316,10 +323,10 @@ function jiraUpdated() {
     }
 }
 
-function jiraNewStory(partNumber) {
-    let row = document.getElementById(partNumber);
+function jiraNewStory(fullPartNumber) {
+    let row = document.getElementById(fullPartNumber);
     let payload = {
-        epic: allEpics[row.cells[1].innerHTML].key,
+        epic: row.cells[1].innerHTML,
         quantity: parseInt(row.cells[2].lastElementChild.value),
         summary: row.cells[3].innerHTML,
         material: row.cells[4].innerHTML,
@@ -327,12 +334,11 @@ function jiraNewStory(partNumber) {
         powdercoat: row.cells[6].childNodes[1].value,
         thickness: row.cells[7].childNodes[1].value
     };
-    console.log(payload)
     httpPOST('api/stories', JSON.stringify(payload), jiraCreated);
 }
 
-function jiraUpdateStory(partNumber, key) {
-    let row = document.getElementById(partNumber);
+function jiraUpdateStory(fullPartNumber, key) {
+    let row = document.getElementById(fullPartNumber);
     let payload = {
         quantity: parseInt(row.cells[2].lastElementChild.value),
         summary: row.cells[3].innerHTML,
@@ -345,8 +351,8 @@ function jiraUpdateStory(partNumber, key) {
 }
 
 function saveStories() {
+    let story_table = document.getElementById("story_table").getElementsByTagName('tbody')[0];
     for (var i = 0, row; row = story_table.rows[i]; i++) {
-
         if (row.cells[MASTER_COLUMNS - 1].innerHTML.includes('Changes')) {
             jiraUpdateStory(row.id, row.cells[0].getElementsByTagName('a')[0].innerHTML);
 
@@ -356,19 +362,23 @@ function saveStories() {
     }
 }
 
+function prereqChanged() {
+    let selected_seasonType = document.getElementById("seasonTypes").value
+    let selected_year = document.getElementById("years").value
+    httpGET('api/sync?seasonType=' + selected_seasonType + '&year=' + selected_year, function() {});
+    httpGET('api/epics?seasonType=' + selected_seasonType + '&year=' + selected_year, updateEpics)
+    
+}
+
 function epicChanged() {
     document.getElementById("btn_updateFromCAD").disabled = false;
-    story_table.innerHTML = "";
+    document.getElementById("story_table").getElementsByTagName('tbody')[0].innerHTML = "";
 
-    let selected_epic = JSON.parse(document.getElementById("epics").value).partNumber;
-    httpGET('api/stories?key=' + selected_epic, function() {
+    let selected_epic = JSON.parse(document.getElementById("epics").value);
+    httpGET('api/stories?key=' + selected_epic.key, function() {
         if (this.readyState == 4 && this.status == 200) {
             let results = JSON.parse(this.response);
             for (var [key,value] of Object.entries(results)) {
-                value.partNumber = value.summary.substring(
-                    value.summary.indexOf("[") + 1, 
-                    value.summary.lastIndexOf("]")
-                );
                 insertItemInTable(value, 1);
             }
             document.getElementById("btn_saveStories").disabled = true;
@@ -376,9 +386,10 @@ function epicChanged() {
     });
 }
 
-httpGET('api/epics', function() {
+function updateEpics() {
     if (this.readyState == 4 && this.status == 200) {
-        allEpics = JSON.parse(this.response);
+        document.getElementById('epics').innerHTML = '<option value="0">Select assembly...</option>';
+        let allEpics = JSON.parse(this.response);
         let dropdown = document.getElementById('epics');
         for (var [key,value] of Object.entries(allEpics)) {
             if (value.isEpic) {
@@ -389,7 +400,11 @@ httpGET('api/epics', function() {
             }
         }
     }
-});
+}
+
+let selected_seasonType = document.getElementById("seasonTypes").value
+let selected_year = document.getElementById("years").value
+httpGET('api/epics?seasonType=' + selected_seasonType + '&year=' + selected_year, updateEpics)
 
 </script>
 

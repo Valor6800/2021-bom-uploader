@@ -18,7 +18,7 @@ function mockSuccessfulBOMRequest(customItems = []) {
       {
         item: '1',
         quantity: 2,
-        partNumber: 'B5678',
+        partNumber: 'VF27P-1031A',
         name: 'Test Part',
         material: { displayName: 'AL 6061' }
       }

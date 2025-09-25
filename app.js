@@ -16,11 +16,19 @@ app.use(bodyParser.json());
 
 app.get('/', function(req, res) {
     res.sendFile(path.join(__dirname + '/index.html'));
-    bom.syncEpics();
+    bom.syncEpics("R", "2026");
 });
 
+app.get('/api/sync', function(req,res) {
+    var seasonType = req.query.seasonType || "R" 
+    var year = req.query.year || "26"
+    bom.syncEpics(seasonType, year);
+})
+
 app.get('/api/epics', (req, res) => {
-    bom.getEpics(function(results) {
+    var seasonType = req.query.seasonType || "R" 
+    var year = req.query.year || "26"
+    bom.getEpics(seasonType, year, function(results) {
         this.send(results);
     }.bind(res));
 });
@@ -38,27 +46,21 @@ app.get('/api/stories', (req, res) => {
 });
 
 app.post('/api/stories', (req, res) => {
-    let partNumber = req.body.summary.substring(
-        req.body.summary.indexOf("[") + 1, 
-        req.body.summary.lastIndexOf("]")
-    );
+    let part = ValorBOM.applyPartMask(req.body.summary)
     bom.postStory(req.body, function(results) {
-	   this.res.send({key: results.key, partNumber: this.partNumber});
-    }.bind({res: res, partNumber: partNumber}));
+	   this.res.send({key: results.key, fullPartNumber: this.part.fullPartNumber});
+    }.bind({res: res, part: part}));
 });
 
 app.put('/api/stories', (req, res) => {
-    let partNumber = req.body.summary.substring(
-        req.body.summary.indexOf("[") + 1, 
-        req.body.summary.lastIndexOf("]")
-    );
+    let part = ValorBOM.applyPartMask(req.body.summary)
     bom.putStory(req.query.key, req.body, function() {
-        this.res.send(this.partNumber);
-    }.bind({res: res, partNumber: partNumber}));
+        this.res.send(this.part.fullPartNumber);
+    }.bind({res: res, part: part}));
 });
 
 app.get('/api/bom', (req, res) => {
-    bom.getBOM(req.query.documentId, req.query.workspaceId, req.query.elementId, function(results) {
+    bom.getBOM(req.query.epicKey, req.query.documentId, req.query.workspaceId, req.query.elementId, function(results) {
         this.send(results);
     }.bind(res));
 });

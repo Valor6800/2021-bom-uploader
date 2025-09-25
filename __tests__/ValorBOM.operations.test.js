@@ -27,7 +27,7 @@ describe('ValorBOM Operations', () => {
   describe('syncEpics', () => {
     it('should orchestrate the sync process correctly', () => {
       // Mock the getDocuments method
-      valorBOM.getDocuments = jest.fn((callback) => {
+      valorBOM.getDocuments = jest.fn((param1, param2, callback) => {
         callback([
           { d: 'doc123', name: '1234' }
         ]);
@@ -36,7 +36,7 @@ describe('ValorBOM Operations', () => {
       // Mock the getWorkspace method
       valorBOM.getWorkspace = jest.fn((documentId, callback) => {
         expect(documentId).toBe('doc123');
-        callback('ws456');
+        callback({ id: 'ws456', name: 'Main' });
       });
       
       // Mock the getAssemblies method
@@ -44,29 +44,27 @@ describe('ValorBOM Operations', () => {
         expect(documentId).toBe('doc123');
         expect(workspaceId).toBe('ws456');
         callback([
-          { e: 'elem789', name: 'Part [1234]' }
+          { e: 'elem789', name: 'VR25P-1234A Test', fullPartNumber: 'VR25P-1234A Test', description: 'VR25P-1234A Test', summary: 'VR25P-1234A Test'}
         ]);
       });
       
       // Mock the getEpic method
       valorBOM.getEpic = jest.fn((partNumber, callback) => {
-        expect(partNumber).toBe('1234');
+        expect(partNumber).toBe('VR25P-1234A Test');
         callback({});
       });
       
       // Mock the postEpic method
       valorBOM.postEpic = jest.fn((payload, callback) => {
-        expect(payload.summary).toBe('Part [1234]');
-        expect(JSON.parse(payload.description)).toEqual({
-          d: 'doc123',
-          w: 'ws456',
-          e: 'elem789'
-        });
+        expect(payload.summary).toBe('VR25P-1234A Test');
+        expect(payload.d).toEqual('doc123')
+        expect(payload.w).toEqual('ws456')
+        expect(payload.e).toEqual('elem789')
         callback({});
       });
       
       // Call the syncEpics method
-      valorBOM.syncEpics();
+      valorBOM.syncEpics("R", "25");
       
       // Verify that all methods were called
       expect(valorBOM.getDocuments).toHaveBeenCalled();
@@ -78,7 +76,7 @@ describe('ValorBOM Operations', () => {
 
     it('should not create epic if it already exists', () => {
       // Mock the getDocuments method
-      valorBOM.getDocuments = jest.fn((callback) => {
+      valorBOM.getDocuments = jest.fn((param1, param2, callback) => {
         callback([
           { d: 'doc123', name: '1234' }
         ]);
@@ -92,7 +90,7 @@ describe('ValorBOM Operations', () => {
       // Mock the getAssemblies method
       valorBOM.getAssemblies = jest.fn((documentId, workspaceId, callback) => {
         callback([
-          { e: 'elem789', name: 'Part [1234]' }
+          { e: 'elem789', name: 'VR25P-1234A Test' }
         ]);
       });
       
@@ -141,16 +139,16 @@ describe('ValorBOM Operations', () => {
           },
           summary: 'Test Story',
           issuetype: {
-            name: 'Story'
+            name: 'Part'
           },
-          customfield_10200: [
+          customfield_10201: [
             {
               value: 'CNC Router'
             }
           ],
-          customfield_10202: 2,
-          customfield_10102: 'EPIC-123',
-          customfield_10700: {
+          customfield_10206: 2,
+          customfield_10110: 'EPIC-123',
+          customfield_10202: {
             value: 'AL 6061'
           }
         }
@@ -190,7 +188,7 @@ describe('ValorBOM Operations', () => {
           },
           summary: 'Test Epic',
           issuetype: {
-            name: 'Epic'
+            name: 'Assembly'
           },
           customfield_10104: 'Test Epic',
           description: JSON.stringify({
@@ -230,13 +228,13 @@ describe('ValorBOM Operations', () => {
       const expectedData = {
         fields: {
           summary: 'Updated Story',
-          customfield_10200: [
+          customfield_10201: [
             {
               value: 'CNC Router'
             }
           ],
-          customfield_10202: 3,
-          customfield_10700: {
+          customfield_10206: 3,
+          customfield_10202: {
             value: 'AL 6061'
           }
         }

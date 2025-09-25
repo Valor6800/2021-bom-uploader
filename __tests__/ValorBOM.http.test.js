@@ -123,7 +123,7 @@ describe('ValorBOM HTTP Methods', () => {
         expect(options.method).toBe('GET');
         expect(options.url).toBe('https://jira.example.com/test-jira-url');
         expect(options.headers['Content-Type']).toBe('application/json');
-        expect(options.headers['Authorization']).toBe('Basic test_jira_key');
+        expect(options.headers['Authorization']).toBe('Bearer test_jira_key');
         
         // Simulate a successful response
         const response = {
@@ -163,7 +163,7 @@ describe('ValorBOM HTTP Methods', () => {
         expect(options.method).toBe('POST');
         expect(options.url).toBe('https://jira.example.com/test-jira-post-url');
         expect(options.headers['Content-Type']).toBe('application/json');
-        expect(options.headers['Authorization']).toBe('Basic test_jira_key');
+        expect(options.headers['Authorization']).toBe('Bearer test_jira_key');
         expect(options.body).toBe(JSON.stringify({ testData: 'post data' }));
         
         // Simulate a successful response
@@ -204,7 +204,7 @@ describe('ValorBOM HTTP Methods', () => {
         expect(options.method).toBe('PUT');
         expect(options.url).toBe('https://jira.example.com/test-jira-put-url');
         expect(options.headers['Content-Type']).toBe('application/json');
-        expect(options.headers['Authorization']).toBe('Basic test_jira_key');
+        expect(options.headers['Authorization']).toBe('Bearer test_jira_key');
         expect(options.body).toBe(JSON.stringify({ testData: 'put data' }));
         
         // Simulate a successful response

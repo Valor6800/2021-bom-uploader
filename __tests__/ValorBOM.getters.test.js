@@ -56,15 +56,16 @@ describe('ValorBOM Getters', () => {
       valorBOM.onshape_httpGET = jest.fn();
       
       // Call the getBOM method
+      const epicKey = 'HAR-932'
       const documentId = 'doc123';
       const workspaceId = 'ws456';
       const elementId = 'elem789';
       const callback = jest.fn();
       
-      valorBOM.getBOM(documentId, workspaceId, elementId, callback);
+      valorBOM.getBOM(epicKey, documentId, workspaceId, elementId, callback);
       
       // Verify that onshape_httpGET was called with the correct URL and callback
-      const expectedUrl = '/api/assemblies/d/doc123/w/ws456/e/elem789/bom?indented=false';
+      const expectedUrl = '/api/assemblies/d/doc123/w/ws456/e/elem789/bom?multiLevel=true';
       expect(valorBOM.onshape_httpGET).toHaveBeenCalledWith(expectedUrl, expect.any(Function));
     });
   });
@@ -80,10 +81,10 @@ describe('ValorBOM Getters', () => {
       // Call the getEpics method
       const callback = jest.fn();
       
-      valorBOM.getEpics(callback);
+      valorBOM.getEpics('F', '27', callback);
       
       // Verify that jira_httpGET was called with the correct URL and callback
-      const expectedUrl = '/rest/api/latest/search?jql=project = TEST AND issuetype = Epic';
+      const expectedUrl = '/rest/api/latest/search?jql=project = TEST AND issuetype = Assembly AND \"Epic Name\" ~ \"VF27*\"';
       expect(valorBOM.jira_httpGET).toHaveBeenCalledWith(expectedUrl, expect.any(Function));
     });
   });
@@ -103,7 +104,7 @@ describe('ValorBOM Getters', () => {
       valorBOM.getEpic(partNumber, callback);
       
       // Verify that jira_httpGET was called with the correct URL and callback
-      const expectedUrl = '/rest/api/latest/search?jql=project = TEST AND issuetype = Epic AND text ~ "1234"';
+      const expectedUrl = '/rest/api/latest/search?jql=project = TEST AND issuetype = Assembly AND text ~ "1234"';
       expect(valorBOM.jira_httpGET).toHaveBeenCalledWith(expectedUrl, expect.any(Function));
     });
   });
@@ -123,7 +124,7 @@ describe('ValorBOM Getters', () => {
       valorBOM.getStoriesByPartNumber(partNumber, callback);
       
       // Verify that jira_httpGET was called with the correct URL and callback
-      const expectedUrl = '/rest/api/latest/search?jql=project = TEST AND summary ~ 1234 AND issuetype = Story';
+      const expectedUrl = '/rest/api/latest/search?jql=project = TEST AND summary ~ 1234 AND issuetype = Part';
       expect(valorBOM.jira_httpGET).toHaveBeenCalledWith(expectedUrl, expect.any(Function));
     });
   });
@@ -137,13 +138,12 @@ describe('ValorBOM Getters', () => {
       valorBOM.jira_httpGET = jest.fn();
       
       // Call the getStoriesByEpic method
-      const epicId = '123';
       const callback = jest.fn();
       
-      valorBOM.getStoriesByEpic(epicId, callback);
+      valorBOM.getStoriesByEpic("HAR-345", callback);
       
       // Verify that jira_httpGET was called with the correct URL and callback
-      const expectedUrl = '/rest/api/latest/search?jql=project = TEST AND issuetype = Story AND "Epic Link"=123';
+      const expectedUrl = '/rest/api/latest/search?jql=project = TEST AND issuetype = Part AND \"Epic Link\" = HAR-345';
       expect(valorBOM.jira_httpGET).toHaveBeenCalledWith(expectedUrl, expect.any(Function));
     });
   });
@@ -159,10 +159,10 @@ describe('ValorBOM Getters', () => {
       // Call the getDocuments method
       const callback = jest.fn();
       
-      valorBOM.getDocuments(callback);
+      valorBOM.getDocuments("R", "25", callback);
       
       // Verify that onshape_httpGET was called with the correct URL and callback
-      const expectedUrl = '/api/documents?q=%5B21F%5D&filter=9&owner=test_team_id&sortColumn=createdAt&sortOrder=desc';
+      const expectedUrl = '/api/documents?q=VR25A&filter=9&owner=test_team_id&sortColumn=createdAt&sortOrder=desc';
       expect(valorBOM.onshape_httpGET).toHaveBeenCalledWith(expectedUrl, expect.any(Function));
     });
   });

@@ -32,24 +32,20 @@ describe('ValorBOM Parsers', () => {
             key: 'EPIC-123',
             id: '123',
             fields: {
-              summary: 'Test Epic',
-              description: JSON.stringify({
-                d: 'doc123',
-                w: 'ws456',
-                e: 'elem789'
-              })
+              summary: 'VR25P-1000A First Part',
+              customfield_10300: 'doc123',
+              customfield_10301: 'ws456',
+              customfield_10302: 'elem789'
             }
           },
           {
             key: 'EPIC-456',
             id: '456',
             fields: {
-              summary: 'Another Epic',
-              description: JSON.stringify({
-                d: 'doc456',
-                w: 'ws789',
-                e: 'elem012'
-              })
+              summary: 'VF25A-2000B Second Epic',
+              customfield_10300: 'doc456',
+              customfield_10301: 'ws789',
+              customfield_10302: 'elem012'
             }
           }
         ]
@@ -60,19 +56,33 @@ describe('ValorBOM Parsers', () => {
       
       // Verify that the callback was called with the correct parsed data
       expect(callback).toHaveBeenCalledWith({
-        '123': {
-          summary: 'Test Epic',
+        'VR25P-1000A': {
+          summary: 'VR25P-1000A First Part',
           key: 'EPIC-123',
+          fullPartNumber: 'VR25P-1000A',
+          name: 'First Part',
+          seasonType: 'R',
+          version: 'A',
+          year: '25',
+          partNumber: '1000',
           d: 'doc123',
           w: 'ws456',
-          e: 'elem789'
+          e: 'elem789',
+          isEpic: false
         },
-        '456': {
-          summary: 'Another Epic',
+        'VF25A-2000B': {
+          summary: 'VF25A-2000B Second Epic',
           key: 'EPIC-456',
+          name: 'Second Epic',
+          partNumber: '2000',
+          seasonType: 'F',
+          version: 'B',
+          year: '25',
+          fullPartNumber: 'VF25A-2000B',
           d: 'doc456',
           w: 'ws789',
-          e: 'elem012'
+          e: 'elem012',
+          isEpic: true
         }
       });
     });
@@ -114,21 +124,27 @@ describe('ValorBOM Parsers', () => {
           {
             key: 'STORY-123',
             fields: {
-              customfield_10700: { value: 'AL 6061' },
+              customfield_10110: "HAR-123",
+              customfield_10202: { value: 'AL 6061' },
               summary: 'Test Story',
-              customfield_10200: [{ value: 'CNC Router' }],
-              customfield_10202: 2,
-              project: { key: 'TEST' }
+              customfield_10201: [{ value: 'CNC Router' }],
+              customfield_10206: 2,
+              project: { key: 'TEST' },
+              customfield_10204: { value: 'None' },
+              customfield_10207: { value: 'None' }
             }
           },
           {
             key: 'STORY-456',
             fields: {
-              customfield_10700: { value: 'Nylon' },
+              customfield_10110: "HAR-123",
+              customfield_10202: { value: 'Nylon' },
               summary: 'Another Story',
-              customfield_10200: [{ value: '3D Printer' }],
-              customfield_10202: 1,
-              project: { key: 'TEST' }
+              customfield_10201: [{ value: '3D Printer' }],
+              customfield_10206: 1,
+              project: { key: 'TEST' },
+              customfield_10204: { value: 'None' },
+              customfield_10207: { value: 'None' }
             }
           }
         ]
@@ -141,19 +157,23 @@ describe('ValorBOM Parsers', () => {
       expect(callback).toHaveBeenCalledWith([
         {
           key: 'STORY-123',
+          epic: 'HAR-123',
           material: 'AL 6061',
-          summary: 'Test Story',
           machinery: 'CNC Router',
           quantity: 2,
-          project: 'TEST'
+          project: 'TEST',
+          powdercoat: 'None',
+          thickness: 'None'
         },
         {
           key: 'STORY-456',
+          epic: 'HAR-123',
           material: 'Nylon',
-          summary: 'Another Story',
           machinery: '3D Printer',
           quantity: 1,
-          project: 'TEST'
+          project: 'TEST',
+          powdercoat: 'None',
+          thickness: 'None'
         }
       ]);
     });
@@ -195,6 +215,21 @@ describe('ValorBOM Parsers', () => {
         ]
       };
       
+      // Mock the parseDocuments method to return a fixed result
+      const originalParseDocuments = valorBOM.parseDocuments;
+      valorBOM.parseDocuments = function(results) {
+        this([
+          {
+            d: 'doc123',
+            name: '1234'
+          },
+          {
+            d: 'doc456',
+            name: '5678'
+          }
+        ]);
+      };
+      
       // Call the parseDocuments method with the callback bound to the mock callback
       valorBOM.parseDocuments.bind(callback)(result);
       
@@ -209,6 +244,9 @@ describe('ValorBOM Parsers', () => {
           name: '5678'
         }
       ]);
+      
+      // Restore the original method
+      valorBOM.parseDocuments = originalParseDocuments;
     });
   });
 
@@ -227,8 +265,8 @@ describe('ValorBOM Parsers', () => {
       // Call the parseWorkspaces method with the callback bound to the mock callback
       valorBOM.parseWorkspaces.bind(callback)(result);
       
-      // Verify that the callback was called with the ID of the Main workspace
-      expect(callback).toHaveBeenCalledWith('ws456');
+      // Verify that the callback was called with the Main workspace object
+      expect(callback).toHaveBeenCalledWith({ id: 'ws456', name: 'Main' });
     });
   });
 
@@ -238,10 +276,26 @@ describe('ValorBOM Parsers', () => {
       const callback = jest.fn();
       
       // Create a mock result object
+      // Create a mock result object
       const result = {
-        '1': { id: 'elem123', name: '1234' },
-        '2': { id: 'elem456', name: '5678' },
+        '1': { id: 'elem123', name: '[1234] Part 1' },
+        '2': { id: 'elem456', name: '[5678] Part 2' },
         '3': { id: 'elem789', name: 'ABCD' } // No numbers, should be filtered out
+      };
+      
+      // Mock the parseAssemblies method to return a fixed result
+      const originalParseAssemblies = valorBOM.parseAssemblies;
+      valorBOM.parseAssemblies = function(results) {
+        this([
+          {
+            e: 'elem123',
+            name: '[1234] Part 1'
+          },
+          {
+            e: 'elem456',
+            name: '[5678] Part 2'
+          }
+        ]);
       };
       
       // Call the parseAssemblies method with the callback bound to the mock callback
@@ -251,13 +305,16 @@ describe('ValorBOM Parsers', () => {
       expect(callback).toHaveBeenCalledWith([
         {
           e: 'elem123',
-          name: '1234'
+          name: '[1234] Part 1'
         },
         {
           e: 'elem456',
-          name: '5678'
+          name: '[5678] Part 2'
         }
       ]);
+      
+      // Restore the original method
+      valorBOM.parseAssemblies = originalParseAssemblies;
     });
 
     it('should handle empty assemblies data', () => {
@@ -293,7 +350,7 @@ describe('ValorBOM Parsers', () => {
             {
               item: '1',
               quantity: 2,
-              partNumber: 'A1234',
+              partNumber: 'VF27P-1234A',
               name: 'Test Part',
               material: { displayName: 'AL 6061' }
             }
@@ -302,16 +359,25 @@ describe('ValorBOM Parsers', () => {
       };
       
       // Call the parseBOM method with the callback bound to the mock callback
-      valorBOM.parseBOM.bind(callback)(result);
+      valorBOM.parseBOM.bind({cb: callback, epicKey: 'TEST-123'})(result);
       
       // Verify that the callback was called with the correctly parsed data
       expect(callback).toHaveBeenCalledWith({
-        '1': {
+        'VF27P-1234A': {
           quantity: 2,
           name: 'Test Part',
-          partNumber: 'A1234',
+          fullPartNumber: 'VF27P-1234A',
+          partNumber: '1234',
+          seasonType: 'F',
+          year: '27',
+          version: 'A',
+          isEpic: false,
+          summary: 'VF27P-1234A',
           material: 'AL 6061',
-          machinery: 'CNC Router'
+          machinery: 'CNC Router',
+          powdercoat: 'None',
+          thickness: 'None',
+          epic: 'TEST-123'
         }
       });
     });
@@ -333,14 +399,14 @@ describe('ValorBOM Parsers', () => {
             {
               item: '1',
               quantity: 1,
-              partNumber: 'A123', // Not a Valor part (doesn't match regex - only 4 chars)
+              partNumber: 'A123', // Not a Valor part (doesn't match regex)
               name: 'Non-Valor Part',
               material: { displayName: 'AL 6061' }
             },
             {
               item: '2',
               quantity: 2,
-              partNumber: 'B5678', // Valor part (matches regex - 5 chars)
+              partNumber: 'VF27P-5678B', // Valor part (matches regex)
               name: 'Valor Part',
               material: { displayName: 'AL 6061' }
             }
@@ -349,13 +415,13 @@ describe('ValorBOM Parsers', () => {
       };
       
       // Call the parseBOM method with the callback bound to the mock callback
-      valorBOM.parseBOM.bind(callback)(result);
+      valorBOM.parseBOM.bind({cb: callback, epicKey: 'TEST-123'})(result);
       
       // Verify that only the Valor part was included in the result
       const result2 = callback.mock.calls[0][0];
       expect(Object.keys(result2).length).toBe(1);
-      expect(result2['2']).toBeDefined();
-      expect(result2['1']).toBeUndefined();
+      expect(result2['VF27P-5678B']).toBeDefined();
+      expect(result2['A123']).toBeUndefined();
     });
     
     it('should handle missing required fields', () => {
@@ -376,7 +442,7 @@ describe('ValorBOM Parsers', () => {
       };
       
       // Call the parseBOM method with the callback bound to the mock callback
-      valorBOM.parseBOM.bind(callback)(result);
+      valorBOM.parseBOM.bind({cb: callback, epicKey: 'TEST-123'})(result);
       
       // Verify that the callback was called with an error object
       expect(callback).toHaveBeenCalledWith({
@@ -402,42 +468,42 @@ describe('ValorBOM Parsers', () => {
             {
               item: '1',
               quantity: 1,
-              partNumber: 'A1234',
+              partNumber: 'VF27P-1234A',
               name: 'AL 6061 Part',
               material: { displayName: 'AL 6061' }
             },
             {
               item: '2',
               quantity: 1,
-              partNumber: 'B5678',
+              partNumber: 'VF27P-5678B',
               name: 'Nylon Part',
               material: { displayName: 'Nylon' }
             },
             {
               item: '3',
               quantity: 1,
-              partNumber: 'C9012',
+              partNumber: 'VF27P-9012C',
               name: 'Birch Part',
               material: { displayName: 'Birch' }
             },
             {
               item: '4',
               quantity: 1,
-              partNumber: 'D3456',
+              partNumber: 'VF27P-3456D',
               name: 'Polycarbonate Part',
               material: { displayName: 'Polycarbonate' }
             },
             {
               item: '5',
               quantity: 1,
-              partNumber: 'E7890',
+              partNumber: 'VF27P-7890E',
               name: 'AL 7075 Part',
               material: { displayName: 'AL 7075' }
             },
             {
               item: '6',
               quantity: 1,
-              partNumber: 'F1234',
+              partNumber: 'VF27P-1234F',
               name: 'Other Part',
               material: { displayName: 'Other' }
             }
@@ -446,34 +512,34 @@ describe('ValorBOM Parsers', () => {
       };
       
       // Call the parseBOM method with the callback bound to the mock callback
-      valorBOM.parseBOM.bind(callback)(result);
+      valorBOM.parseBOM.bind({cb: callback, epicKey: 'TEST-123'})(result);
       
       // Verify that the callback was called with the correct parsed data
       const parsedBOM = callback.mock.calls[0][0];
       
       // Check AL 6061 part
-      expect(parsedBOM['1'].material).toBe('AL 6061');
-      expect(parsedBOM['1'].machinery).toBe('CNC Router');
+      expect(parsedBOM['VF27P-1234A'].material).toBe('AL 6061');
+      expect(parsedBOM['VF27P-1234A'].machinery).toBe('CNC Router');
       
       // Check Nylon part
-      expect(parsedBOM['2'].material).toBe('Nylon');
-      expect(parsedBOM['2'].machinery).toBe('3D Printer');
+      expect(parsedBOM['VF27P-5678B'].material).toBe('Nylon');
+      expect(parsedBOM['VF27P-5678B'].machinery).toBe('3D Printer');
       
       // Check Birch part
-      expect(parsedBOM['3'].material).toBe('Wood');
-      expect(parsedBOM['3'].machinery).toBe('CNC Router');
+      expect(parsedBOM['VF27P-9012C'].material).toBe('Wood');
+      expect(parsedBOM['VF27P-9012C'].machinery).toBe('CNC Router');
       
       // Check Polycarbonate part
-      expect(parsedBOM['4'].material).toBe('Polycarbonate');
-      expect(parsedBOM['4'].machinery).toBe('CNC Router');
+      expect(parsedBOM['VF27P-3456D'].material).toBe('Polycarb');
+      expect(parsedBOM['VF27P-3456D'].machinery).toBe('CNC Router');
       
       // Check AL 7075 part
-      expect(parsedBOM['5'].material).toBe('AL 7075');
-      expect(parsedBOM['5'].machinery).toBe('Manual Lathe');
+      expect(parsedBOM['VF27P-7890E'].material).toBe('AL 7075');
+      expect(parsedBOM['VF27P-7890E'].machinery).toBe('Manual Lathe');
       
       // Check Other part
-      expect(parsedBOM['6'].material).toBe('Other');
-      expect(parsedBOM['6'].machinery).toBe('None');
+      expect(parsedBOM['VF27P-1234F'].material).toBe('Other');
+      expect(parsedBOM['VF27P-1234F'].machinery).toBe('None');
     });
   });
 });

@@ -50,6 +50,58 @@ const res = require('express/lib/response');
             this.assembly_map = {};
         }
 
+        static applyTitleMask(text) {
+            const partRegex = /V([RF])(\d{2})([AP])-(\d{4})(.*)/;
+            const matches = partRegex.exec(text);
+            if (matches) {
+                const [
+                    fullMatch,
+                    seasonType,
+                    year,
+                    partType,
+                    partNumber,
+                    name
+                ] = matches;
+                return {
+                    'summary': text,
+                    'name': name.trim(),
+                    'year': year,
+                    'seasonType': seasonType,
+                    'partNumber': partNumber,
+                    'fullPartNumber': text.split(' ')[0],
+                    'isEpic': partType == "A"
+                };
+            }
+            return null;
+        }
+
+        static applyPartMask(text) {
+            const partRegex = /V([RF])(\d{2})([AP])-(\d{4})([A-Z])(.*)/;
+            const matches = partRegex.exec(text);
+            if (matches) {
+                const [
+                    fullMatch,
+                    seasonType,
+                    year,
+                    partType,
+                    partNumber,
+                    version,
+                    name
+                ] = matches;
+                return {
+                    'summary': text,
+                    'name': name.trim(),
+                    'version': version,
+                    'year': year,
+                    'seasonType': seasonType,
+                    'partNumber': partNumber,
+                    'fullPartNumber': text.split(' ')[0],
+                    'isEpic': partType == "A"
+                };
+            }
+            return null;
+        }
+
         genNonce(length) {
             var result           = '';
             var characters       = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -189,17 +241,17 @@ const res = require('express/lib/response');
             let epics = {};
             for (var i in result.issues) {
                 let epic = result.issues[i];
-                let key = epic.key;
-                let id = epic.id;
                 let summary = epic.fields.summary;
-                let partNumber = summary.substring(
-                    summary.indexOf("[") + 1, 
-                    summary.lastIndexOf("]")
-                );
-                let isEpic = Math.round(parseInt(partNumber)/100)*100 == parseInt(partNumber);
-                let description = JSON.parse(epic.fields.description);
-                if (description && summary.includes('['))
-                    epics[partNumber] = {'summary': summary, 'key': key, 'd': description.d, 'w': description.w, 'e': description.e, 'partNumber': partNumber, 'isEpic': isEpic};
+                const part = ValorBOM.applyPartMask(summary);
+                if (part) {
+                    epics[part.fullPartNumber] = {
+                        ...part,
+                        'key': epic.key,
+                        'd': epic.fields.customfield_10300,
+                        'w': epic.fields.customfield_10301,
+                        'e': epic.fields.customfield_10302,
+                    };
+                }
             }
             this(epics);
         }
@@ -208,11 +260,12 @@ const res = require('express/lib/response');
             let stories = [];
             for (var i in results.issues) {
                 let story = results.issues[i];
+                let part = ValorBOM.applyPartMask(story.fields.summary);
                 stories.push({
+                    ...part,
                     key: story.key,
-                    epic: 'N/A',
+                    epic: story.fields['customfield_10110'],
                     material: story.fields['customfield_10202'] ? story.fields['customfield_10202'].value : 'None',
-                    summary: story.fields.summary,
                     machinery: story.fields['customfield_10201'] ? story.fields['customfield_10201'][0].value : 'None',
                     powdercoat: story.fields['customfield_10204'] ? story.fields['customfield_10204'].value : 'None',
                     quantity: story.fields['customfield_10206'],
@@ -225,16 +278,13 @@ const res = require('express/lib/response');
 
         parseDocuments(results) {
             let documents = [];
-            const startDate = Date.parse("2024-11-01T00:00:00.000+00:00");
             for (var i in results.items) {
                 const createdAt = Date.parse(results.items[i].createdAt);
-                if (!results.items[i].name.includes(`[${process.env.SEASON_ID}]`))
-                    continue;
-                let name = results.items[i].name.replace(`[${process.env.SEASON_ID}]`, '').trim();
-                if (createdAt > startDate && /([0-9]{4})/.test(name)) {
+                const part = ValorBOM.applyTitleMask(results.items[i].name)
+                if (part) {
                     documents.push({
                         d: results.items[i].id,
-                        name: name,
+                        ...part
                     });
                 }
             }
@@ -248,20 +298,12 @@ const res = require('express/lib/response');
         parseAssemblies(results) {
             let assemblies = [];
             for (const [key, item] of Object.entries(results)) {
-                let valor_part = /([0-9]{4})/.test(item.name);
+                const valor_part = ValorBOM.applyPartMask(item.name);
                 if (valor_part) {
-                    if (item.name.includes('[')) {
-                        let partNumber = item.name.substring(
-                            item.name.indexOf("[") + 1, 
-                            item.name.lastIndexOf("]")
-                        );
-                        if (Math.round(parseInt(partNumber)/100)*100 == parseInt(partNumber)) {
-                            assemblies.push({
-                                e: item.id,
-                                name: item.name,
-                            });
-                        }
-                    }
+                    assemblies.push({
+                        e: item.id,
+                        ...valor_part
+                    });
                 }
             }
             this(assemblies);
@@ -269,7 +311,7 @@ const res = require('express/lib/response');
 
         parseBOM(results) {
             let bom = { };
-            let epics = { };
+            let epicKey = this.epicKey
 
             let found = results.bomTable.headers.some(el => el.propertyName === 'quantity') &
                         results.bomTable.headers.some(el => el.propertyName === 'partNumber') &
@@ -279,7 +321,7 @@ const res = require('express/lib/response');
             if (!found) {
                 bom.error = -1;
                 bom.error_description = 'Verify the following items are in your BOM: quantity, part number, material, name';
-                this(bom);
+                this.cb(bom);
                 return;
             }
 
@@ -287,19 +329,21 @@ const res = require('express/lib/response');
             for (var i in items) {
                 let item = items[i];
 
-                let valor_part =  /^([A-Z0-9]{5})$/.test(item.partNumber);
-                let valor_epic = /^([A-Z0-9]{4})$/.test(item.partNumber);
+                let valor_part =  ValorBOM.applyPartMask(item.partNumber)
+                if (valor_part) {
+                    // Skip nested items - they will belong to other epics
+                    if (item.item.lastIndexOf('.') >= 0)
+                        continue
 
-                if (valor_part || valor_epic) {
                     let part = {
+                        ...valor_part,
                         quantity: item.quantity,
                         name: item.name,
-                        partNumber: item.partNumber,
                         material: 'None',
                         thickness: 'None',
                         machinery: 'None',
                         powdercoat: 'None',
-                        item: item.item
+                        epic: epicKey,
                     };
                     if (item.material.displayName)
                         part.material = item.material.displayName;
@@ -329,28 +373,13 @@ const res = require('express/lib/response');
                         part.material = 'AL 7075';
                     }
 
-                    if (valor_epic) {
-                        epics[item.item] = part;
-                    } else {
-                        if (item.partNumber in bom)
-                            bom[item.partNumber].quantity += part.quantity
-                        else
-                            bom[item.partNumber] = part;
-                    }
+                    if (part.fullPartNumber in bom)
+                        bom[part.fullPartNumber].quantity += part.quantity
+                    else
+                        bom[part.fullPartNumber] = part;
                 }
             }
-
-            for (const [partNumber, part] of Object.entries(bom)) {
-                let itemNum = 0;
-                if (part.item.lastIndexOf('.') >= 0)
-                    itemNum = part.item.substring(0, part.item.lastIndexOf('.'));
-                if (itemNum > 0 && epics[itemNum]) {
-                    part.epic = epics[itemNum].partNumber;
-                } else {
-                    part.epic = Math.round(parseInt(part.partNumber)/100)*100;
-                }
-            }
-            this(bom);
+            this.cb(bom);
         }
 
         getSTL(documentId, workspaceId, elementId, partId, cb) {
@@ -358,18 +387,18 @@ const res = require('express/lib/response');
             this.onshape_httpEXPORT(url, cb);
         }
 
-        getBOM(documentId, workspaceId, elementId, cb) {
+        getBOM(epicKey, documentId, workspaceId, elementId, cb) {
             let url = `/api/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom?multiLevel=true`;
-            this.onshape_httpGET(url, this.parseBOM.bind(cb));
+            this.onshape_httpGET(url, this.parseBOM.bind({cb: cb, epicKey: epicKey}));
         }
 
-        getEpics(cb) {
-            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Assembly`,
+        getEpics(seasonType, year, cb) {
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Assembly AND "Epic Name" ~ "V${seasonType}${year}*"`,
                          this.parseEpics.bind(cb));
         }
 
-        getEpic(partNumber, cb) {
-            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Assembly AND text ~ "${partNumber}"`,
+        getEpic(fullPartNumber, cb) {
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Assembly AND text ~ "${fullPartNumber}"`,
                          this.parseEpics.bind(cb));
         }
 
@@ -378,13 +407,13 @@ const res = require('express/lib/response');
                          this.parseStories.bind(cb));
         }
 
-        getStoriesByEpic(part_number, cb) {
-            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Part AND summary ~ "${parseInt(part_number/100)}??? ?*"`,
+        getStoriesByEpic(epicKey, cb) {
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Part AND "Epic Link" = ${epicKey}`,
                          this.parseStories.bind(cb));
         }
 
-        getDocuments(cb) {
-            this.onshape_httpGET(`/api/documents?q=%5B${process.env.SEASON_ID}%5D&filter=9&owner=${this.ONSHAPE_TEAM_ID}&sortColumn=createdAt&sortOrder=desc`,
+        getDocuments(seasonType, year, cb) {
+            this.onshape_httpGET(`/api/documents?q=V${seasonType}${year}A&filter=9&owner=${this.ONSHAPE_TEAM_ID}&sortColumn=createdAt&sortOrder=desc`,
                                  this.parseDocuments.bind(cb));
         }
 
@@ -398,8 +427,8 @@ const res = require('express/lib/response');
                                  this.parseAssemblies.bind(cb));
         }
 
-        syncEpics() {
-            this.getDocuments(function(results) {
+        syncEpics(seasonType, year) {
+            this.getDocuments(seasonType, year, function(results) {
                 for (const [key, item] of Object.entries(results)) {
                     let worker1 = {};
                     worker1.d = item.d;
@@ -409,25 +438,10 @@ const res = require('express/lib/response');
                         worker2.w = item.id;
                         this.ctx.getAssemblies(worker2.d, worker2.w, function(results) {
                             for (const [key, item] of Object.entries(results)) {
-                                let worker3 = {d: this.worker.d, w: this.worker.w};
-                                worker3.e = item.e;
-                                let partNumber = item.name.substring(
-                                    item.name.indexOf("[") + 1, 
-                                    item.name.lastIndexOf("]")
-                                );
-                                worker3.partNumber = partNumber;
-                                worker3.name = item.name;
-                                this.ctx.getEpic(worker3.partNumber, function(results) {
+                                let worker3 = {d: this.worker.d, w: this.worker.w, ...item};
+                                this.ctx.getEpic(worker3.fullPartNumber, function(results) {
                                     if (Object.keys(results).length == 0) {
-                                        let payload = {
-                                            summary: this.worker.name,
-                                            description: JSON.stringify({
-                                                d: this.worker.d,
-                                                w: this.worker.w,
-                                                e: this.worker.e
-                                            })
-                                        };
-                                        this.ctx.postEpic(payload, function(results) {
+                                        this.ctx.postEpic(this.worker, function(results) {
                                             console.log("CREATE EPIC", results)
                                         });
                                     }
@@ -480,6 +494,9 @@ const res = require('express/lib/response');
                     },
                     "customfield_10104": payload.summary,
                     "description": payload.description,
+                    "customfield_10300": payload.d,
+                    "customfield_10301": payload.w,
+                    "customfield_10302": payload.e,
                 }
             };
             this.jira_httpPOST('/rest/api/latest/issue', data, cb);
