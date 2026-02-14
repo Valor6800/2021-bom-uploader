@@ -242,6 +242,13 @@ const res = require('express/lib/response');
             for (var i in result.issues) {
                 let epic = result.issues[i];
                 let summary = epic.fields.summary;
+                let status = epic.fields.status ? epic.fields.status.name : 'Unknown';
+                
+                // Filter out Closed and Assembly statuses
+                if (status === 'Closed' || status === 'Assembly') {
+                    continue;
+                }
+                
                 const part = ValorBOM.applyPartMask(summary);
                 if (part) {
                     epics[part.fullPartNumber] = {
