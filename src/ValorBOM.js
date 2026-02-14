@@ -355,6 +355,10 @@ const res = require('express/lib/response');
                         part.machinery = '3D Printer';
                         part.material = 'PLA';
                     }
+                    if (part.material.toLowerCase().includes('petg')) {
+                        part.machinery = '3D Printer';
+                        part.material = 'PETG-CF';
+                    }
                     if (part.material.toLowerCase().includes('nylon')) {
                         part.machinery = '3D Printer';
                         part.material = 'Nylon';
@@ -367,6 +371,10 @@ const res = require('express/lib/response');
                     if (part.material.toLowerCase().includes('polycarbonate')) {
                         part.machinery = 'CNC Router';
                         part.material = 'Polycarb';
+                    }
+                    if (part.material.toLowerCase().includes('polypropylene')) {
+                        part.machinery = 'CNC Router';
+                        part.material = 'SRPP';
                     }
                     if (part.material.toLowerCase().includes('7075')) {
                         part.machinery = 'Manual Lathe';

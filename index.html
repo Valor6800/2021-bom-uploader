@@ -437,7 +437,7 @@
             cell_thickness.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-900';
             cell_thickness.innerHTML = getThicknessDropdown(item.fullPartNumber);
             document.getElementById(item.fullPartNumber + '-thickness-dropdown').value = item.thickness;
-            if (!(item.material.includes('AL 6061') || item.material.includes('Polycarb') || item.material.includes('Wood')))
+            if (!(item.material.includes('AL 6061') || item.material.includes('Polycarb') || item.material.includes('Wood') || item.material.includes('SRPP')))
                 document.getElementById(item.fullPartNumber + '-thickness-dropdown').disabled = true;
 
             let status = 'Exists';
