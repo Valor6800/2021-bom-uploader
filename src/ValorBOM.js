@@ -244,11 +244,6 @@ const res = require('express/lib/response');
                 let summary = epic.fields.summary;
                 let status = epic.fields.status ? epic.fields.status.name : 'Unknown';
                 
-                // Filter out Closed and Assembly statuses
-                if (status === 'Closed' || status === 'Assembly') {
-                    continue;
-                }
-                
                 const part = ValorBOM.applyPartMask(summary);
                 if (part) {
                     epics[part.fullPartNumber] = {
@@ -408,7 +403,7 @@ const res = require('express/lib/response');
         }
 
         getEpics(seasonType, year, cb) {
-            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Assembly AND "Epic Name" ~ "V${seasonType}${year}*"`,
+            this.jira_httpGET(`/rest/api/latest/search?jql=project = ${process.env.PROJECT_KEY} AND issuetype = Assembly AND "Epic Name" ~ "V${seasonType}${year}*" AND status not in (Closed, Finished)`,
                          this.parseEpics.bind(cb));
         }
 
