@@ -1,27 +1,34 @@
-FROM node:18.19.1-bullseye-slim
-
-# Install git and CA certificates
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       git \
-       ca-certificates \
-    && update-ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+FROM node:20-slim AS build
 
 WORKDIR /app
 
-# Clone the bom-uploader repository
-RUN git clone --depth 1 \
-    https://git.valor6800.com/valor6800/bom-uploader.git .
+# Copy package files first for better layer caching
+COPY package.json package-lock.json ./
 
-# Install production dependencies
-RUN npm install --production
+# Install all dependencies (dev deps needed for Vite build)
+RUN npm ci
 
-# Drop privileges
+# Copy source
+COPY . .
+
+# Build the React frontend
+RUN npm run build
+
+# Remove dev dependencies
+RUN npm prune --production
+
+# --- Production image ---
+FROM node:20-slim
+
+WORKDIR /app
+
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/src/server ./src/server
+COPY --from=build /app/package.json ./
+
 USER node
 
-# Expose only if the app listens on a port
 EXPOSE 3000
 
-CMD ["node", "app.js"]
-
+CMD ["node", "src/server/index.js"]

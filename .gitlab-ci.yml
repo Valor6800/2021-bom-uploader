@@ -1,0 +1,27 @@
+# Single node image reused across all stages.
+# npm cache persisted across pipelines to avoid re-downloading packages.
+
+image: node:20-slim
+
+stages:
+  - validate
+
+variables:
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+cache:
+  key: "${CI_COMMIT_REF_SLUG}"
+  paths:
+    - .npm/
+    - node_modules/
+
+# Run tests and build in a single job to avoid pulling the image twice.
+validate:
+  stage: validate
+  script:
+    - npm ci --prefer-offline
+    - npm test
+    - npm run build
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
