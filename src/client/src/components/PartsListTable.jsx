@@ -68,10 +68,12 @@ export default function PartsListTable({
       // Merge preview into the stories list
       const merged = [];
 
-      // Existing parts with changes
+      // Existing parts with changes — only overwrite fields that actually
+      // changed in CAD so Jira-only values (powdercoat, thickness, etc.) are preserved.
       for (const entry of (preview.existingParts || [])) {
-        const status = entry.changes?.count > 0 ? 'Changes' : 'Exists';
-        merged.push({ ...entry.story, ...entry.bomItem, key: entry.story.key, _status: status });
+        const { count, ...changedFields } = entry.changes ?? {};
+        const status = count > 0 ? 'Changes' : 'Exists';
+        merged.push({ ...entry.story, ...changedFields, _status: status });
       }
 
       // New parts
