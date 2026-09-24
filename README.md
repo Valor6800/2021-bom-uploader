@@ -59,6 +59,7 @@ docker run -p 3000:3000 \
 | `ONSHAPE_ACCESS` | Onshape API access key |
 | `ONSHAPE_SECRET` | Onshape API secret key |
 | `ONSHAPE_TEAM` | Onshape team ID (optional) |
+| `CORS_ORIGIN` | Allowed CORS origin (default: `*`) |
 
 ## Project Structure
 
@@ -66,15 +67,20 @@ docker run -p 3000:3000 \
 src/
   server/
     clients/       # Jira and Onshape API clients
-    services/      # Business logic (BOM, Epic, Part, Sync, Export)
+    clients/       # Jira and Onshape API clients
+    services/      # Business logic (BOM, Epic, Part, Export)
     routes/        # Express route handlers
+    middleware/    # CORS, request logging, shared error handling
     utils/         # Constants, validators, part number parsing
     index.js       # Express entry point
   client/
     src/
       api/         # Fetch-based API client
-      components/  # React components
-      App.jsx      # Root component
-    index.html     # SPA entry point
+      store/       # Zustand client store (per-domain slices)
+      layout/      # App shell + navigation
+      pages/       # Route-level pages
+      components/  # React components (feature + ui primitives)
+      App.jsx      # Router provider
+    index.html     # App entry point
 __tests__/         # Jest test suites
 ```

@@ -24,7 +24,7 @@ export class BOMService {
 
   /**
    * Fetch and parse an assembly BOM from Onshape.
-   * Uses a 5-minute cache to avoid redundant API calls.
+   * Uses a 1-minute in-memory cache (CACHE_TTL_MS) to avoid redundant API calls.
    */
   async getBOM(epicKey, documentId, workspaceId, elementId) {
     const cacheKey = `${documentId}:${workspaceId}:${elementId}`;

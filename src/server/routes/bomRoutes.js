@@ -3,6 +3,8 @@
  */
 
 import { Router } from 'express';
+import { asyncHandler } from '../middleware/asyncHandler.js';
+import { badRequest } from '../middleware/httpError.js';
 
 /**
  * @param {object} deps
@@ -15,24 +17,16 @@ export default function bomRoutes({ bomService }) {
   /**
    * GET /api/bom?epicKey&documentId&workspaceId&elementId
    */
-  router.get('/', async (req, res) => {
-    try {
-      const { epicKey, documentId, workspaceId, elementId } = req.query;
+  router.get('/', asyncHandler(async (req, res) => {
+    const { epicKey, documentId, workspaceId, elementId } = req.query;
 
-      if (!epicKey || !documentId || !workspaceId || !elementId) {
-        return res.status(400).json({
-          error: 'Missing required query parameters: epicKey, documentId, workspaceId, elementId',
-          status: 400,
-        });
-      }
-
-      const bom = await bomService.getBOM(epicKey, documentId, workspaceId, elementId);
-      res.json(bom);
-    } catch (err) {
-      const status = err.status || 500;
-      res.status(status).json({ error: err.message, status });
+    if (!epicKey || !documentId || !workspaceId || !elementId) {
+      throw badRequest('Missing required query parameters: epicKey, documentId, workspaceId, elementId');
     }
-  });
+
+    const bom = await bomService.getBOM(epicKey, documentId, workspaceId, elementId);
+    res.json(bom);
+  }));
 
   return router;
 }

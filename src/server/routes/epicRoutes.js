@@ -4,6 +4,8 @@
 
 import { Router } from 'express';
 import { sanitizeJQL } from '../utils/validators.js';
+import { asyncHandler } from '../middleware/asyncHandler.js';
+import { badRequest } from '../middleware/httpError.js';
 
 /**
  * @param {object} deps
@@ -16,55 +18,35 @@ export default function epicRoutes({ epicService }) {
   /**
    * GET /api/epics?seasonType&year
    */
-  router.get('/', async (req, res) => {
-    try {
-      const seasonType = req.query.seasonType;
-      const year = req.query.year;
+  router.get('/', asyncHandler(async (req, res) => {
+    const { seasonType, year } = req.query;
 
-      if (!seasonType || !year) {
-        return res.status(400).json({
-          error: 'Missing required query parameters: seasonType and year',
-          status: 400,
-        });
-      }
-
-      const safe = sanitizeJQL(seasonType);
-      if (safe !== 'R' && safe !== 'F') {
-        return res.status(400).json({
-          error: 'seasonType must be "R" or "F"',
-          status: 400,
-        });
-      }
-
-      const epics = await epicService.getEpics(seasonType, year);
-      res.json(epics);
-    } catch (err) {
-      const status = err.status || 500;
-      res.status(status).json({ error: err.message, status });
+    if (!seasonType || !year) {
+      throw badRequest('Missing required query parameters: seasonType and year');
     }
-  });
+
+    const safe = sanitizeJQL(seasonType);
+    if (safe !== 'R' && safe !== 'F') {
+      throw badRequest('seasonType must be "R" or "F"');
+    }
+
+    const epics = await epicService.getEpics(seasonType, year);
+    res.json(epics);
+  }));
 
   /**
    * POST /api/epics/from-url  { url: string }
    */
-  router.post('/from-url', async (req, res) => {
-    try {
-      const { url } = req.body;
+  router.post('/from-url', asyncHandler(async (req, res) => {
+    const { url } = req.body;
 
-      if (!url || typeof url !== 'string') {
-        return res.status(400).json({
-          error: 'Missing required body parameter: url (string)',
-          status: 400,
-        });
-      }
-
-      const result = await epicService.generateEpicFromURL(url);
-      res.json(result);
-    } catch (err) {
-      const status = err.status || 500;
-      res.status(status).json({ error: err.message, status });
+    if (!url || typeof url !== 'string') {
+      throw badRequest('Missing required body parameter: url (string)');
     }
-  });
+
+    const result = await epicService.generateEpicFromURL(url);
+    res.json(result);
+  }));
 
   return router;
 }

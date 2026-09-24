@@ -23,6 +23,11 @@ import partRoutes from './routes/partRoutes.js';
 import bomRoutes from './routes/bomRoutes.js';
 import exportRoutes from './routes/exportRoutes.js';
 
+// Middleware
+import { cors } from './middleware/cors.js';
+import { requestLogger } from './middleware/requestLogger.js';
+import { apiNotFound, errorHandler } from './middleware/errorHandler.js';
+
 // ---------------------------------------------------------------------------
 // Resolve __dirname for ES modules
 // ---------------------------------------------------------------------------
@@ -48,15 +53,23 @@ const exportService = new ExportService({ onshapeClient });
 // ---------------------------------------------------------------------------
 const app = express();
 
+// ---------------------------------------------------------------------------
+// Global middleware
+// ---------------------------------------------------------------------------
+app.use(cors);
+app.use(requestLogger);
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
 // Mount API routes
 // ---------------------------------------------------------------------------
 app.use('/api/epics', epicRoutes({ epicService }));
-app.use('/api', partRoutes({ partService }));
+app.use('/api', partRoutes({ partService, exportService }));
 app.use('/api/bom', bomRoutes({ bomService }));
 app.use('/api/export', exportRoutes({ exportService }));
+
+// Unknown API routes → JSON 404 (before the SPA fallback below).
+app.use('/api', apiNotFound);
 
 // ---------------------------------------------------------------------------
 // Serve React SPA (production build from dist/)
@@ -68,6 +81,11 @@ app.use(express.static(distPath));
 app.get('*', (req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });
+
+// ---------------------------------------------------------------------------
+// Error handler (must be last)
+// ---------------------------------------------------------------------------
+app.use(errorHandler);
 
 // ---------------------------------------------------------------------------
 // Start server
