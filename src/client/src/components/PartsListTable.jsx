@@ -1,30 +1,29 @@
 import { useState, useCallback } from 'react';
-import {
-  MACHINERY, POWDERCOAT, THICKNESS,
-  previewParts, createStory, updateStory,
-} from '../api/client.js';
+import { previewParts, createStory, updateStory } from '../api/client.js';
+import { useAppStore } from '../store/index.js';
 import Card from './ui/Card.jsx';
-import Button from './ui/Button.jsx';
-import Badge from './ui/Badge.jsx';
+import DuplicateWarning from './parts/DuplicateWarning.jsx';
+import PartsTableToolbar from './parts/PartsTableToolbar.jsx';
+import PartRow from './parts/PartRow.jsx';
 
-export default function PartsListTable({
-  stories,
-  selectedEpic,
-  jiraBaseUrl,
-  onStoriesUpdated,
-  onSaveComplete,
-  loading,
-  setLoading,
-}) {
+const COLUMNS = ['Key', 'Qty', 'Summary', 'Material', 'Machinery', 'Powdercoat', 'Thickness', 'Status'];
+
+export default function PartsListTable({ jiraBaseUrl }) {
+  const stories = useAppStore((s) => s.stories);
+  const setStories = useAppStore((s) => s.setStories);
+  const selectedEpic = useAppStore((s) => s.selectedEpic);
+  const loading = useAppStore((s) => s.loading);
+  const setLoading = useAppStore((s) => s.setLoading);
+  const reloadSelectedEpicStories = useAppStore((s) => s.reloadSelectedEpicStories);
+
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [duplicates, setDuplicates] = useState([]);
 
   const newParts = stories.filter((s) => s._status === 'New');
-  const hasChanges = stories.some(
-    (s) => s._status === 'Changes' || s._status === 'New',
-  );
+  const hasChanges = stories.some((s) => s._status === 'Changes' || s._status === 'New');
   const selectedNewCount = newParts.filter((s) => selected.has(s.fullPartNumber)).length;
+  const allNewSelected = newParts.length > 0 && selectedNewCount === newParts.length;
 
   const toggleSelect = useCallback((partNumber) => {
     setSelected((prev) => {
@@ -43,14 +42,14 @@ export default function PartsListTable({
   }, [newParts]);
 
   const handleFieldChange = useCallback((idx, field, value) => {
-    onStoriesUpdated((prev) => {
+    setStories((prev) => {
       const updated = [...prev];
       const story = updated[idx];
       const newStatus = story._status === 'Exists' ? 'Changes' : story._status;
       updated[idx] = { ...story, [field]: value, _status: newStatus };
       return updated;
     });
-  }, [onStoriesUpdated]);
+  }, [setStories]);
 
   const handleUpdateFromCAD = useCallback(async () => {
     if (!selectedEpic) return;
@@ -65,7 +64,6 @@ export default function PartsListTable({
         elementId: epic.elementId || epic.e,
       });
 
-      // Merge preview into the stories list
       const merged = [];
 
       // Existing parts with changes — only overwrite fields that actually
@@ -85,19 +83,15 @@ export default function PartsListTable({
       }));
       merged.push(...newItems);
 
-      // Auto-select all new parts
       setSelected(new Set(newItems.map((s) => s.fullPartNumber)));
-
-      // Track duplicates for warning display
       setDuplicates(preview.duplicates || []);
-
-      onStoriesUpdated(merged);
+      setStories(merged);
     } catch (err) {
       console.error('Update from CAD failed:', err);
     } finally {
       setLoading(false);
     }
-  }, [selectedEpic, onStoriesUpdated, setLoading]);
+  }, [selectedEpic, setStories, setLoading]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -146,62 +140,29 @@ export default function PartsListTable({
           }
         }
       }
-      onStoriesUpdated(updatedStories);
+      setStories(updatedStories);
       setSelected(new Set());
-      if (onSaveComplete) onSaveComplete();
+      await reloadSelectedEpicStories();
     } finally {
       setSaving(false);
     }
-  }, [stories, selected, onStoriesUpdated, onSaveComplete]);
+  }, [stories, selected, setStories, reloadSelectedEpicStories]);
 
-  const isPowdercoatEnabled = (material) =>
-    material && material.includes('AL 6061');
-
-  const isThicknessEnabled = (material) =>
-    material && (material.includes('AL 6061') || material.includes('Polycarb') || material.includes('Wood') || material.includes('SRPP'));
-
-  const allNewSelected = newParts.length > 0 && selectedNewCount === newParts.length;
-
-  const headerButtons = (
-    <div className="btn-group">
-      <Button
-        variant="primary"
-        onClick={handleUpdateFromCAD}
-        disabled={!selectedEpic || loading}
-      >
-        ↻ {loading ? 'Loading...' : 'Update from CAD'}
-      </Button>
-      <Button
-        variant="success"
-        onClick={handleSave}
-        disabled={!hasChanges || saving}
-      >
-        💾 {saving ? 'Saving...' : 'Save Changes'}
-        {selectedNewCount > 0 && ` (${selectedNewCount} new)`}
-      </Button>
-    </div>
+  const toolbar = (
+    <PartsTableToolbar
+      onUpdateFromCAD={handleUpdateFromCAD}
+      onSave={handleSave}
+      canUpdate={Boolean(selectedEpic)}
+      loading={loading}
+      hasChanges={hasChanges}
+      saving={saving}
+      selectedNewCount={selectedNewCount}
+    />
   );
 
   return (
-    <Card title="Jira Part List" icon="☰" headerRight={headerButtons}>
-
-      {/* Duplicate warnings */}
-      {duplicates.length > 0 && (
-        <div className="duplicates-box" style={{ margin: '1rem' }}>
-          <h3 className="text-red font-semibold mb-2">
-            🚫 Duplicate Part Numbers Detected
-          </h3>
-          <p className="text-red text-sm mb-2">
-            Resolve these in Onshape before uploading. Duplicates are excluded from save.
-          </p>
-          {duplicates.map((dup) => (
-            <div key={dup.partNumber} className="duplicate-item">
-              <span className="text-orange font-mono font-semibold">{dup.partNumber}</span>
-              <span className="text-red text-sm ml-2">— {dup.occurrences.length} occurrences</span>
-            </div>
-          ))}
-        </div>
-      )}
+    <Card title="Jira Part List" icon="☰" headerRight={toolbar}>
+      <DuplicateWarning duplicates={duplicates} />
 
       <div className="table-wrapper">
         <table className="table">
@@ -218,16 +179,16 @@ export default function PartsListTable({
                   />
                 )}
               </th>
-              {['Key', 'Qty', 'Summary', 'Material', 'Machinery', 'Powdercoat', 'Thickness', 'Status'].map((h) => (
-                <th key={h}>{h}</th>
-              ))}
+              {COLUMNS.map((h) => <th key={h}>{h}</th>)}
             </tr>
           </thead>
           <tbody>
             {stories.length === 0 && (
               <tr>
                 <td colSpan={9} className="table-empty">
-                  {selectedEpic ? 'No parts found. Click "Update from CAD" to load BOM.' : 'Select an assembly to view parts.'}
+                  {selectedEpic
+                    ? 'No parts found. Click "Update from CAD" to load BOM.'
+                    : 'Select an assembly to view parts.'}
                 </td>
               </tr>
             )}
@@ -235,79 +196,14 @@ export default function PartsListTable({
               const isNew = story._status === 'New';
               const isChecked = isNew && selected.has(story.fullPartNumber);
               return (
-                <tr key={story.fullPartNumber || idx} className={isNew && !isChecked ? 'row-deselected' : ''}>
-                  <td>
-                    {isNew && (
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => toggleSelect(story.fullPartNumber)}
-                        className="preview-checkbox"
-                      />
-                    )}
-                  </td>
-                  <td className="whitespace-nowrap font-medium">
-                    {story.key && story.key !== 'N/A' ? (
-                      <a
-                        href={`${jiraBaseUrl}/browse/${story.key}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="link-gold"
-                      >
-                        {story.key}
-                      </a>
-                    ) : (
-                      <span className="text-dim">New</span>
-                    )}
-                  </td>
-                  <td className="whitespace-nowrap">
-                    <input
-                      type="number"
-                      value={story.quantity || ''}
-                      onChange={(e) => handleFieldChange(idx, 'quantity', e.target.value)}
-                      className="input-inline input-number"
-                    />
-                  </td>
-                  <td className="text-light">
-                    {story.summary}
-                    {isNew && story.machinery === '3D Printer' && (
-                      <span className="step-indicator">STEP auto-export</span>
-                    )}
-                  </td>
-                  <td className="whitespace-nowrap text-muted">{story.material}</td>
-                  <td className="whitespace-nowrap">
-                    <select
-                      value={story.machinery || 'None'}
-                      onChange={(e) => handleFieldChange(idx, 'machinery', e.target.value)}
-                      className="select-inline"
-                    >
-                      {MACHINERY.map((m) => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                  </td>
-                  <td className="whitespace-nowrap">
-                    <select
-                      value={story.powdercoat || 'None'}
-                      onChange={(e) => handleFieldChange(idx, 'powdercoat', e.target.value)}
-                      disabled={!isPowdercoatEnabled(story.material)}
-                      className="select-inline"
-                    >
-                      {POWDERCOAT.map((p) => <option key={p} value={p}>{p}</option>)}
-                    </select>
-                  </td>
-                  <td className="whitespace-nowrap">
-                    <select
-                      value={story.thickness || 'None'}
-                      onChange={(e) => handleFieldChange(idx, 'thickness', e.target.value)}
-                      disabled={!isThicknessEnabled(story.material)}
-                      className="select-inline"
-                    >
-                      {THICKNESS.map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </td>
-                  <td className="whitespace-nowrap">
-                    <Badge status={story._status || 'Exists'} />
-                  </td>
-                </tr>
+                <PartRow
+                  key={story.fullPartNumber || idx}
+                  story={story}
+                  jiraBaseUrl={jiraBaseUrl}
+                  isSelected={isChecked}
+                  onToggleSelect={() => toggleSelect(story.fullPartNumber)}
+                  onFieldChange={(field, value) => handleFieldChange(idx, field, value)}
+                />
               );
             })}
           </tbody>

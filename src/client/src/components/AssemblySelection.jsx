@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { fetchEpics, fetchStoriesByEpic, createEpicFromURL } from '../api/client.js';
+import { useAppStore } from '../store/index.js';
 import Card from './ui/Card.jsx';
 import Select from './ui/Select.jsx';
 import Button from './ui/Button.jsx';
+import Alert from './ui/Alert.jsx';
 
 const SEASON_TYPES = [
   { value: 'R', label: 'Robot' },
@@ -15,14 +17,15 @@ const YEARS = [
   { value: '27', label: '2027' },
 ];
 
-export default function AssemblySelection({
-  seasonType,
-  setSeasonType,
-  year,
-  setYear,
-  onEpicSelected,
-  onEpicCreated,
-}) {
+export default function AssemblySelection() {
+  const seasonType = useAppStore((s) => s.seasonType);
+  const setSeasonType = useAppStore((s) => s.setSeasonType);
+  const year = useAppStore((s) => s.year);
+  const setYear = useAppStore((s) => s.setYear);
+  const selectEpic = useAppStore((s) => s.selectEpic);
+  const markEpicCreated = useAppStore((s) => s.markEpicCreated);
+  const epicReloadKey = useAppStore((s) => s.epicReloadKey);
+
   const [epics, setEpics] = useState([]);
   const [loading, setLoading] = useState(false);
   const [urlValue, setUrlValue] = useState('');
@@ -44,9 +47,11 @@ export default function AssemblySelection({
     }
   }, []);
 
+  // Reload epics whenever the prereqs change or a new epic is created
+  // (epicReloadKey bumps after create-from-URL).
   useEffect(() => {
     loadEpics(seasonType, year);
-  }, [seasonType, year, loadEpics]);
+  }, [seasonType, year, epicReloadKey, loadEpics]);
 
   const handlePrereqChange = (setter) => (e) => {
     setter(e.target.value);
@@ -55,16 +60,16 @@ export default function AssemblySelection({
   const handleEpicChange = async (e) => {
     const val = e.target.value;
     if (val === '0') {
-      onEpicSelected(null, []);
+      selectEpic(null, []);
       return;
     }
     try {
       const epic = JSON.parse(val);
       const stories = await fetchStoriesByEpic(epic.key);
       const storyList = Array.isArray(stories) ? stories : Object.values(stories);
-      onEpicSelected(epic, storyList.map((s) => ({ ...s, _status: 'Exists' })));
+      selectEpic(epic, storyList.map((s) => ({ ...s, _status: 'Exists' })));
     } catch {
-      onEpicSelected(null, []);
+      selectEpic(null, []);
     }
   };
 
@@ -76,19 +81,18 @@ export default function AssemblySelection({
       const result = await createEpicFromURL(urlValue.trim());
       setUrlMsg({ type: 'success', text: `Epic ${result.key} created — reloading list...` });
       setUrlValue('');
-      // Give Jira a moment to index, then reload the dropdown
+      // Give Jira a moment to index, then reload the dropdown via the store.
       setTimeout(() => {
-        loadEpics(seasonType, year);
+        markEpicCreated();
         setUrlMsg({ type: 'success', text: `Epic ${result.key} created` });
-        setTimeout(() => setUrlMsg((prev) => prev?.type === 'success' ? null : prev), 3000);
+        setTimeout(() => setUrlMsg((prev) => (prev?.type === 'success' ? null : prev)), 3000);
       }, 1500);
-      if (onEpicCreated) onEpicCreated();
     } catch (err) {
       setUrlMsg({ type: 'error', text: err.message || 'Failed to create epic from URL' });
     } finally {
       setUrlLoading(false);
     }
-  }, [urlValue, onEpicCreated]);
+  }, [urlValue, markEpicCreated]);
 
   return (
     <Card title="Assembly Selection" icon="⚙" collapsible className="mb-8">
@@ -152,11 +156,10 @@ export default function AssemblySelection({
           </Button>
         </div>
         {urlMsg && (
-          <p className={urlMsg.type === 'success' ? 'success-msg' : 'error-msg'}>
+          <Alert variant={urlMsg.type === 'success' ? 'info' : 'error'} className="mt-2">
             {urlMsg.text}
-          </p>
+          </Alert>
         )}
-
       </div>
     </Card>
   );

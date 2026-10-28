@@ -99,8 +99,10 @@ export class JiraClient {
    *
    * @param {string} jql
    * @param {object} [options]
-   * @param {boolean} [options.paginate=true]  Fetch all pages
-   * @param {number}  [options.maxResults]     Per-page size
+   * @param {boolean}  [options.paginate=true]  Fetch all pages
+   * @param {number}   [options.maxResults]     Per-page size
+   * @param {string[]} [options.fields]         Restrict the fields returned.
+   *   Omit to let Jira return its navigable default set.
    * @returns {Promise<object[]>} All matching issues
    */
   async searchIssues(jql, options = {}) {
@@ -108,11 +110,17 @@ export class JiraClient {
     const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
     const endpoint = `issueSearch.searchForIssuesUsingJql(jql=${jql})`;
 
+    // Only include `fields` when the caller asked for a subset — passing
+    // undefined through makes jira.js emit an empty fields param on some
+    // versions, which Jira reads as "return no fields".
+    const fieldParams = options.fields ? { fields: options.fields } : {};
+
     if (!paginate) {
       return this._retry(async () => {
         const res = await this.client.issueSearch.searchForIssuesUsingJql({
           jql,
           maxResults,
+          ...fieldParams,
         });
         return res.issues ?? [];
       }, endpoint);
@@ -129,6 +137,7 @@ export class JiraClient {
           jql,
           startAt,
           maxResults,
+          ...fieldParams,
         });
       }, endpoint);
 
@@ -136,6 +145,10 @@ export class JiraClient {
       allIssues.push(...issues);
       total = res.total ?? 0;
       startAt += maxResults;
+
+      // Defend against a server that reports a total but returns no rows,
+      // which would otherwise spin forever.
+      if (issues.length === 0) break;
     }
 
     return allIssues;
@@ -172,13 +185,58 @@ export class JiraClient {
   /**
    * Get a single issue by key.
    *
+   * Worth knowing: this reaches issues that JQL search cannot. Jira excludes
+   * archived issues from search results, so an older epic can return 0 hits
+   * from `key in (...)` while still being perfectly readable here. Anything
+   * that must resolve historical issues has to go through this, not search.
+   *
    * @param {string} key  Issue key
+   * @param {object} [options]
+   * @param {string[]} [options.fields]  Restrict the fields returned
    * @returns {Promise<object>}
    */
-  async getIssue(key) {
+  async getIssue(key, options = {}) {
     const endpoint = `issues.getIssue(${key})`;
+    const params = { issueIdOrKey: key };
+    if (options.fields) params.fields = options.fields;
+
     return this._retry(async () => {
-      return this.client.issues.getIssue({ issueIdOrKey: key });
+      return this.client.issues.getIssue(params);
+    }, endpoint);
+  }
+
+  /**
+   * List the transitions currently available on an issue.
+   *
+   * @param {string} key  Issue key
+   * @returns {Promise<{ id: string, name: string, to: { id: string, name: string } }[]>}
+   */
+  async getTransitions(key) {
+    const endpoint = `issues.getTransitions(${key})`;
+    return this._retry(async () => {
+      const res = await this.client.issues.getTransitions({ issueIdOrKey: key });
+      return res.transitions ?? [];
+    }, endpoint);
+  }
+
+  /**
+   * Move an issue through a workflow transition.
+   *
+   * Jira rejects a transition that is not valid from the issue's current
+   * status, which surfaces here as a 400-level JiraApiError rather than being
+   * retried.
+   *
+   * @param {string} key           Issue key (e.g. "PARTS-123")
+   * @param {string} transitionId  Workflow transition ID
+   * @returns {Promise<void>}
+   */
+  async transitionIssue(key, transitionId) {
+    const endpoint = `issues.doTransition(${key}, transition=${transitionId})`;
+    return this._retry(async () => {
+      await this.client.issues.doTransition({
+        issueIdOrKey: key,
+        transition: { id: String(transitionId) },
+      });
     }, endpoint);
   }
 

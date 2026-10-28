@@ -47,6 +47,17 @@ export class PartService {
   }
 
   /**
+   * Get a single raw Jira issue by key. Thin passthrough that exposes the
+   * previously-unrouted jiraClient.getIssue capability.
+   *
+   * @param {string} key  Jira issue key (e.g. "VAL-123")
+   * @returns {Promise<object>}
+   */
+  async getStory(key) {
+    return this.jiraClient.getIssue(key);
+  }
+
+  /**
    * Preview parts: fetch BOM + existing stories, categorize into
    * new / existing (with change logs) / duplicates.
    *

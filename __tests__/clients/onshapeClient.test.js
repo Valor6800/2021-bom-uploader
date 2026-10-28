@@ -11,10 +11,11 @@ import { jest } from '@jest/globals';
 // ---------------------------------------------------------------------------
 
 const mockGet = jest.fn();
+const mockRequest = jest.fn();
 
 jest.unstable_mockModule('axios', () => ({
   default: {
-    create: () => ({ get: mockGet }),
+    create: () => ({ get: mockGet, request: mockRequest }),
   },
 }));
 
@@ -192,6 +193,101 @@ describe('OnshapeClient', () => {
       const result = await client.exportSTEP('d', 'w', 'e', 'p');
       expect(Buffer.isBuffer(result)).toBe(true);
       expect(mockGet.mock.calls[0][0]).toContain('/step/');
+    });
+  });
+
+  describe('updatePartMetadata', () => {
+    it('POSTs to the part metadata path with the properties body', async () => {
+      const client = makeClient();
+      mockRequest.mockResolvedValueOnce({ data: { properties: [] } });
+
+      const properties = [{ propertyId: 'prop1', value: 'AL 6061' }];
+      const result = await client.updatePartMetadata({
+        documentId: 'doc1',
+        workspaceId: 'ws1',
+        elementId: 'elem1',
+        partId: 'part1',
+        properties,
+      });
+      expect(result).toEqual({ properties: [] });
+
+      const config = mockRequest.mock.calls[0][0];
+      expect(config.method).toBe('POST');
+      expect(config.url).toBe('/api/metadata/d/doc1/w/ws1/e/elem1/p/part1');
+      expect(config.data).toEqual({ properties });
+      expect(config.headers['Authorization']).toMatch(/^On testAccessKey:HmacSHA256:/);
+      expect(config.headers).toHaveProperty('On-Nonce');
+    });
+
+    it('signs POST differently than GET for the same path', async () => {
+      const client = makeClient();
+      mockRequest.mockResolvedValueOnce({ data: {} });
+      await client.updatePartMetadata({
+        documentId: 'd', workspaceId: 'w', elementId: 'e', partId: 'p',
+        properties: [{ propertyId: 'x', value: 1 }],
+      });
+      const postAuth = mockRequest.mock.calls[0][0].headers['Authorization'];
+      expect(postAuth).toMatch(/HmacSHA256/);
+    });
+
+    it('rejects an empty properties array without calling the API', async () => {
+      const client = makeClient();
+      await expect(
+        client.updatePartMetadata({
+          documentId: 'd', workspaceId: 'w', elementId: 'e', partId: 'p',
+          properties: [],
+        }),
+      ).rejects.toThrow(OnshapeApiError);
+      expect(mockRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateElementMetadata', () => {
+    it('POSTs to the element metadata path with the properties body', async () => {
+      const client = makeClient();
+      mockRequest.mockResolvedValueOnce({ data: { ok: true } });
+
+      const properties = [{ propertyId: 'prop2', value: 'Main Assembly' }];
+      await client.updateElementMetadata({
+        documentId: 'doc1',
+        workspaceId: 'ws1',
+        elementId: 'elem1',
+        properties,
+      });
+
+      const config = mockRequest.mock.calls[0][0];
+      expect(config.method).toBe('POST');
+      expect(config.url).toBe('/api/metadata/d/doc1/w/ws1/e/elem1');
+      expect(config.data).toEqual({ properties });
+    });
+
+    it('rejects an empty properties array', async () => {
+      const client = makeClient();
+      await expect(
+        client.updateElementMetadata({
+          documentId: 'd', workspaceId: 'w', elementId: 'e', properties: [],
+        }),
+      ).rejects.toThrow(OnshapeApiError);
+      expect(mockRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('write error handling', () => {
+    it('wraps write failures as OnshapeApiError with the write endpoint', async () => {
+      const client = makeClient();
+      const err = new Error('boom');
+      err.response = { status: 500 };
+      mockRequest.mockRejectedValueOnce(err);
+
+      try {
+        await client.updatePartMetadata({
+          documentId: 'd', workspaceId: 'w', elementId: 'e', partId: 'p',
+          properties: [{ propertyId: 'x', value: 1 }],
+        });
+      } catch (e) {
+        expect(e).toBeInstanceOf(OnshapeApiError);
+        expect(e.endpoint).toContain('POST');
+      }
     });
   });
 

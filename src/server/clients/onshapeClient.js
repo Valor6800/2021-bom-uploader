@@ -165,6 +165,63 @@ export class OnshapeClient {
   }
 
   // -----------------------------------------------------------------------
+  // Write operations
+  // -----------------------------------------------------------------------
+
+  /**
+   * Update metadata (custom properties) for a part.
+   *
+   * Onshape metadata is written by property ID. Each entry supplies the
+   * target `propertyId` and its new `value`. Property IDs are discoverable
+   * via the corresponding metadata GET endpoint.
+   *
+   * @see https://onshape-public.github.io/docs/api-adv/metadata/
+   *
+   * @param {object} args
+   * @param {string} args.documentId
+   * @param {string} args.workspaceId
+   * @param {string} args.elementId
+   * @param {string} args.partId
+   * @param {Array<{ propertyId: string, value: * }>} args.properties
+   * @returns {Promise<object>} Updated metadata payload from Onshape
+   */
+  async updatePartMetadata({ documentId, workspaceId, elementId, partId, properties }) {
+    if (!Array.isArray(properties) || properties.length === 0) {
+      throw new OnshapeApiError(
+        'updatePartMetadata requires a non-empty properties array',
+        400,
+        'updatePartMetadata',
+      );
+    }
+    const path =
+      `/api/metadata/d/${documentId}/w/${workspaceId}/e/${elementId}/p/${partId}`;
+    return this._post(path, { properties });
+  }
+
+  /**
+   * Update metadata (custom properties) for an element (tab), e.g. the
+   * assembly-level properties. Same body shape as part metadata.
+   *
+   * @param {object} args
+   * @param {string} args.documentId
+   * @param {string} args.workspaceId
+   * @param {string} args.elementId
+   * @param {Array<{ propertyId: string, value: * }>} args.properties
+   * @returns {Promise<object>}
+   */
+  async updateElementMetadata({ documentId, workspaceId, elementId, properties }) {
+    if (!Array.isArray(properties) || properties.length === 0) {
+      throw new OnshapeApiError(
+        'updateElementMetadata requires a non-empty properties array',
+        400,
+        'updateElementMetadata',
+      );
+    }
+    const path = `/api/metadata/d/${documentId}/w/${workspaceId}/e/${elementId}`;
+    return this._post(path, { properties });
+  }
+
+  // -----------------------------------------------------------------------
   // Internal helpers
   // -----------------------------------------------------------------------
 
@@ -197,6 +254,44 @@ export class OnshapeClient {
         responseType: 'arraybuffer',
       });
       return Buffer.from(res.data);
+    } catch (err) {
+      throw this._wrapError(err, endpoint);
+    }
+  }
+
+  /**
+   * Perform a signed POST request with a JSON body, returning parsed JSON.
+   */
+  async _post(path, body = {}, params = {}) {
+    return this._write('POST', path, body, params);
+  }
+
+  /**
+   * Perform a signed PATCH request with a JSON body, returning parsed JSON.
+   */
+  async _patch(path, body = {}, params = {}) {
+    return this._write('PATCH', path, body, params);
+  }
+
+  /**
+   * Shared implementation for signed write requests (POST/PATCH).
+   *
+   * The Onshape signature covers method, path, query, nonce, date, and
+   * content-type — NOT the body — so a JSON body is sent alongside the same
+   * signed headers used for reads.
+   */
+  async _write(method, path, body, params) {
+    const endpoint = `${method} ${path}`;
+    try {
+      const { fullPath, queryString } = this._buildUrl(path, params);
+      const headers = this._signHeaders(method, path, queryString, 'application/json');
+      const res = await this.http.request({
+        method,
+        url: fullPath,
+        headers,
+        data: body,
+      });
+      return res.data;
     } catch (err) {
       throw this._wrapError(err, endpoint);
     }

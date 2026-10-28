@@ -1,0 +1,22 @@
+# Secrets must never enter a build layer. The Dockerfile does `COPY . .`, so
+# without this the Jira token, Onshape keys and the Google service-account
+# private key would all be baked into the build stage.
+.env
+.env.*
+!.env.example
+keys.json
+*.pem
+*.key
+
+# Rebuilt inside the image
+node_modules
+dist
+coverage
+
+# Not needed at runtime
+.git
+.gitignore
+.gitlab-ci.yml
+.vscode
+.kiro
+__tests__
