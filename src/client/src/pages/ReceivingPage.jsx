@@ -28,6 +28,17 @@ import ReceivingGroup from '../components/receiving/ReceivingGroup.jsx';
 import UnmatchedPanel from '../components/receiving/UnmatchedPanel.jsx';
 import { filterTickets, groupTickets } from '../lib/receivingView.js';
 
+/**
+ * Preserve an auth failure's shape so the page can offer a sign-in prompt.
+ * A session can expire between page load and submit, and a bare error banner
+ * leaves the user with nothing to act on.
+ */
+function asPageError(err) {
+  return err.authRequired
+    ? { authRequired: true, forbidden: err.forbidden, message: err.message }
+    : err.message;
+}
+
 export default function ReceivingPage() {
   const receiving = useAppStore((s) => s.receiving);
   const receivingLoading = useAppStore((s) => s.receivingLoading);
@@ -59,7 +70,7 @@ export default function ReceivingPage() {
     try {
       setReceiving(await fetchReceiving());
     } catch (err) {
-      setReceivingError(err.authRequired ? { authRequired: true, forbidden: err.forbidden, message: err.message } : err.message);
+      setReceivingError(asPageError(err));
     }
   }, [setReceiving, setReceivingLoading, setReceivingError]);
 
@@ -97,7 +108,8 @@ export default function ReceivingPage() {
 
       await load();
     } catch (err) {
-      setCheckInError(err.message);
+      if (err.authRequired) setReceivingError(asPageError(err));
+      else setCheckInError(err.message);
     } finally {
       setDeliveringId(null);
     }
@@ -109,7 +121,8 @@ export default function ReceivingPage() {
       setSyncResult(await requestSync());
       await load();
     } catch (err) {
-      setSyncResult({ advanced: [], errors: [{ key: '—', error: err.message }] });
+      if (err.authRequired) setReceivingError(asPageError(err));
+      else setSyncResult({ advanced: [], errors: [{ key: '—', error: err.message }] });
     }
   };
 

@@ -178,6 +178,17 @@ export class ReceivingService {
       const jiraStage = JIRA_STAGE[ticket.status];
       const deliveredStage = JIRA_STAGE[PartStatus.DELIVERED];
 
+      // An unmapped status would yield no transitions, so the sheet would be
+      // marked Delivered and the ticket left in flight while the UI reported
+      // success. Most likely cause: a workflow status renamed in Jira.
+      if (jiraStage === undefined) {
+        throw badRequest(
+          `${key} is in "${ticket.status}", which is not a known step of the ordering `
+          + 'workflow, so it cannot be checked in. If a Jira status was renamed, update '
+          + 'JIRA_STAGE in utils/purchasingConstants.js.',
+        );
+      }
+
       plans.push({
         key,
         sheetRow: sheetRowsByKey.get(key.toUpperCase())?.row ?? null,

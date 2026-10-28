@@ -3,7 +3,7 @@ import express from 'express';
 import request from 'supertest';
 import { requireAuth, evaluateDevBypass, isLoopbackHost } from '../../src/server/auth/requireAuth.js';
 import { readAuthConfig } from '../../src/server/auth/oidcConfig.js';
-import { sealCookie, SESSION_COOKIE } from '../../src/server/auth/session.js';
+import { sealCookie, SESSION_COOKIE, CookieType } from '../../src/server/auth/session.js';
 
 const SECRET = 'test-secret-do-not-use';
 const silent = { log() {}, warn() {}, error() {} };
@@ -29,6 +29,7 @@ function sessionCookie(payload) {
   const sealed = sealCookie(
     { exp: Math.floor(Date.now() / 1000) + 600, groups: [], ...payload },
     SECRET,
+    CookieType.SESSION,
   );
   return `${SESSION_COOKIE}=${sealed}`;
 }
@@ -121,6 +122,7 @@ describe('gate with authentication configured', () => {
     const forged = sealCookie(
       { sub: 'attacker', exp: Math.floor(Date.now() / 1000) + 600 },
       'wrong-secret',
+      CookieType.SESSION,
     );
 
     const res = await request(buildApp(CONFIGURED))
@@ -131,7 +133,7 @@ describe('gate with authentication configured', () => {
   });
 
   it('refuses an expired session', async () => {
-    const stale = sealCookie({ sub: 'u1', exp: Math.floor(Date.now() / 1000) - 1 }, SECRET);
+    const stale = sealCookie({ sub: 'u1', exp: Math.floor(Date.now() / 1000) - 1 }, SECRET, CookieType.SESSION);
     const res = await request(buildApp(CONFIGURED))
       .get('/api/thing')
       .set('Cookie', `${SESSION_COOKIE}=${stale}`);

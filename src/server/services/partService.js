@@ -3,6 +3,7 @@
  * upload, duplicate detection, and field validation.
  */
 
+import { badRequest } from '../middleware/httpError.js';
 import { applyPartMask } from '../utils/partMask.js';
 import { validatePartPayload, sanitizeJQL } from '../utils/validators.js';
 import { Powdercoat, Thickness, Material, Machinery } from '../utils/bomConstants.js';
@@ -54,6 +55,27 @@ export class PartService {
    * @returns {Promise<object>}
    */
   async getStory(key) {
+    /**
+     * Restricted to the projects this tool owns. Without it this is an
+     * unauthenticated passthrough to any issue the service-account token can
+     * see, including projects unrelated to the BOM tooling — every other
+     * public endpoint here goes through a project-scoped, sanitized search.
+     */
+    // Read at call time, not module load, so the allowlist reflects the
+    // running configuration rather than whatever was set when this file was
+    // first imported.
+    const allowed = [
+      process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? JIRA_PROJECT,
+      process.env.PARTS_PROJECT_KEY ?? 'PARTS',
+    ].filter(Boolean).map((p) => p.toUpperCase());
+
+    const project = String(key ?? '').split('-')[0].toUpperCase();
+    if (!allowed.includes(project)) {
+      throw badRequest(
+        `Issue key "${key}" is outside this tool's projects (${allowed.join(', ')}).`,
+      );
+    }
+
     return this.jiraClient.getIssue(key);
   }
 

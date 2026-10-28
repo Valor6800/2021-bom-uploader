@@ -8,7 +8,7 @@
  * exactly what it does, and refused unless the server is bound to loopback.
  */
 
-import { SESSION_COOKIE, openCookie, parseCookies } from './session.js';
+import { SESSION_COOKIE, CookieType, openCookie, parseCookies } from './session.js';
 
 /** Hosts that mean "not reachable from the network". */
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '::ffff:127.0.0.1']);
@@ -57,7 +57,9 @@ export function evaluateDevBypass(authConfig, host) {
 export function readSession(req, secret) {
   if (!secret) return null;
   const jar = parseCookies(req.headers.cookie);
-  return openCookie(jar[SESSION_COOKIE], secret);
+  // Demanding the session type is what stops the pre-auth handshake cookie —
+  // which /auth/login hands to any anonymous caller — being replayed here.
+  return openCookie(jar[SESSION_COOKIE], secret, CookieType.SESSION);
 }
 
 /**
@@ -68,7 +70,11 @@ export function readSession(req, secret) {
  * @returns {boolean}
  */
 function wantsJson(req) {
-  if (req.path.startsWith('/api/')) return true;
+  // originalUrl, not path: the gate is mounted per-route (app.use('/api/
+  // purchasing', gate, ...)), so Express strips the prefix and req.path is
+  // '/queue'. Testing req.path sent XHR callers a 302 to the login page
+  // instead of a 401, which the SPA cannot act on.
+  if ((req.originalUrl ?? '').startsWith('/api/')) return true;
   if (req.xhr) return true;
   const accept = String(req.headers.accept ?? '');
   return accept.includes('application/json') && !accept.includes('text/html');

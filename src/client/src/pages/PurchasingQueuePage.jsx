@@ -31,6 +31,17 @@ import {
   withWishListAffordability,
 } from '../lib/purchasingMath.js';
 
+/**
+ * Preserve an auth failure's shape so the page can offer a sign-in prompt.
+ * A session can expire between page load and submit, and a bare error banner
+ * leaves the user with nothing to act on.
+ */
+function asPageError(err) {
+  return err.authRequired
+    ? { authRequired: true, forbidden: err.forbidden, message: err.message }
+    : err.message;
+}
+
 export default function PurchasingQueuePage() {
   const queue = useAppStore((s) => s.queue);
   const queueLoading = useAppStore((s) => s.queueLoading);
@@ -60,7 +71,7 @@ export default function PurchasingQueuePage() {
     try {
       setQueue(await fetchPurchasingQueue());
     } catch (err) {
-      setQueueError(err.authRequired ? { authRequired: true, forbidden: err.forbidden, message: err.message } : err.message);
+      setQueueError(asPageError(err));
     }
   }, [setQueue, setQueueLoading, setQueueError]);
 
@@ -152,7 +163,8 @@ export default function PurchasingQueuePage() {
     try {
       setSubmitPreview(await previewSubmission({ rows: submissionRows }));
     } catch (err) {
-      setSubmitError(err.message);
+      if (err.authRequired) setQueueError(asPageError(err));
+      else setSubmitError(err.message);
     }
   };
 
@@ -164,7 +176,8 @@ export default function PurchasingQueuePage() {
       clearSelections();
       await loadQueue();
     } catch (err) {
-      setSubmitError(err.message);
+      if (err.authRequired) setQueueError(asPageError(err));
+      else setSubmitError(err.message);
     }
   };
 

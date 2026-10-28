@@ -34,7 +34,16 @@ export class SheetSyncScheduler {
     this.lastResult = null;
     this.lastError = null;
 
-    const configured = intervalMs ?? Number(process.env.SHEET_SYNC_INTERVAL_MS ?? DEFAULT_INTERVAL_MS);
+    // `??` only guards unset, and Number('') is 0 — which line below reads as
+    // the deliberate "disabled" sentinel. A present-but-empty variable (easy
+    // to produce in a .env or a compose `environment:` entry) would therefore
+    // silently stop the purchaser's edits ever reaching Jira.
+    const raw = process.env.SHEET_SYNC_INTERVAL_MS;
+    const fromEnv = raw === undefined || String(raw).trim() === ''
+      ? DEFAULT_INTERVAL_MS
+      : Number(raw);
+
+    const configured = intervalMs ?? fromEnv;
 
     this.intervalMs = configured === 0
       ? 0

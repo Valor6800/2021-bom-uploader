@@ -10,6 +10,12 @@
  * identity. What matters is that it cannot be forged or altered, which the
  * HMAC guarantees, and that it expires.
  *
+ * Every payload carries a `typ` claim naming what it is for, and reads demand
+ * the type they expect. Without that, two cookies signed with the same secret
+ * are interchangeable: the pre-auth handshake cookie handed to any anonymous
+ * caller by /auth/login could be replayed as a session cookie, which is a
+ * complete authentication bypass.
+ *
  * This is not invented authentication: the credential is an Authentik ID
  * token, verified against Authentik's JWKS before anything is written here.
  * The cookie only carries the result forward.
@@ -38,14 +44,25 @@ function sign(payload, secret) {
 }
 
 /**
+ * What a sealed payload is for. Checked on every read so one kind of cookie
+ * can never be presented as another.
+ */
+export const CookieType = Object.freeze({
+  SESSION: 'session',
+  OIDC_STATE: 'oidc-state',
+});
+
+/**
  * Encode and sign a payload for transport in a cookie.
  *
  * @param {object} payload
  * @param {string} secret
+ * @param {string} typ  One of CookieType; stamped into the payload
  * @returns {string} `<base64url payload>.<signature>`
  */
-export function sealCookie(payload, secret) {
-  const encoded = base64url(JSON.stringify(payload));
+export function sealCookie(payload, secret, typ) {
+  if (!typ) throw new Error('sealCookie requires a cookie type');
+  const encoded = base64url(JSON.stringify({ ...payload, typ }));
   return `${encoded}.${sign(encoded, secret)}`;
 }
 
@@ -53,14 +70,17 @@ export function sealCookie(payload, secret) {
  * Verify and decode a cookie value.
  *
  * Returns null for anything that is not exactly a valid, unexpired,
- * correctly-signed payload — a tampered cookie is indistinguishable from no
- * cookie at all, so callers cannot accidentally treat one as partial trust.
+ * correctly-signed payload of the expected type — a tampered or
+ * wrong-purpose cookie is indistinguishable from no cookie at all, so callers
+ * cannot accidentally treat one as partial trust.
  *
  * @param {string|undefined} value
  * @param {string} secret
+ * @param {string} expectedType  One of CookieType
  * @returns {object|null}
  */
-export function openCookie(value, secret) {
+export function openCookie(value, secret, expectedType) {
+  if (!expectedType) throw new Error('openCookie requires an expected cookie type');
   if (!value || typeof value !== 'string') return null;
 
   const separator = value.lastIndexOf('.');
@@ -85,6 +105,9 @@ export function openCookie(value, secret) {
   }
 
   if (typeof payload?.exp !== 'number' || payload.exp * 1000 <= Date.now()) return null;
+
+  // The purpose check. A correctly-signed cookie of the wrong kind is refused.
+  if (payload.typ !== expectedType) return null;
 
   return payload;
 }
