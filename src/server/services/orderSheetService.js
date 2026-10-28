@@ -1,0 +1,414 @@
+/**
+ * Order Sheet Service — all domain knowledge about the FRC Parts Order
+ * spreadsheet lives here.
+ *
+ * Two layout facts drive the write strategy:
+ *
+ *  1. The Orders tab pre-fills `=(F{r}*G{r})+K{r}` in the Total column on
+ *     every blank row down to FORMULA_PREFILLED_THROUGH_ROW, and the Overview
+ *     and Wish-List tabs read that column through SUMIF. So we fill existing
+ *     rows in place and never append — an appended row lands past the
+ *     pre-formulated block, its Total stays empty, and it silently counts
+ *     toward no budget at all.
+ *
+ *  2. Classification (col A) is the key for every budget roll-up. A row with
+ *     a blank Classification is invisible to the entire budget.
+ */
+
+import { badRequest } from '../middleware/httpError.js';
+import {
+  OrderColumn,
+  ORDER_COLUMN_COUNT,
+  FORMULA_PREFILLED_THROUGH_ROW,
+  totalFormulaForRow,
+  OrderStatus,
+  SheetTab,
+  OVERVIEW_TOTAL_ROW,
+  OVERVIEW_CATEGORY_ROWS,
+  OVERVIEW_VOUCHER_HEADING,
+} from '../utils/purchasingConstants.js';
+
+/** Columns that indicate a row is in use. Total (N) is excluded because the
+ *  sheet pre-fills its formula on otherwise-blank rows. */
+const IN_USE_COLUMNS = [
+  OrderColumn.CLASSIFICATION,
+  OrderColumn.WISH_ID,
+  OrderColumn.PART_NUMBER,
+  OrderColumn.VENDOR,
+  OrderColumn.DESCRIPTION,
+  OrderColumn.QTY,
+  OrderColumn.PRICE,
+  OrderColumn.LINK,
+  OrderColumn.JIRA_KEY,
+  OrderColumn.TRACKING_NUMBER,
+  OrderColumn.SHIPPING_COST,
+  OrderColumn.RECEIPT_LINK,
+  OrderColumn.ORDER_STATUS,
+  OrderColumn.SOURCE,
+];
+
+function isBlank(value) {
+  return value === null || value === undefined || value === '';
+}
+
+function toNumberOrNull(value) {
+  return Number.isFinite(value) ? value : null;
+}
+
+export class OrderSheetService {
+  /**
+   * @param {object} deps
+   * @param {import('../clients/sheetsClient.js').SheetsClient} deps.sheetsClient
+   */
+  constructor({ sheetsClient }) {
+    this.sheetsClient = sheetsClient;
+  }
+
+  // -----------------------------------------------------------------------
+  // Reads
+  // -----------------------------------------------------------------------
+
+  /**
+   * Read every in-use row on the Orders tab.
+   *
+   * @returns {Promise<{ row: number, classification: string|null, wishId: number|null,
+   *   partNumber: string|null, vendor: string|null, description: string|null,
+   *   qty: number|null, price: number|null, link: string|null, jiraKey: string|null,
+   *   trackingNumber: string|null, shippingCost: number|null, receiptLink: string|null,
+   *   orderStatus: string|null, total: number|null, source: string|null }[]>}
+   *   `row` is 1-based.
+   */
+  async readOrders() {
+    const sheet = await this.sheetsClient.getTab(SheetTab.ORDERS);
+    const { rows } = await this.sheetsClient.readRange(SheetTab.ORDERS, {
+      startRow: 0,
+      endRow: sheet.rowCount,
+      startColumn: 0,
+      endColumn: ORDER_COLUMN_COUNT,
+    });
+
+    const orders = [];
+
+    // Row index 0 is the header.
+    for (let i = 1; i < rows.length; i++) {
+      const values = rows[i];
+      if (!this._isRowInUse(values)) continue;
+
+      orders.push({
+        row: i + 1,
+        classification: isBlank(values[OrderColumn.CLASSIFICATION]) ? null : String(values[OrderColumn.CLASSIFICATION]),
+        wishId: toNumberOrNull(values[OrderColumn.WISH_ID]),
+        partNumber: isBlank(values[OrderColumn.PART_NUMBER]) ? null : String(values[OrderColumn.PART_NUMBER]),
+        vendor: isBlank(values[OrderColumn.VENDOR]) ? null : String(values[OrderColumn.VENDOR]),
+        description: isBlank(values[OrderColumn.DESCRIPTION]) ? null : String(values[OrderColumn.DESCRIPTION]),
+        qty: toNumberOrNull(values[OrderColumn.QTY]),
+        price: toNumberOrNull(values[OrderColumn.PRICE]),
+        link: isBlank(values[OrderColumn.LINK]) ? null : String(values[OrderColumn.LINK]),
+        jiraKey: isBlank(values[OrderColumn.JIRA_KEY]) ? null : String(values[OrderColumn.JIRA_KEY]).trim(),
+        trackingNumber: isBlank(values[OrderColumn.TRACKING_NUMBER]) ? null : String(values[OrderColumn.TRACKING_NUMBER]),
+        shippingCost: toNumberOrNull(values[OrderColumn.SHIPPING_COST]),
+        receiptLink: isBlank(values[OrderColumn.RECEIPT_LINK]) ? null : String(values[OrderColumn.RECEIPT_LINK]),
+        orderStatus: isBlank(values[OrderColumn.ORDER_STATUS]) ? null : String(values[OrderColumn.ORDER_STATUS]),
+        total: toNumberOrNull(values[OrderColumn.TOTAL]),
+        source: isBlank(values[OrderColumn.SOURCE]) ? null : String(values[OrderColumn.SOURCE]),
+      });
+    }
+
+    return orders;
+  }
+
+  /**
+   * Map Jira issue key -> sheet row number for every row that carries a key.
+   *
+   * @returns {Promise<Map<string, number>>}
+   */
+  async buildJiraKeyIndex() {
+    const orders = await this.readOrders();
+    const index = new Map();
+
+    for (const order of orders) {
+      if (order.jiraKey) index.set(order.jiraKey.toUpperCase(), order.row);
+    }
+
+    return index;
+  }
+
+  /**
+   * The first row a new submission should write to.
+   *
+   * @param {object} [options]
+   * @param {number} [options.gap=1]  Blank rows to leave between submissions
+   * @returns {Promise<number>} 1-based row number
+   */
+  async findNextWritableRow({ gap = 1 } = {}) {
+    const sheet = await this.sheetsClient.getTab(SheetTab.ORDERS);
+    const { rows } = await this.sheetsClient.readRange(SheetTab.ORDERS, {
+      startRow: 0,
+      endRow: sheet.rowCount,
+      startColumn: 0,
+      endColumn: ORDER_COLUMN_COUNT,
+    });
+
+    let lastInUse = 0;
+    for (let i = 1; i < rows.length; i++) {
+      if (this._isRowInUse(rows[i])) lastInUse = i + 1;
+    }
+
+    // Empty log: start directly under the header, no leading gap.
+    if (lastInUse === 0) return 2;
+
+    return lastInUse + 1 + gap;
+  }
+
+  // -----------------------------------------------------------------------
+  // Writes
+  // -----------------------------------------------------------------------
+
+  /**
+   * Write a batch of order lines into consecutive rows.
+   *
+   * Order Status (col M) is deliberately left blank: the sheet's dropdown has
+   * no "Submitted" value, so blank means "handed to the purchaser, not yet
+   * ordered". Total (col N) is left alone unless we have run past the
+   * pre-formulated block, in which case the formula is written explicitly.
+   *
+   * @param {object} params
+   * @param {{ jiraKey: string, classification: string, wishId: number|null,
+   *   partNumber: string|null, vendor: string, description: string,
+   *   qty: number, price: number, link: string|null, source: string }[]} params.lines
+   *   `source` is per line because it is chosen per vendor, and a submission
+   *   can span vendors drawing on different funding.
+   * @param {number} [params.startRow]  Defaults to findNextWritableRow()
+   * @returns {Promise<{ startRow: number, endRow: number,
+   *   assignments: { jiraKey: string, row: number }[] }>}
+   */
+  async writeOrderRows({ lines, startRow }) {
+    if (!Array.isArray(lines) || lines.length === 0) {
+      throw new Error('writeOrderRows requires a non-empty lines array');
+    }
+
+    const firstRow = startRow ?? await this.findNextWritableRow();
+    const sheet = await this.sheetsClient.getTab(SheetTab.ORDERS);
+    const lastRow = firstRow + lines.length - 1;
+
+    if (lastRow > sheet.rowCount) {
+      throw badRequest(
+        `Submission needs rows ${firstRow}-${lastRow} but the "${SheetTab.ORDERS}" tab `
+        + `only has ${sheet.rowCount} rows. Add rows to the sheet and retry.`,
+      );
+    }
+
+    const updates = [];
+    const assignments = [];
+
+    lines.forEach((line, offset) => {
+      const sheetRow = firstRow + offset;
+      const rowIndex = sheetRow - 1; // 0-based for the cell API
+
+      const cells = [
+        [OrderColumn.CLASSIFICATION, line.classification],
+        [OrderColumn.WISH_ID, line.wishId ?? ''],
+        [OrderColumn.PART_NUMBER, line.partNumber ?? ''],
+        [OrderColumn.VENDOR, line.vendor],
+        [OrderColumn.DESCRIPTION, line.description],
+        [OrderColumn.QTY, line.qty],
+        [OrderColumn.PRICE, line.price],
+        [OrderColumn.LINK, line.link ?? ''],
+        [OrderColumn.JIRA_KEY, line.jiraKey],
+        [OrderColumn.SOURCE, line.source ?? ''],
+      ];
+
+      for (const [column, value] of cells) {
+        updates.push({ row: rowIndex, column, value });
+      }
+
+      // Past the pre-formulated block the Total formula has to come from us,
+      // or the row contributes nothing to any budget roll-up.
+      if (sheetRow > FORMULA_PREFILLED_THROUGH_ROW) {
+        updates.push({
+          row: rowIndex,
+          column: OrderColumn.TOTAL,
+          formula: totalFormulaForRow(sheetRow),
+        });
+      }
+
+      assignments.push({ jiraKey: line.jiraKey, row: sheetRow });
+    });
+
+    await this.sheetsClient.writeCells(SheetTab.ORDERS, updates);
+
+    return { startRow: firstRow, endRow: lastRow, assignments };
+  }
+
+  /**
+   * Set Order Status to Delivered on the given rows.
+   *
+   * @param {number[]} rowNumbers  1-based row numbers
+   * @returns {Promise<number>} Number of rows updated
+   */
+  async markRowsDelivered(rowNumbers) {
+    if (rowNumbers.length === 0) return 0;
+
+    const updates = rowNumbers.map((row) => ({
+      row: row - 1,
+      column: OrderColumn.ORDER_STATUS,
+      value: OrderStatus.DELIVERED,
+    }));
+
+    await this.sheetsClient.writeCells(SheetTab.ORDERS, updates);
+    return rowNumbers.length;
+  }
+
+  // -----------------------------------------------------------------------
+  // Budget and Wish-List
+  // -----------------------------------------------------------------------
+
+  /**
+   * Read per-classification budget figures from the Overview tab.
+   *
+   * Note: "VFF" is a valid Classification in the Orders dropdown but has no
+   * Overview row, so spend classified VFF appears in no budget total. That is
+   * the spreadsheet's behaviour, reproduced here rather than papered over.
+   *
+   * @returns {Promise<{ total: object|null, categories: object[] }>}
+   */
+  async readBudget() {
+    const sheet = await this.sheetsClient.getTab(SheetTab.OVERVIEW);
+    const { rows } = await this.sheetsClient.readRange(SheetTab.OVERVIEW, {
+      startRow: 0,
+      endRow: sheet.rowCount,
+      startColumn: 0,
+      endColumn: 4, // A..D
+    });
+
+    const readRow = (sheetRow) => {
+      const values = rows[sheetRow - 1];
+      if (!values || isBlank(values[0])) return null;
+      return {
+        classification: String(values[0]).trim(),
+        budget: toNumberOrNull(values[1]),
+        spent: toNumberOrNull(values[2]),
+        remaining: toNumberOrNull(values[3]),
+      };
+    };
+
+    return {
+      total: readRow(OVERVIEW_TOTAL_ROW),
+      categories: OVERVIEW_CATEGORY_ROWS.map(readRow).filter(Boolean),
+      vouchers: this._readVoucherRows(rows),
+    };
+  }
+
+  /**
+   * Per-vendor voucher allocations, located by the block heading in column A
+   * and read until column A goes blank.
+   *
+   * `vendor` is the exact label the Overview SUMIFS matches against the Orders
+   * Vendor column, so it is what a Voucher-classified row must be written as.
+   *
+   * @param {*[][]} rows  Overview A..D, row-index 0 = sheet row 1
+   * @returns {{ vendor: string, budget: number|null, spent: number|null, remaining: number|null }[]}
+   * @private
+   */
+  _readVoucherRows(rows) {
+    const headingIndex = rows.findIndex(
+      (values) => !isBlank(values?.[0]) && OVERVIEW_VOUCHER_HEADING.test(String(values[0]).trim()),
+    );
+    if (headingIndex === -1) return [];
+
+    const vouchers = [];
+
+    for (let i = headingIndex + 1; i < rows.length; i++) {
+      const values = rows[i];
+      if (!values || isBlank(values[0])) break;
+
+      vouchers.push({
+        vendor: String(values[0]).trim(),
+        budget: toNumberOrNull(values[1]),
+        spent: toNumberOrNull(values[2]),
+        remaining: toNumberOrNull(values[3]),
+      });
+    }
+
+    return vouchers;
+  }
+
+  /**
+   * Read the Wish-List budget buckets.
+   *
+   * Only buckets with both an ID and an item name are returned — the tab
+   * carries empty numbered placeholders past the real entries. Wish ID 0 is a
+   * real bucket, so emptiness is tested explicitly rather than by truthiness.
+   *
+   * @returns {Promise<{ wishId: number, item: string, allocated: number|null,
+   *   reserved: number|null, spent: number|null, remaining: number|null,
+   *   notes: string|null }[]>}
+   */
+  async readWishList() {
+    const sheet = await this.sheetsClient.getTab(SheetTab.WISH_LIST);
+    const { rows } = await this.sheetsClient.readRange(SheetTab.WISH_LIST, {
+      startRow: 0,
+      endRow: sheet.rowCount,
+      startColumn: 0,
+      endColumn: 9, // A..I
+    });
+
+    const buckets = [];
+
+    for (let i = 1; i < rows.length; i++) {
+      const values = rows[i];
+      const wishId = toNumberOrNull(values[0]);
+      const item = isBlank(values[1]) ? null : String(values[1]).trim();
+
+      if (wishId === null || !item) continue;
+
+      buckets.push({
+        wishId,
+        item,
+        allocated: toNumberOrNull(values[2]),
+        reserved: toNumberOrNull(values[3]),
+        spent: toNumberOrNull(values[4]),
+        remaining: toNumberOrNull(values[5]),
+        notes: isBlank(values[8]) ? null : String(values[8]).trim(),
+      });
+    }
+
+    return buckets;
+  }
+
+  /**
+   * Read the dropdown option lists the Orders tab validates against, so the
+   * UI offers exactly what the sheet accepts.
+   *
+   * @returns {Promise<{ classifications: string[], orderStatuses: string[] }>}
+   */
+  async readOptions() {
+    const sheet = await this.sheetsClient.getTab(SheetTab.OPTIONS);
+    const { rows } = await this.sheetsClient.readRange(SheetTab.OPTIONS, {
+      startRow: 0,
+      endRow: Math.min(sheet.rowCount, 50),
+      startColumn: 0,
+      endColumn: 2, // A..B
+    });
+
+    const column = (index) => rows
+      .slice(1)
+      .map((r) => r[index])
+      .filter((v) => !isBlank(v))
+      .map((v) => String(v).trim());
+
+    return {
+      classifications: column(0),
+      orderStatuses: column(1),
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // Internal
+  // -----------------------------------------------------------------------
+
+  /** @private */
+  _isRowInUse(values) {
+    return IN_USE_COLUMNS.some((column) => !isBlank(values[column]));
+  }
+}

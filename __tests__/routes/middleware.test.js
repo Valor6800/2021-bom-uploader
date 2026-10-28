@@ -92,13 +92,34 @@ describe('shared middleware + part routes', () => {
     expect(res.body.status).toBe(404);
   });
 
-  it('sets CORS headers and short-circuits OPTIONS preflight', async () => {
+  it('short-circuits OPTIONS preflight', async () => {
     const app = buildApp({ partService: {}, exportService: {} });
 
     const res = await request(app).options('/api/stories');
     expect(res.status).toBe(204);
-    expect(res.headers['access-control-allow-origin']).toBe('*');
-    expect(res.headers['access-control-allow-methods']).toContain('POST');
+  });
+
+  it('sends no CORS headers by default, keeping the API same-origin', async () => {
+    delete process.env.CORS_ORIGIN;
+    const app = buildApp({ partService: {}, exportService: {} });
+
+    const res = await request(app).options('/api/stories');
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    expect(res.headers['access-control-allow-methods']).toBeUndefined();
+  });
+
+  it('sets CORS headers for the configured origin when CORS_ORIGIN is set', async () => {
+    process.env.CORS_ORIGIN = 'https://bom.example.com';
+    try {
+      const app = buildApp({ partService: {}, exportService: {} });
+
+      const res = await request(app).options('/api/stories');
+      expect(res.headers['access-control-allow-origin']).toBe('https://bom.example.com');
+      expect(res.headers['access-control-allow-methods']).toContain('POST');
+      expect(res.headers.vary).toBe('Origin');
+    } finally {
+      delete process.env.CORS_ORIGIN;
+    }
   });
 
   it('auto-export returns JSON when part is not a 3D print', async () => {

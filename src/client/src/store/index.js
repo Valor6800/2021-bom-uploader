@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { createAssemblySlice } from './assemblySlice.js';
 import { createPartsSlice } from './partsSlice.js';
+import { createPurchasingSlice } from './purchasingSlice.js';
+import { createReceivingSlice } from './receivingSlice.js';
 
 /**
  * Root client store. Composes per-domain slices into a single Zustand store.
@@ -13,4 +15,6 @@ import { createPartsSlice } from './partsSlice.js';
 export const useAppStore = create((set, get) => ({
   ...createAssemblySlice(set, get),
   ...createPartsSlice(set, get),
+  ...createPurchasingSlice(set, get),
+  ...createReceivingSlice(set, get),
 }));

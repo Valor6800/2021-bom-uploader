@@ -7,6 +7,10 @@ import { NavLink } from 'react-router-dom';
 export const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/assembly', label: 'Assembly BOM' },
+  // Mentor-only: these move money and close tickets, so they sit behind
+  // Authentik while the BOM tooling stays open to the whole team.
+  { to: '/purchasing', label: 'Parts Order', mentorsOnly: true },
+  { to: '/receiving', label: 'Parts Check-in', mentorsOnly: true },
 ];
 
 export default function AppNav() {
@@ -28,6 +32,9 @@ export default function AppNav() {
                 }
               >
                 {item.label}
+                {item.mentorsOnly && (
+                  <span className="nav-lock" title="Mentors only">🔒</span>
+                )}
               </NavLink>
             </li>
           ))}

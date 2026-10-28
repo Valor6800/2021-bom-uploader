@@ -1,6 +1,8 @@
 import AppLayout from './layout/AppLayout.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import AssemblyBomPage from './pages/AssemblyBomPage.jsx';
+import PurchasingQueuePage from './pages/PurchasingQueuePage.jsx';
+import ReceivingPage from './pages/ReceivingPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 
 /**
@@ -16,6 +18,8 @@ export const routes = [
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'assembly', element: <AssemblyBomPage /> },
+      { path: 'purchasing', element: <PurchasingQueuePage /> },
+      { path: 'receiving', element: <ReceivingPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

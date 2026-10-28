@@ -20,6 +20,22 @@ export default function DashboardPage() {
             </Link>
             <span className="text-dim"> Sync an OnShape assembly with Jira parts.</span>
           </li>
+          <li>
+            <Link to="/purchasing" className="link-gold">
+              Parts Order →
+            </Link>
+            <span className="text-dim">
+              {' '}Review mentor-approved part orders and hand them to the purchaser.
+            </span>
+          </li>
+          <li>
+            <Link to="/receiving" className="link-gold">
+              Parts Check-in →
+            </Link>
+            <span className="text-dim">
+              {' '}Receive deliveries and keep Jira in step with the purchaser.
+            </span>
+          </li>
         </ul>
       </div>
     </Card>

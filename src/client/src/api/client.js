@@ -51,15 +51,45 @@ export const THICKNESS = Object.values(ThicknessEnum);
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+/**
+ * Thrown when an endpoint needs a signed-in mentor.
+ *
+ * Carried as a distinct type because the UI response is different in kind: not
+ * "something went wrong" but "sign in to continue". A client-side navigation
+ * into a gated page never asks the server for a document, so this is the first
+ * point at which the app learns it needs a session.
+ */
+export class AuthRequiredError extends Error {
+  constructor(message, { loginUrl, forbidden = false }) {
+    super(message);
+    this.name = 'AuthRequiredError';
+    this.authRequired = true;
+    this.forbidden = forbidden;
+    this.loginUrl = loginUrl ?? '/auth/login';
+  }
+}
+
 async function request(url, options = {}) {
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...options.headers },
+    // Send the session cookie; harmless same-origin, required if ever not.
+    credentials: 'same-origin',
     ...options,
   });
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+
+    if (res.status === 401 || res.status === 403) {
+      throw new AuthRequiredError(
+        body.error || 'Sign-in required',
+        { loginUrl: body.loginUrl, forbidden: res.status === 403 },
+      );
+    }
+
     throw new Error(body.error || `Request failed: ${res.status}`);
   }
+
   return res.json();
 }
 
@@ -125,6 +155,63 @@ export function uploadSelectedParts(parts) {
     method: 'POST',
     body: JSON.stringify({ parts }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Purchasing
+// ---------------------------------------------------------------------------
+
+/** Mentor-approved queue: vendor groups, anomaly flags, budget, Wish-List. */
+export function fetchPurchasingQueue() {
+  return request('/api/purchasing/queue');
+}
+
+/**
+ * Resolve target sheet rows and projected budget without writing anything.
+ * @param {{ source: string, rows: { key: string, classification: string, wishId: number|null }[] }} payload
+ */
+export function previewSubmission(payload) {
+  return request('/api/purchasing/preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Write the selected lines to the Orders sheet and move each ticket to
+ * Sent to VFF.
+ * @param {{ source: string, rows: { key: string, classification: string, wishId: number|null }[] }} payload
+ */
+export function submitPurchaseOrders(payload) {
+  return request('/api/purchasing/submit', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Receiving
+// ---------------------------------------------------------------------------
+
+/** In-flight orders grouped by vendor, matched to their sheet rows. */
+export function fetchReceiving() {
+  return request('/api/receiving');
+}
+
+/**
+ * Mark parts delivered on the sheet and in Jira.
+ * @param {{ keys: string[] }} payload
+ */
+export function checkInDeliveries(payload) {
+  return request('/api/receiving/check-in', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Pull the purchaser's sheet edits into Jira now, rather than waiting for the poll. */
+export function syncFromSheet() {
+  return request('/api/receiving/sync', { method: 'POST' });
 }
 
 // ---------------------------------------------------------------------------
