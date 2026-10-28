@@ -16,6 +16,7 @@ import {
   OIDC_STATE_COOKIE,
   SESSION_TTL_SECONDS,
   OIDC_STATE_TTL_SECONDS,
+  CookieType,
   sealCookie,
   openCookie,
   parseCookies,
@@ -25,16 +26,32 @@ import { readSession } from '../auth/requireAuth.js';
 
 /**
  * Only allow redirects back to a path on this site. Without this, a crafted
- * `returnTo` would turn the login endpoint into an open redirect.
+ * `returnTo` would turn the login endpoint into an open redirect — a phishing
+ * primitive on the very domain users are trained to sign in to.
+ *
+ * Parsed rather than pattern-matched, because pattern-matching keeps missing
+ * cases: "/\\evil.com" starts with a single slash and is not "//", yet
+ * browsers normalise the backslash and resolve it as a protocol-relative URL.
+ * Resolving against a throwaway origin and keeping only the path collapses
+ * every such trick.
  *
  * @param {*} value
  * @returns {string}
  */
 export function safeReturnTo(value) {
-  const candidate = String(value ?? '/');
-  // Must be a single-slash-rooted path: rejects "//evil.com" and "https://…".
-  if (!candidate.startsWith('/') || candidate.startsWith('//')) return '/';
-  return candidate;
+  const candidate = String(value ?? '');
+  if (!candidate.startsWith('/')) return '/';
+
+  // Reject anything that could be read as protocol-relative before parsing.
+  if (candidate[1] === '/' || candidate[1] === '\\') return '/';
+
+  try {
+    const resolved = new URL(candidate, 'http://returnto.invalid');
+    if (resolved.origin !== 'http://returnto.invalid') return '/';
+    return `${resolved.pathname}${resolved.search}${resolved.hash}`;
+  } catch {
+    return '/';
+  }
 }
 
 /**
@@ -62,6 +79,7 @@ export default function authRoutes({ provider, authConfig }) {
       value: sealCookie(
         { ...handshake, exp: Math.floor(Date.now() / 1000) + OIDC_STATE_TTL_SECONDS },
         authConfig.sessionSecret,
+        CookieType.OIDC_STATE,
       ),
       maxAgeSeconds: OIDC_STATE_TTL_SECONDS,
       secure,
@@ -74,7 +92,11 @@ export default function authRoutes({ provider, authConfig }) {
     if (!authConfig.configured) return res.status(503).send('Authentication not configured');
 
     const jar = parseCookies(req.headers.cookie);
-    const handshake = openCookie(jar[OIDC_STATE_COOKIE], authConfig.sessionSecret);
+    const handshake = openCookie(
+      jar[OIDC_STATE_COOKIE],
+      authConfig.sessionSecret,
+      CookieType.OIDC_STATE,
+    );
 
     if (!handshake) {
       // Expired, tampered with, or the user bookmarked the callback.
@@ -112,7 +134,7 @@ export default function authRoutes({ provider, authConfig }) {
     res.setHeader('Set-Cookie', [
       serializeCookie({
         name: SESSION_COOKIE,
-        value: sealCookie(session, authConfig.sessionSecret),
+        value: sealCookie(session, authConfig.sessionSecret, CookieType.SESSION),
         maxAgeSeconds: SESSION_TTL_SECONDS,
         secure,
       }),

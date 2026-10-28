@@ -215,8 +215,10 @@ app.listen(PORT, HOST, () => {
   // rather than an exposure.
   if (!isLoopbackHost(HOST) && !authConfig.configured) {
     console.warn(
-      `WARNING: bound to ${HOST} with authentication unconfigured. All requests are being `
-      + 'rejected with 503. Configure Authentik or bind HOST=127.0.0.1.',
+      `WARNING: bound to ${HOST} with authentication unconfigured. The parts-ordering `
+      + 'routes are refusing every request with 503, but the BOM API and pages are '
+      + 'deliberately public and ARE being served to the network from this bind. '
+      + 'Configure Authentik, or bind HOST=127.0.0.1 if nothing should be reachable.',
     );
   }
 });

@@ -198,6 +198,36 @@ export class OrderSheetService {
       );
     }
 
+    /**
+     * Re-check the target rows immediately before writing.
+     *
+     * Rows are filled in place, not appended, so two coordinators submitting
+     * at once would both resolve the same first blank row and the second batch
+     * would overwrite the first — the earlier order vanishing from the budget
+     * while its tickets had already moved to Sent to VFF. This does not make
+     * the write atomic, but it closes the window from "whenever the page was
+     * loaded" down to the moment of writing, and fails loudly instead of
+     * destroying data.
+     */
+    const { rows: targetRows } = await this.sheetsClient.readRange(SheetTab.ORDERS, {
+      startRow: firstRow - 1,
+      endRow: lastRow,
+      startColumn: 0,
+      endColumn: ORDER_COLUMN_COUNT,
+    });
+
+    const occupied = targetRows
+      .map((values, offset) => (this._isRowInUse(values) ? firstRow + offset : null))
+      .filter((row) => row !== null);
+
+    if (occupied.length > 0) {
+      throw badRequest(
+        `Sheet row${occupied.length === 1 ? '' : 's'} ${occupied.join(', ')} `
+        + 'filled up while this submission was being prepared — someone else may have '
+        + 'submitted at the same time. Nothing was written; reload and try again.',
+      );
+    }
+
     const updates = [];
     const assignments = [];
 

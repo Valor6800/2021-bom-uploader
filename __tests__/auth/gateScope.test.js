@@ -13,7 +13,7 @@ import express from 'express';
 import request from 'supertest';
 import { requireAuth } from '../../src/server/auth/requireAuth.js';
 import { readAuthConfig } from '../../src/server/auth/oidcConfig.js';
-import { sealCookie, SESSION_COOKIE } from '../../src/server/auth/session.js';
+import { sealCookie, SESSION_COOKIE, CookieType } from '../../src/server/auth/session.js';
 
 const SECRET = 'test-secret-do-not-use';
 const silent = { log() {}, warn() {}, error() {} };
@@ -40,9 +40,13 @@ function buildApp(env = CONFIGURED) {
   for (const route of PUBLIC_API) {
     app.get(route, (req, res) => res.json({ ok: true, route }));
   }
-  for (const route of GATED_API) {
-    app.get(route, gate, (req, res) => res.json({ ok: true, route, user: req.user?.username }));
-  }
+  // Mounted the way index.js mounts them — app.use(prefix, gate, ...) — so
+  // Express strips the prefix and req.path is mount-relative inside the gate.
+  // Mounting on the full path instead kept req.path absolute and hid a bug
+  // where unauthenticated XHR got a 302 rather than a 401.
+  app.use('/api/purchasing', gate, (req, res) => res.json({ ok: true, user: req.user?.username }));
+  app.use('/api/receiving', gate, (req, res) => res.json({ ok: true, user: req.user?.username }));
+  app.get('/api/sheet-sync', gate, (req, res) => res.json({ ok: true, user: req.user?.username }));
 
   app.get(GATED_PAGES, gate, (req, res) => res.send('app shell'));
   app.get('*', (req, res) => res.send('app shell'));
@@ -59,6 +63,7 @@ function mentorCookie() {
       exp: Math.floor(Date.now() / 1000) + 600,
     },
     SECRET,
+    CookieType.SESSION,
   );
   return `${SESSION_COOKIE}=${sealed}`;
 }
@@ -118,7 +123,9 @@ describe('parts ordering is mentor-only', () => {
   });
 
   it('refuses a forged session on a gated route', async () => {
-    const forged = sealCookie({ sub: 'x', exp: Math.floor(Date.now() / 1000) + 600 }, 'wrong');
+    const forged = sealCookie(
+      { sub: 'x', exp: Math.floor(Date.now() / 1000) + 600 }, 'wrong', CookieType.SESSION,
+    );
     const res = await request(buildApp())
       .get('/api/purchasing/queue')
       .set('Cookie', `${SESSION_COOKIE}=${forged}`);
