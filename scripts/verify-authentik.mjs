@@ -112,6 +112,34 @@ const algs = metadata.id_token_signing_alg_values_supported ?? [];
 if (algs.length) pass(`ID token signing algorithms: ${algs.join(', ')}`);
 else { fail('no ID token signing algorithms advertised'); problems += 1; }
 
+/**
+ * This app verifies the ID token signature, so the provider must actually
+ * publish a key. An Authentik OAuth2 provider with no Signing Key set signs
+ * with HS256 from the client secret and serves an empty JWKS — discovery
+ * still looks healthy, and sign-in then fails only when a real user tries it.
+ */
+if (metadata.jwks_uri) {
+  try {
+    const res = await fetch(metadata.jwks_uri);
+    const jwks = await res.json();
+    const keys = jwks?.keys ?? [];
+
+    if (keys.length === 0) {
+      fail(
+        'JWKS is empty — the Authentik provider has no Signing Key set, so ID tokens\n'
+        + '    are signed with HS256 and this app cannot verify them. Set the provider\'s\n'
+        + '    "Signing Key" to a certificate and retry.',
+      );
+      problems += 1;
+    } else {
+      pass(`JWKS publishes ${keys.length} key(s): ${keys.map((k) => k.alg ?? k.kty).join(', ')}`);
+    }
+  } catch (err) {
+    fail(`could not fetch JWKS from ${metadata.jwks_uri}: ${err.message}`);
+    problems += 1;
+  }
+}
+
 const scopes = metadata.scopes_supported ?? [];
 if (scopes.length === 0) {
   warn('provider advertises no scopes_supported; cannot check the groups scope from here');
