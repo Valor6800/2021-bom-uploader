@@ -4,7 +4,7 @@
  */
 
 import { badRequest } from '../middleware/httpError.js';
-import { applyPartMask } from '../utils/partMask.js';
+import { applyPartMask, formatPartNumber } from '../utils/partMask.js';
 import { validatePartPayload, sanitizeJQL } from '../utils/validators.js';
 import { Powdercoat, Thickness, Material, Machinery } from '../utils/bomConstants.js';
 
@@ -45,6 +45,90 @@ export class PartService {
       `project = ${JIRA_PROJECT} AND summary ~ ${safe} AND issuetype = Part`;
     const issues = await this.jiraClient.searchIssues(jql, { paginate: true });
     return this._parseStories(issues);
+  }
+
+  /**
+   * Get parsed Part stories for an explicit set of keys — the bulk fetch the
+   * Assembly hub needs to render a per-build BOM (Sheet 06), since
+   * BuildService only knows the linked part *keys*, not their fields.
+   *
+   * @param {string[]} keys
+   * @returns {Promise<object[]>}
+   */
+  async getStoriesByKeys(keys) {
+    if (!Array.isArray(keys) || keys.length === 0) return [];
+
+    const safeKeys = keys.map((k) => sanitizeJQL(k)).join(', ');
+    const jql = `project = ${JIRA_PROJECT} AND issuetype = Part AND key in (${safeKeys})`;
+    const issues = await this.jiraClient.searchIssues(jql, { paginate: true });
+    return this._parseStories(issues);
+  }
+
+  /**
+   * The next unused Part number for a season — one past whatever the
+   * highest existing `V{seasonType}{year}P-NNNN` number is. ValorBOM has
+   * never allocated its own Part numbers before (every one up to now came
+   * from Onshape's own BOM export); this is only for "Clone a part" (Sheet
+   * 06), where a fresh ticket never touches CAD at all.
+   *
+   * Numbers are flat across the whole season, not scoped per Assembly — the
+   * number itself carries no Assembly identity, only "Epic Link" does.
+   *
+   * @param {string} seasonType  "R" or "F"
+   * @param {string} year        Two-digit year string
+   * @returns {Promise<string>} Four-digit, zero-padded
+   */
+  async getNextPartNumber(seasonType, year) {
+    const safeSeasonType = sanitizeJQL(seasonType);
+    const safeYear = sanitizeJQL(year);
+    const jql =
+      `project = ${JIRA_PROJECT} AND issuetype = Part AND summary ~ "V${safeSeasonType}${safeYear}P-*"`;
+
+    const issues = await this.jiraClient.searchIssues(jql, { paginate: true, fields: ['summary'] });
+    const stories = this._parseStories(issues);
+    const max = stories.reduce((acc, s) => Math.max(acc, parseInt(s.partNumber, 10) || 0), 0);
+    return String(max + 1).padStart(4, '0');
+  }
+
+  /**
+   * "Clone a part" (Sheet 06): duplicate an existing Part's BOM fields into
+   * a brand-new, unrelated ticket with a self-allocated number — for
+   * something the assembly side needs that never touched CAD (a spare, a
+   * second copy of a fastener plate). Unlike Re-create, this isn't a
+   * revision of anything and isn't linked to any Build.
+   *
+   * @param {object} params
+   * @param {string} params.sourceKey  The Part being duplicated
+   * @param {string} params.epicKey    The Assembly the new ticket belongs to
+   * @param {string} [params.name]     Defaults to the source Part's own name
+   * @param {number} [params.quantity] Defaults to the source Part's quantity
+   * @returns {Promise<{ key: string, fullPartNumber: string }>}
+   */
+  async clonePart({ sourceKey, epicKey, name, quantity }) {
+    const [source] = await this.getStoriesByKeys([sourceKey]);
+    if (!source) {
+      throw badRequest(`"${sourceKey}" is not a Part`);
+    }
+
+    const nextNumber = await this.getNextPartNumber(source.seasonType, source.year);
+    const fullPartNumber = formatPartNumber({
+      seasonType: source.seasonType,
+      year: source.year,
+      isEpic: false,
+      partNumber: nextNumber,
+      version: 'A',
+      name: name ?? source.name,
+    });
+
+    return this.createStory({
+      summary: fullPartNumber,
+      epic: epicKey,
+      quantity: quantity ?? source.quantity,
+      material: source.material,
+      machinery: source.machinery,
+      powdercoat: source.powdercoat,
+      thickness: source.thickness,
+    });
   }
 
   /**

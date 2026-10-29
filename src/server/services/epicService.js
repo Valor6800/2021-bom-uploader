@@ -62,6 +62,19 @@ export class EpicService {
   }
 
   /**
+   * Retrieve a single epic by its Jira issue key — what the Assembly hub
+   * (Sheet 06) needs to resolve a direct /assembly/:key link.
+   *
+   * @param {string} key  Jira issue key, e.g. "VAL-1"
+   * @returns {Promise<object|null>}
+   */
+  async getEpicByKey(key) {
+    const issue = await this.jiraClient.getIssue(key);
+    const [epic] = this._parseEpics([issue]);
+    return epic ?? null;
+  }
+
+  /**
    * Create a Jira epic with Onshape IDs.
    *
    * @param {object} payload

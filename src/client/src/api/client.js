@@ -107,6 +107,17 @@ export function createEpicFromURL(url) {
   });
 }
 
+export function fetchEpicByKey(key) {
+  return request(`/api/epics/${encodeURIComponent(key)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Revisions
+// ---------------------------------------------------------------------------
+export function fetchRevisionChain(key) {
+  return request(`/api/revisions/chain/${encodeURIComponent(key)}`);
+}
+
 // ---------------------------------------------------------------------------
 // Stories
 // ---------------------------------------------------------------------------
@@ -130,6 +141,85 @@ export function updateStory(key, payload) {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
+}
+
+/** Bulk fetch for rendering a per-build BOM, where BuildService only knows linked part keys. */
+export function fetchPartsByKeys(keys) {
+  if (!keys?.length) return Promise.resolve([]);
+  return request(`/api/parts/by-keys?keys=${encodeURIComponent(keys.join(','))}`);
+}
+
+/** "Clone a part": a fresh, self-numbered ticket under epicKey, not a revision of sourceKey. */
+export function clonePart(sourceKey, payload) {
+  return request(`/api/parts/${encodeURIComponent(sourceKey)}/clone`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Builds
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {string} assemblyKey
+ * @param {string[]} [revisionChainKeys]  Full revision chain for continuous
+ *   numbering/history; defaults server-side to just assemblyKey when omitted.
+ */
+export function fetchBuildsForAssembly(assemblyKey, revisionChainKeys) {
+  const params = new URLSearchParams({ assemblyKey });
+  if (revisionChainKeys?.length) {
+    params.set('revisionChainKeys', revisionChainKeys.join(','));
+  }
+  return request(`/api/builds?${params}`);
+}
+
+/**
+ * @param {{ assemblyKey: string, revisionChainKeys?: string[], name: string, cloneFromBuildKey?: string }} payload
+ */
+export function createBuild(payload) {
+  return request('/api/builds', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchBuildParts(buildKey) {
+  return request(`/api/builds/${encodeURIComponent(buildKey)}/parts`);
+}
+
+export function linkPartToBuild(buildKey, partKey) {
+  return request(`/api/builds/${encodeURIComponent(buildKey)}/parts`, {
+    method: 'POST',
+    body: JSON.stringify({ partKey }),
+  });
+}
+
+/** Every Build a Part is linked to, newest first — the current-build indicator. */
+export function fetchBuildsForPart(partKey) {
+  return request(`/api/builds/for-part/${encodeURIComponent(partKey)}`);
+}
+
+/** "Re-create for this Build": a new revision of the Part, linked only to targetBuildKey. */
+export function recreatePartForBuild(targetBuildKey, partKey) {
+  return request(`/api/builds/${encodeURIComponent(targetBuildKey)}/parts/${encodeURIComponent(partKey)}/recreate`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * @param {string} buildKey
+ * @param {{ assemblyKey: string, documentId: string, workspaceId: string, elementId: string }} payload
+ */
+export function cutBuildVersion(buildKey, payload) {
+  return request(`/api/builds/${encodeURIComponent(buildKey)}/cut-version`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function archiveBuild(buildKey) {
+  return request(`/api/builds/${encodeURIComponent(buildKey)}/archive`, { method: 'POST' });
 }
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,11 @@ const STYLES = {
   Changes: 'badge-changes',
   Updated: 'badge-updated',
   Exists: 'badge-exists',
+  Draft: 'badge-exists',
+  Active: 'badge-new',
+  Superseded: 'badge-changes',
+  Archived: 'badge-archived',
+  Current: 'badge-new',
 };
 
 export default function Badge({ status }) {

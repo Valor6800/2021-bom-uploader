@@ -164,9 +164,72 @@ export class OnshapeClient {
     return this._getBinary(path);
   }
 
+  /**
+   * List versions already cut for a document, newest first per the Onshape
+   * API's own ordering. Used to avoid re-cutting a version that already
+   * exists for a Build.
+   */
+  async listVersions(documentId) {
+    return this._get(`/api/documents/d/${documentId}/versions`);
+  }
+
   // -----------------------------------------------------------------------
   // Write operations
   // -----------------------------------------------------------------------
+
+  /**
+   * Cut a version — an immutable snapshot of a workspace. This is what
+   * happens when a Build is cut: the version's own id gets written back onto
+   * the Build's Onshape Version Link field (Sheet 02/03 of the plan).
+   *
+   * @param {string} documentId
+   * @param {string} workspaceId
+   * @param {object} args
+   * @param {string} args.name          The Build's own key, so the version is
+   *   identifiable from Onshape's version list without cross-referencing Jira
+   * @param {string} [args.description]  Free text; this plan puts a link back
+   *   to the Jira issue here
+   * @returns {Promise<{ id: string, name: string }>}
+   */
+  async createVersion(documentId, workspaceId, { name, description } = {}) {
+    const path = `/api/documents/d/${documentId}/versions`;
+    return this._post(path, {
+      documentId,
+      workspaceId,
+      name,
+      description: description ?? '',
+    });
+  }
+
+  /**
+   * Fork a new workspace from a specific version — what happens when a
+   * Revision starts. The prior revision's workspace and version history stay
+   * exactly as they were; the new workspace moves forward independently.
+   *
+   * UNVERIFIED REQUEST SHAPE: Onshape's own API Explorer (the authoritative
+   * source for this endpoint's body) requires a logged-in session and isn't
+   * reachable from here, and the public docs pages don't spell out the
+   * branch-from-version fields. `branchedFrom.vid` is a reasonable guess
+   * based on Onshape's version-id terminology elsewhere in the API, not a
+   * confirmed field name — verify against the API Explorer
+   * (https://cad.onshape.com/glassworks/explorer/#/Document) before this
+   * runs against anything that matters.
+   *
+   * @param {string} documentId
+   * @param {string} fromVersionId
+   * @param {object} args
+   * @param {string} args.name  The new Revision's own key
+   * @returns {Promise<{ id: string, name: string }>}
+   */
+  async createBranch(documentId, fromVersionId, { name } = {}) {
+    const path = `/api/documents/d/${documentId}/workspaces`;
+    return this._post(path, {
+      name,
+      documentId,
+      isBranchedFrom: true,
+      branchedFrom: { vid: fromVersionId },
+    });
+  }
 
   /**
    * Update metadata (custom properties) for a part.

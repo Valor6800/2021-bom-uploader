@@ -7,6 +7,7 @@ import { NavLink } from 'react-router-dom';
 export const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/assembly', label: 'Assembly BOM' },
+  { to: '/designer', label: 'Designer' },
   // Mentor-only: these move money and close tickets, so they sit behind
   // Authentik while the BOM tooling stays open to the whole team.
   { to: '/purchasing', label: 'Parts Order', mentorsOnly: true },

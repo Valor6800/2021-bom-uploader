@@ -1,5 +1,5 @@
 /**
- * Epic Routes — GET /api/epics, POST /api/epics/from-url
+ * Epic Routes — GET /api/epics, GET /api/epics/:key, POST /api/epics/from-url
  */
 
 import { Router } from 'express';
@@ -32,6 +32,20 @@ export default function epicRoutes({ epicService }) {
 
     const epics = await epicService.getEpics(seasonType, year);
     res.json(epics);
+  }));
+
+  /**
+   * GET /api/epics/:key — a single Assembly by Jira key, for direct links
+   * into the Assembly hub (Sheet 06).
+   */
+  router.get('/:key', asyncHandler(async (req, res) => {
+    const epic = await epicService.getEpicByKey(req.params.key);
+
+    if (!epic) {
+      throw badRequest(`"${req.params.key}" is not an Assembly`);
+    }
+
+    res.json(epic);
   }));
 
   /**

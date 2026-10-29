@@ -5,6 +5,8 @@
  * GET  /api/stories/:key
  * POST /api/stories
  * PUT  /api/stories/:key
+ * GET  /api/parts/by-keys
+ * POST /api/parts/:key/clone
  * POST /api/parts/preview
  * POST /api/parts/upload
  * POST /api/parts/auto-export
@@ -76,6 +78,38 @@ export default function partRoutes({ partService, exportService }) {
 
     await partService.updateStory(key, payload);
     res.json({ success: true });
+  }));
+
+  /**
+   * GET /api/parts/by-keys?keys=VAL-1,VAL-2 — bulk fetch for rendering a
+   * per-build BOM (Sheet 06), where BuildService only knows linked part
+   * keys, not their fields.
+   */
+  router.get('/parts/by-keys', asyncHandler(async (req, res) => {
+    const { keys } = req.query;
+
+    if (!keys) {
+      throw badRequest('Missing required query parameter: keys');
+    }
+
+    const keyList = String(keys).split(',').map((k) => k.trim()).filter(Boolean);
+    const stories = await partService.getStoriesByKeys(keyList);
+    res.json(stories);
+  }));
+
+  /**
+   * POST /api/parts/:key/clone  { epicKey, name?, quantity? }
+   * "Clone a part" (Sheet 06) — a fresh, unrelated ticket, not a revision.
+   */
+  router.post('/parts/:key/clone', asyncHandler(async (req, res) => {
+    const { epicKey, name, quantity } = req.body;
+
+    if (!epicKey) {
+      throw badRequest('Missing required body parameter: epicKey');
+    }
+
+    const result = await partService.clonePart({ sourceKey: req.params.key, epicKey, name, quantity });
+    res.json(result);
   }));
 
   /**

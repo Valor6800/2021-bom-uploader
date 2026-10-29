@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { createAssemblySlice } from './assemblySlice.js';
+import { createBuildSlice } from './buildSlice.js';
 import { createPartsSlice } from './partsSlice.js';
 import { createPurchasingSlice } from './purchasingSlice.js';
 import { createReceivingSlice } from './receivingSlice.js';

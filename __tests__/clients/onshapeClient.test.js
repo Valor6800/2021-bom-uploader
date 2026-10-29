@@ -272,6 +272,64 @@ describe('OnshapeClient', () => {
     });
   });
 
+  describe('listVersions', () => {
+    it('calls the correct path', async () => {
+      const client = makeClient();
+      mockGet.mockResolvedValueOnce({ data: [{ id: 'v1', name: 'VR27B-2087 Intake Build 1' }] });
+
+      const result = await client.listVersions('doc1');
+      expect(result).toEqual([{ id: 'v1', name: 'VR27B-2087 Intake Build 1' }]);
+      expect(mockGet.mock.calls[0][0]).toBe('/api/documents/d/doc1/versions');
+    });
+  });
+
+  describe('createVersion', () => {
+    it('POSTs documentId, workspaceId, name, and description', async () => {
+      const client = makeClient();
+      mockRequest.mockResolvedValueOnce({ data: { id: 'v2', name: 'Build 1' } });
+
+      const result = await client.createVersion('doc1', 'ws1', {
+        name: 'Build 1',
+        description: 'VAL-100',
+      });
+      expect(result).toEqual({ id: 'v2', name: 'Build 1' });
+
+      const config = mockRequest.mock.calls[0][0];
+      expect(config.method).toBe('POST');
+      expect(config.url).toBe('/api/documents/d/doc1/versions');
+      expect(config.data).toEqual({
+        documentId: 'doc1',
+        workspaceId: 'ws1',
+        name: 'Build 1',
+        description: 'VAL-100',
+      });
+    });
+
+    it('defaults description to an empty string when omitted', async () => {
+      const client = makeClient();
+      mockRequest.mockResolvedValueOnce({ data: {} });
+
+      await client.createVersion('doc1', 'ws1', { name: 'Build 1' });
+      expect(mockRequest.mock.calls[0][0].data.description).toBe('');
+    });
+  });
+
+  describe('createBranch', () => {
+    it('POSTs to the workspaces path with the source version id', async () => {
+      const client = makeClient();
+      mockRequest.mockResolvedValueOnce({ data: { id: 'ws2', name: 'Intake Rev B' } });
+
+      const result = await client.createBranch('doc1', 'v1', { name: 'Intake Rev B' });
+      expect(result).toEqual({ id: 'ws2', name: 'Intake Rev B' });
+
+      const config = mockRequest.mock.calls[0][0];
+      expect(config.method).toBe('POST');
+      expect(config.url).toBe('/api/documents/d/doc1/workspaces');
+      expect(config.data.name).toBe('Intake Rev B');
+      expect(config.data.branchedFrom).toEqual({ vid: 'v1' });
+    });
+  });
+
   describe('write error handling', () => {
     it('wraps write failures as OnshapeApiError with the write endpoint', async () => {
       const client = makeClient();

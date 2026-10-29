@@ -14,6 +14,7 @@ const mockSearchForIssuesUsingJql = jest.fn();
 const mockCreateIssue = jest.fn();
 const mockEditIssue = jest.fn();
 const mockGetIssue = jest.fn();
+const mockCreateIssueLink = jest.fn();
 
 jest.unstable_mockModule('jira.js', () => ({
   Version2Client: class {
@@ -24,6 +25,7 @@ jest.unstable_mockModule('jira.js', () => ({
         editIssue: mockEditIssue,
         getIssue: mockGetIssue,
       };
+      this.issueLinks = { createIssueLink: mockCreateIssueLink };
     }
   },
 }));
@@ -187,6 +189,31 @@ describe('JiraClient', () => {
         expect(e.status).toBe(400);
         expect(e.endpoint).toContain('createIssue');
       }
+    });
+  });
+
+  describe('createIssueLink', () => {
+    it('sends the type name and both issue keys on the correct sides', async () => {
+      const client = makeClient();
+      mockCreateIssueLink.mockResolvedValueOnce({});
+
+      await client.createIssueLink('Used In', 'VAL-100', 'VAL-200');
+
+      expect(mockCreateIssueLink).toHaveBeenCalledWith({
+        type: { name: 'Used In' },
+        inwardIssue: { key: 'VAL-100' },
+        outwardIssue: { key: 'VAL-200' },
+      });
+    });
+
+    it('wraps a failure as JiraApiError', async () => {
+      const client = makeClient();
+      const err = new Error('Bad request');
+      err.status = 400;
+      mockCreateIssueLink.mockRejectedValue(err);
+
+      await expect(client.createIssueLink('Revises', 'VAL-1', 'VAL-2'))
+        .rejects.toThrow(JiraApiError);
     });
   });
 });

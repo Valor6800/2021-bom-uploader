@@ -13,14 +13,17 @@ export default function PartRow({
   isSelected,
   onToggleSelect,
   onFieldChange,
+  selectable,
+  membershipLabel,
 }) {
   const isNew = story._status === 'New';
-  const rowClass = isNew && !isSelected ? 'row-deselected' : '';
+  const canSelect = selectable ?? isNew;
+  const rowClass = canSelect && !isSelected ? 'row-deselected' : '';
 
   return (
     <tr className={rowClass}>
       <td>
-        {isNew && (
+        {canSelect && (
           <input
             type="checkbox"
             checked={isSelected}
@@ -83,6 +86,7 @@ export default function PartRow({
       </td>
       <td className="whitespace-nowrap">
         <Badge status={story._status || 'Exists'} />
+        {membershipLabel && <span className="text-dim text-sm ml-2">{membershipLabel}</span>}
       </td>
     </tr>
   );

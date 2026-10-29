@@ -17,6 +17,8 @@ import { BOMService } from './services/bomService.js';
 import { EpicService } from './services/epicService.js';
 import { PartService } from './services/partService.js';
 import { ExportService } from './services/exportService.js';
+import { BuildService } from './services/buildService.js';
+import { RevisionService } from './services/revisionService.js';
 import { OrderSheetService } from './services/orderSheetService.js';
 import { PurchasingService } from './services/purchasingService.js';
 import { ReceivingService } from './services/receivingService.js';
@@ -24,6 +26,8 @@ import { ReceivingService } from './services/receivingService.js';
 // Routes
 import epicRoutes from './routes/epicRoutes.js';
 import partRoutes from './routes/partRoutes.js';
+import buildRoutes from './routes/buildRoutes.js';
+import revisionRoutes from './routes/revisionRoutes.js';
 import bomRoutes from './routes/bomRoutes.js';
 import exportRoutes from './routes/exportRoutes.js';
 import purchasingRoutes from './routes/purchasingRoutes.js';
@@ -73,6 +77,8 @@ const bomService = new BOMService({ onshapeClient });
 const epicService = new EpicService({ jiraClient, onshapeClient });
 const partService = new PartService({ jiraClient, bomService });
 const exportService = new ExportService({ onshapeClient });
+const revisionService = new RevisionService({ jiraClient });
+const buildService = new BuildService({ jiraClient, onshapeClient, revisionService });
 
 const orderSheetService = sheetsClient ? new OrderSheetService({ sheetsClient }) : null;
 const purchasingService = orderSheetService
@@ -142,6 +148,8 @@ const gate = requireAuth({ authConfig, host: HOST });
 // Public API — the BOM features
 // ---------------------------------------------------------------------------
 app.use('/api/epics', epicRoutes({ epicService }));
+app.use('/api/builds', buildRoutes({ buildService }));
+app.use('/api/revisions', revisionRoutes({ revisionService }));
 app.use('/api', partRoutes({ partService, exportService }));
 app.use('/api/bom', bomRoutes({ bomService }));
 app.use('/api/export', exportRoutes({ exportService }));

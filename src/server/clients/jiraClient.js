@@ -240,6 +240,30 @@ export class JiraClient {
     }, endpoint);
   }
 
+  /**
+   * Create an issue link between two issues.
+   *
+   * The link type's "outward" phrase describes `outwardKey`'s relationship to
+   * `inwardKey` (e.g. for "Used In" — outward "uses", inward "is used in" —
+   * outwardKey is the Build and inwardKey is the Part, so the Part's own page
+   * reads "is used in" the Build).
+   *
+   * @param {string} typeName    Link type name (e.g. "Used In", "Revises")
+   * @param {string} inwardKey   Issue key on the link type's inward side
+   * @param {string} outwardKey  Issue key on the link type's outward side
+   * @returns {Promise<void>}
+   */
+  async createIssueLink(typeName, inwardKey, outwardKey) {
+    const endpoint = `issueLinks.createIssueLink(${inwardKey}, ${outwardKey})`;
+    return this._retry(async () => {
+      await this.client.issueLinks.createIssueLink({
+        type: { name: typeName },
+        inwardIssue: { key: inwardKey },
+        outwardIssue: { key: outwardKey },
+      });
+    }, endpoint);
+  }
+
   // -----------------------------------------------------------------------
   // Internal helpers
   // -----------------------------------------------------------------------

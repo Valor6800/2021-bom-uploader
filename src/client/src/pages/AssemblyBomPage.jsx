@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useAppStore } from '../store/index.js';
 import AssemblySelection from '../components/AssemblySelection.jsx';
 import PartsListTable from '../components/PartsListTable.jsx';
@@ -26,6 +27,14 @@ export default function AssemblyBomPage() {
       </div>
 
       <AssemblySelection />
+
+      {selectedEpic && (
+        <p className="no-print mb-4">
+          <Link to={`/assembly/${selectedEpic.key}`} className="link-gold">
+            Open the Assembly hub for {selectedEpic.summary} →
+          </Link>
+        </p>
+      )}
 
       <PartsListTable jiraBaseUrl={JIRA_BASE_URL} />
     </>

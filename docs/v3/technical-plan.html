@@ -1,0 +1,806 @@
+<title>ValorBOM v3 — Assembly / Build / Part</title>
+<style>
+:root{
+  --paper:#eef0ec;
+  --surface:#ffffff;
+  --ink:#1e2a35;
+  --ink-soft:#4c5a63;
+  --line:#ccd3d1;
+  --accent:#a8722c;
+  --accent-soft:#e7d3b6;
+  --status-draft:#7c8894;
+  --status-active:#2f7d5a;
+  --status-superseded:#b1592f;
+  --status-archived:#9aa0a6;
+  --font-display:"Iowan Old Style","Sitka Text","Palatino Linotype",Georgia,"Noto Serif",serif;
+  --font-body:"Segoe UI","Helvetica Neue",Arial,"Noto Sans",sans-serif;
+  --font-mono:ui-monospace,"Cascadia Mono","Segoe UI Mono",Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#141b22;
+    --surface:#1b2530;
+    --ink:#e8ecee;
+    --ink-soft:#a9b4bb;
+    --line:#2e3b45;
+    --accent:#d9a54c;
+    --accent-soft:#3a3020;
+    --status-draft:#8b96a1;
+    --status-active:#4fae82;
+    --status-superseded:#d4784a;
+    --status-archived:#7b828a;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#141b22;
+  --surface:#1b2530;
+  --ink:#e8ecee;
+  --ink-soft:#a9b4bb;
+  --line:#2e3b45;
+  --accent:#d9a54c;
+  --accent-soft:#3a3020;
+  --status-draft:#8b96a1;
+  --status-active:#4fae82;
+  --status-superseded:#d4784a;
+  --status-archived:#7b828a;
+}
+
+*{box-sizing:border-box;}
+html{color-scheme:light dark;}
+body{
+  margin:0;
+  background:var(--paper);
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size:36px 36px;
+  background-attachment:local;
+  color:var(--ink);
+  font-family:var(--font-body);
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);}
+a:focus-visible, button:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+
+.wrap{
+  max-width:1180px;
+  margin:0 auto;
+  padding:2.5rem 1.5rem 6rem;
+  display:grid;
+  grid-template-columns:220px minmax(0,1fr);
+  gap:2.5rem;
+  align-items:start;
+}
+@media (max-width:840px){
+  .wrap{grid-template-columns:1fr;}
+}
+
+nav.toc{
+  position:sticky;
+  top:1.5rem;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:2px;
+  padding:1rem 1rem 1.1rem;
+  font-family:var(--font-mono);
+  font-size:0.78rem;
+}
+@media (max-width:840px){ nav.toc{position:static;} }
+nav.toc h2{
+  font-family:var(--font-mono);
+  font-size:0.7rem;
+  letter-spacing:0.12em;
+  text-transform:uppercase;
+  color:var(--ink-soft);
+  margin:0 0 0.7rem;
+  border-bottom:1px solid var(--line);
+  padding-bottom:0.5rem;
+}
+nav.toc ol{list-style:none; margin:0; padding:0; counter-reset:sheet -1;}
+nav.toc li{margin:0;}
+nav.toc a{
+  display:flex;
+  gap:0.6rem;
+  padding:0.32rem 0;
+  color:var(--ink-soft);
+  text-decoration:none;
+  border-bottom:1px dotted transparent;
+}
+nav.toc a:hover{color:var(--ink); border-bottom-color:var(--line);}
+nav.toc .num{color:var(--accent); font-weight:600; flex-shrink:0;}
+
+main{min-width:0;}
+
+.titleblock{
+  border:1px solid var(--line);
+  background:var(--surface);
+  margin-bottom:3rem;
+}
+.titleblock .top{padding:2.2rem 2rem 1.6rem;}
+.titleblock h1{
+  font-family:var(--font-display);
+  font-size:clamp(1.8rem,3.4vw,2.6rem);
+  margin:0 0 0.4rem;
+  text-wrap:balance;
+  letter-spacing:0.01em;
+}
+.titleblock .kicker{
+  font-family:var(--font-mono);
+  text-transform:uppercase;
+  letter-spacing:0.14em;
+  font-size:0.72rem;
+  color:var(--accent);
+  margin:0 0 0.9rem;
+}
+.titleblock .lede{
+  max-width:62ch;
+  color:var(--ink-soft);
+  font-size:1.02rem;
+}
+.stampgrid{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  border-top:1px solid var(--line);
+  font-family:var(--font-mono);
+  font-size:0.74rem;
+}
+@media (max-width:600px){ .stampgrid{grid-template-columns:repeat(2,1fr);} }
+.stampgrid div{
+  padding:0.65rem 1rem;
+  border-right:1px solid var(--line);
+  border-top:1px solid var(--line);
+}
+.stampgrid div:nth-child(4n){border-right:none;}
+.stampgrid .label{display:block; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.08em; font-size:0.65rem; margin-bottom:0.2rem;}
+
+section.sheet{
+  margin-bottom:3.6rem;
+  scroll-margin-top:1.5rem;
+}
+.sheethead{
+  display:flex;
+  align-items:baseline;
+  gap:0.9rem;
+  border-bottom:2px solid var(--ink);
+  padding-bottom:0.5rem;
+  margin-bottom:1.3rem;
+}
+.sheethead .n{
+  font-family:var(--font-mono);
+  font-size:0.95rem;
+  color:var(--accent);
+  font-weight:700;
+}
+.sheethead h2{
+  font-family:var(--font-display);
+  font-size:clamp(1.35rem,2.2vw,1.7rem);
+  margin:0;
+  text-wrap:balance;
+}
+
+.sheet p{max-width:70ch;}
+.sheet > p, .sheet .cols > p{color:var(--ink);}
+.lead{font-size:1.05rem; color:var(--ink-soft); max-width:66ch;}
+
+.example{
+  border-left:3px solid var(--accent);
+  background:var(--surface);
+  padding:0.9rem 1.1rem;
+  margin:1.1rem 0;
+  max-width:66ch;
+  font-size:0.95rem;
+}
+.example strong{color:var(--ink);}
+
+.decision{
+  border:1px solid var(--line);
+  border-left:3px solid var(--accent);
+  background:var(--surface);
+  padding:0.9rem 1.1rem;
+  margin:1.2rem 0;
+  max-width:66ch;
+}
+.decision .tag{
+  display:block;
+  font-family:var(--font-mono);
+  font-size:0.68rem;
+  letter-spacing:0.1em;
+  text-transform:uppercase;
+  color:var(--accent);
+  margin-bottom:0.35rem;
+}
+
+figure{margin:1.6rem 0 1.8rem;}
+figure svg{max-width:100%; height:auto; display:block;}
+figure.diagram{
+  background:var(--surface);
+  border:1px solid var(--line);
+  padding:1rem 1rem 0.4rem;
+  overflow-x:auto;
+}
+figcaption{
+  font-size:0.85rem;
+  color:var(--ink-soft);
+  margin-top:0.6rem;
+  max-width:66ch;
+}
+
+.table-wrap{overflow-x:auto; margin:1.2rem 0;}
+table{
+  border-collapse:collapse;
+  width:100%;
+  min-width:520px;
+  font-size:0.88rem;
+}
+table caption{
+  text-align:left;
+  font-family:var(--font-mono);
+  font-size:0.72rem;
+  text-transform:uppercase;
+  letter-spacing:0.08em;
+  color:var(--ink-soft);
+  margin-bottom:0.5rem;
+}
+th,td{
+  text-align:left;
+  padding:0.55rem 0.8rem;
+  border-bottom:1px solid var(--line);
+  vertical-align:top;
+}
+thead th{
+  font-family:var(--font-mono);
+  font-size:0.72rem;
+  text-transform:uppercase;
+  letter-spacing:0.06em;
+  color:var(--ink-soft);
+  border-bottom:1px solid var(--ink);
+}
+tbody tr:hover{background:var(--accent-soft);}
+code, .k{
+  font-family:var(--font-mono);
+  font-size:0.85em;
+  background:var(--accent-soft);
+  padding:0.08em 0.35em;
+  border-radius:2px;
+  white-space:nowrap;
+}
+
+.chip{
+  display:inline-flex;
+  align-items:center;
+  gap:0.4em;
+  font-family:var(--font-mono);
+  font-size:0.68rem;
+  text-transform:uppercase;
+  letter-spacing:0.06em;
+  padding:0.2em 0.55em;
+  border-radius:999px;
+  border:1px solid currentColor;
+}
+.chip::before{content:""; width:0.5em; height:0.5em; border-radius:50%; background:currentColor;}
+.chip-draft{color:var(--status-draft);}
+.chip-active{color:var(--status-active);}
+.chip-superseded{color:var(--status-superseded);}
+.chip-archived{color:var(--status-archived);}
+
+ol.steps{padding-left:1.3rem; max-width:66ch;}
+ol.steps li{margin-bottom:0.6rem;}
+ol.steps li::marker{font-family:var(--font-mono); color:var(--accent); font-weight:700;}
+
+.phaselist{list-style:none; margin:1.2rem 0; padding:0; max-width:70ch;}
+.phaselist li{
+  display:grid;
+  grid-template-columns:5.5rem 1fr;
+  gap:1rem;
+  padding:0.8rem 0;
+  border-top:1px solid var(--line);
+}
+.phaselist li:first-child{border-top:none;}
+.phaselist .ph{
+  font-family:var(--font-mono);
+  font-size:0.78rem;
+  color:var(--accent);
+  font-weight:700;
+}
+.phaselist h3{margin:0 0 0.2rem; font-size:1rem; font-family:var(--font-body); font-weight:600;}
+.phaselist p{margin:0; font-size:0.92rem; color:var(--ink-soft);}
+
+.qgrid{display:grid; gap:1rem; margin-top:1.2rem;}
+
+footer.colophon{
+  margin-top:4rem;
+  padding-top:1.2rem;
+  border-top:1px solid var(--line);
+  font-family:var(--font-mono);
+  font-size:0.72rem;
+  color:var(--ink-soft);
+  max-width:66ch;
+}
+</style>
+
+<div class="wrap">
+  <nav class="toc" aria-label="Sheet index">
+    <h2>Sheet index</h2>
+    <ol>
+      <li><a href="#sheet-00"><span class="num">00</span>Summary</a></li>
+      <li><a href="#sheet-01"><span class="num">01</span>Data model</a></li>
+      <li><a href="#sheet-02"><span class="num">02</span>Jira mapping</a></li>
+      <li><a href="#sheet-03"><span class="num">03</span>OnShape mapping</a></li>
+      <li><a href="#sheet-04"><span class="num">04</span>State &amp; sync</a></li>
+      <li><a href="#sheet-05"><span class="num">05</span>Designer tab</a></li>
+      <li><a href="#sheet-06"><span class="num">06</span>Assembly tab</a></li>
+      <li><a href="#sheet-07"><span class="num">07</span>Lifecycle &amp; guidance</a></li>
+      <li><a href="#sheet-08"><span class="num">08</span>Rollout phases</a></li>
+      <li><a href="#sheet-09"><span class="num">09</span>Decisions</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <div class="titleblock">
+      <div class="top">
+        <p class="kicker">ValorBOM · Planning set</p>
+        <h1>Assembly / Build / Part — a plan for the BOM uploader</h1>
+        <p class="lede">A design for teaching ValorBOM the three-tier process the team already uses on the shop floor, so the tool tracks builds the way students actually talk about them — instead of forcing every iteration through a two-tier model that has no room for &quot;which bash bar goes with which robot.&quot;</p>
+      </div>
+      <div class="stampgrid">
+        <div><span class="label">Project</span>ValorBOM v3</div>
+        <div><span class="label">Prepared for</span>CAD &amp; Assembly sub-teams</div>
+        <div><span class="label">Date</span>2026-09-27</div>
+        <div><span class="label">Sheets</span>00 of 09</div>
+      </div>
+    </div>
+
+    <!-- SHEET 00 -->
+    <section class="sheet" id="sheet-00">
+      <div class="sheethead"><span class="n">00</span><h2>Summary</h2></div>
+      <p class="lead">Today ValorBOM understands two tiers: an <span class="k">Assembly</span> (a Jira issue type) and a <span class="k">Part</span> (another Jira issue type), tied to a single OnShape document. That matches the first half of how the team designs — Space City Intake and Manor Intake correctly become two different Assemblies, because they differ in form, fit, and function. It doesn't match the second half: when the 2&quot; bash bar became a 1&quot; bash bar, nothing changed about the assembly, but everything about which parts a student should pull for that robot changed. There's no ticket for that distinction today, no OnShape artifact that represents it, and no screen where a student can even ask the question.</p>
+      <p>This plan adds <strong>Build</strong> as a real tier between Assembly and Part. A Build is the specific combination of parts a student actually builds — it gets its own Jira issue, its own OnShape version (or branch, if two builds need to stay alive at once), and its own bill of materials, which can reuse parts from a sibling Build or introduce new ones.</p>
+      <p>The plan is written for two audiences that already exist on the team and will keep using the same tool for different jobs:</p>
+      <ul>
+        <li><strong>CAD students</strong> design a part, copy the link to their branch, and paste it in. The uploader should figure out the rest — which Assembly, which Build, which Jira tickets, which OnShape version — asking only for the decisions a person actually needs to make.</li>
+        <li><strong>Assembly students</strong> never touch OnShape directly. They open an Assembly in ValorBOM and get a build-by-build bill of materials with the assembly instructions to match — the one place to find out what to grab and how to put it together, for whichever build is on the table.</li>
+      </ul>
+      <p>Because the tool now has to remember relationships that don't live comfortably inside a single Jira field — which parts a Build reuses from its predecessor, and the instruction steps for building it — this plan leans on Jira more deliberately rather than adding a database of its own: issue links for relationships that aren't a simple parent/child, and a couple of structured fields for content Jira doesn't have a native shape for. Sheet 04 covers how.</p>
+    </section>
+
+    <!-- SHEET 01 -->
+    <section class="sheet" id="sheet-01">
+      <div class="sheethead"><span class="n">01</span><h2>Data model: Assembly → Build → Part, and Revision</h2></div>
+      <p class="lead">The relationship that matters most — and the one today's model can't express — is that a <strong>Build owns a bill of materials, not a Part</strong>. A Part can appear in more than one Build under the same Assembly, at its own quantity, and a Build can be created by cloning a sibling's parts list and swapping out only what changed.</p>
+      <div class="example">
+        <strong>Space City Intake</strong> is one Assembly. <strong>Build 1</strong> uses a 2&quot; bash bar; <strong>Build 2</strong> uses a 1&quot; bash bar. Both builds share the same left side plate and right side plate — one Jira ticket each, linked into both builds — and each build uses its own <em>revision</em> of the same bash-bar part number, linked into only the build that uses it. A student building the robot needs to know: is this Build 1 or Build 2? Both answers are on the same Assembly.
+      </div>
+      <figure class="diagram">
+        <svg viewBox="0 0 900 420" role="img" aria-label="Entity diagram: one Assembly has two Builds; each Build uses the shared left and right plate parts, and Build 1 uses revision A of the bash-bar part while Build 2 uses revision B of that same part number.">
+          <defs>
+            <marker id="arrow1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path>
+            </marker>
+          </defs>
+          <g fill="none" stroke="currentColor" stroke-width="1.4">
+            <line x1="450" y1="84" x2="240" y2="170" marker-end="url(#arrow1)"></line>
+            <line x1="450" y1="84" x2="660" y2="170" marker-end="url(#arrow1)"></line>
+            <line x1="240" y1="234" x2="565" y2="330" marker-end="url(#arrow1)"></line>
+          </g>
+          <g fill="none" stroke="var(--accent)" stroke-width="1.8">
+            <line x1="225" y1="234" x2="127" y2="330" marker-end="url(#arrow1)"></line>
+            <line x1="255" y1="234" x2="337" y2="330" marker-end="url(#arrow1)"></line>
+            <line x1="645" y1="234" x2="143" y2="330" marker-end="url(#arrow1)"></line>
+            <line x1="675" y1="234" x2="353" y2="330" marker-end="url(#arrow1)"></line>
+          </g>
+          <line x1="660" y1="234" x2="775" y2="330" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#arrow1)"></line>
+
+          <rect x="350" y="20" width="200" height="64" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+          <text x="450" y="46" text-anchor="middle" font-size="12" fill="currentColor" font-family="var(--font-mono)">ASSEMBLY</text>
+          <text x="450" y="65" text-anchor="middle" font-size="12" fill="currentColor">Space City Intake</text>
+
+          <rect x="140" y="170" width="200" height="64" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+          <text x="240" y="196" text-anchor="middle" font-size="12" fill="currentColor" font-family="var(--font-mono)">BUILD 1</text>
+          <text x="240" y="215" text-anchor="middle" font-size="12" fill="currentColor">2&quot; bash bar</text>
+
+          <rect x="560" y="170" width="200" height="64" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+          <text x="660" y="196" text-anchor="middle" font-size="12" fill="currentColor" font-family="var(--font-mono)">BUILD 2</text>
+          <text x="660" y="215" text-anchor="middle" font-size="12" fill="currentColor">1&quot; bash bar</text>
+
+          <rect x="40" y="330" width="190" height="64" rx="4" fill="none" stroke="var(--accent)" stroke-width="1.8"></rect>
+          <text x="135" y="356" text-anchor="middle" font-size="11.5" fill="currentColor" font-family="var(--font-mono)">PART</text>
+          <text x="135" y="373" text-anchor="middle" font-size="11.5" fill="currentColor">Left side plate</text>
+          <text x="135" y="388" text-anchor="middle" font-size="10" fill="var(--accent)">used by both builds</text>
+
+          <rect x="250" y="330" width="190" height="64" rx="4" fill="none" stroke="var(--accent)" stroke-width="1.8"></rect>
+          <text x="345" y="356" text-anchor="middle" font-size="11.5" fill="currentColor" font-family="var(--font-mono)">PART</text>
+          <text x="345" y="373" text-anchor="middle" font-size="11.5" fill="currentColor">Right side plate</text>
+          <text x="345" y="388" text-anchor="middle" font-size="10" fill="var(--accent)">used by both builds</text>
+
+          <rect x="470" y="330" width="190" height="64" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+          <text x="565" y="356" text-anchor="middle" font-size="11" fill="currentColor" font-family="var(--font-mono)">PART 3005 · REV A</text>
+          <text x="565" y="373" text-anchor="middle" font-size="11.5" fill="currentColor">Bash bar, 2&quot; dia.</text>
+
+          <rect x="680" y="330" width="190" height="64" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+          <text x="775" y="356" text-anchor="middle" font-size="11" fill="currentColor" font-family="var(--font-mono)">PART 3005 · REV B</text>
+          <text x="775" y="373" text-anchor="middle" font-size="11.5" fill="currentColor">Bash bar, 1&quot; dia.</text>
+        </svg>
+        <figcaption>Build sits between Assembly and Part as a many-to-many join, not a strict tree: the two gold parts are each linked into both builds, while the bash bar is one Part number (3005) carried through two revisions — each its own ticket, each linked into only the build that uses it.</figcaption>
+      </figure>
+      <p>This is the one structural change everything else in this plan follows from: a Part's parent is its Assembly (for numbering and scoping), but its <em>membership</em> is one or more Builds, each possibly at a different quantity. Jira's native parent/child fields assume a single parent, so Sheet 02 covers the field and link-type changes needed to represent that honestly.</p>
+      <p><strong>Revision is a second axis, on Assembly and Part only — Build doesn't get one.</strong> Not every change to an assembly is big enough to be a new Assembly, but some are bigger than a new Build: the assembly itself gets redesigned, yet it's still recognizably the same assembly. Space City Intake could just as easily have gained a Revision B instead of Manor Intake existing as a wholly separate Assembly — same number, a new ticket, and its own OnShape branch. Its Builds don't start over at 1, though: Build numbering belongs to the Assembly as a whole, not to whichever revision happens to be current, so it just keeps counting from wherever the last revision left off. That's deliberate — a bare &quot;Build 1&quot; has to mean one unambiguous build, not &quot;whichever revision's first build you're thinking of.&quot; The same axis applies one level down: the bash bar in the diagram above isn't two different Parts, it's one Part number carried through two revisions.</p>
+      <figure class="diagram">
+        <svg viewBox="0 0 800 240" role="img" aria-label="Revision chain diagram: Intake Revision A and Revision B are two separate tickets sharing the same assembly number, linked by a revises relationship, each forking its own OnShape branch — but Build numbering is continuous across both, so Revision A holds Builds 1 and 2, and Revision B continues at Build 3.">
+          <defs>
+            <marker id="arrowRev" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path>
+            </marker>
+          </defs>
+          <g fill="none" stroke="currentColor" stroke-width="1.6">
+            <line x1="350" y1="65" x2="450" y2="65" marker-end="url(#arrowRev)"></line>
+            <line x1="200" y1="100" x2="200" y2="150" marker-end="url(#arrowRev)"></line>
+            <line x1="600" y1="100" x2="600" y2="150" marker-end="url(#arrowRev)"></line>
+          </g>
+          <text x="400" y="55" text-anchor="middle" font-size="11" font-family="var(--font-mono)" fill="var(--ink-soft)">revises</text>
+
+          <rect x="50" y="30" width="300" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+          <text x="200" y="58" text-anchor="middle" font-size="12.5" fill="currentColor" font-family="var(--font-mono)">VR27A-1000A</text>
+          <text x="200" y="78" text-anchor="middle" font-size="12" fill="currentColor">Intake · Revision A</text>
+
+          <rect x="450" y="30" width="300" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+          <text x="600" y="58" text-anchor="middle" font-size="12.5" fill="currentColor" font-family="var(--font-mono)">VR27A-1000B</text>
+          <text x="600" y="78" text-anchor="middle" font-size="12" fill="currentColor">Intake · Revision B</text>
+
+          <rect x="50" y="150" width="300" height="60" rx="4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"></rect>
+          <text x="200" y="175" text-anchor="middle" font-size="11" fill="var(--ink-soft)">Builds 1, 2 — Revision A's</text>
+          <text x="200" y="192" text-anchor="middle" font-size="11" fill="var(--ink-soft)">own OnShape branch</text>
+
+          <rect x="450" y="150" width="300" height="60" rx="4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"></rect>
+          <text x="600" y="175" text-anchor="middle" font-size="11" fill="var(--ink-soft)">Builds 3, 4 — Revision B's own</text>
+          <text x="600" y="192" text-anchor="middle" font-size="11" fill="var(--ink-soft)">branch, count keeps going</text>
+        </svg>
+        <figcaption>Same assembly number, two tickets, one continuous Build count: each Revision forks its own OnShape branch, but Build numbering never resets, so a Build number alone is never ambiguous about which revision it belongs to — the Assembly Link is what actually tells you that.</figcaption>
+      </figure>
+    </section>
+
+    <!-- SHEET 02 -->
+    <section class="sheet" id="sheet-02">
+      <div class="sheethead"><span class="n">02</span><h2>Jira mapping</h2></div>
+      <p class="lead">Part is a custom Jira issue type. <strong>Assembly isn't</strong> — it's the stock Epic type, renamed to display as &quot;Assembly.&quot; That's not a shortcut; it's required. Every Part, every PARTS-project purchase ticket, and now Build all point up to their Assembly through the classic Epic Link field — and on Jira Data Center, that field only ever recognizes the literal Epic type as a valid target. There's no per-project setting to register a different custom type at that level; the hierarchy configuration that allows it is a Jira Cloud-only feature, built on a different architecture than Data Center's. We tried the separate-type route first and confirmed this the hard way (<code>gh.epic.error.not.found</code> on every write once the target wasn't Epic-typed) before settling on the rename. Build joins Part as the second custom type. Two more small additions carry the rest of this plan: a Revision field and link on Assembly and Part, and a many-to-many link replacing the single-parent assumption between Part and Build.</p>
+      <div class="decision">
+        <span class="tag">Decided</span>
+        <strong>Assembly shares its issue type with General's epics.</strong> Renaming Epic to Assembly is instance-wide — the General project's 14 existing epics (unrelated team epics, not assemblies) now display as &quot;Assembly&quot; too. Accepted deliberately: the alternative (a genuinely separate type) breaks Epic Link for every Part and purchase ticket, which is worse. Each project's own screens keep the fields sane — General's epics never got Assembly-specific fields like Revision, since those were only added to HAR's screens.
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption>New issue type: Build</caption>
+          <thead><tr><th>Field</th><th>Type</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>Summary</td><td>text</td><td><code>VR27B-2087 Intake Build 1</code> — the issue's own sequential number (Build's own counter, unrelated to Assembly's or Part's), plus the human build ordinal in the name</td></tr>
+            <tr><td>Assembly Link</td><td>epic link, reused</td><td>Points up to the parent Assembly issue — specifically, whichever Revision ticket this build's design work happened under</td></tr>
+            <tr><td>Build Number</td><td>number, calculated</td><td>1, 2, 3… assigned by ValorBOM at creation, never hand-typed — sequential across the whole Assembly, continuing through every Revision, so &quot;Build 1&quot; always means one specific build</td></tr>
+            <tr><td>Onshape Version Link</td><td>URL</td><td>The version's own OnShape URL, written once when the build is cut (Sheet 03) — clickable straight into OnShape from the raw Jira ticket, not just an opaque id. Blank while still Draft. ValorBOM parses the version id back out of it when it needs one, the same way it already parses document/workspace/element out of a pasted Assembly URL.</td></tr>
+            <tr><td>Status</td><td>workflow</td><td><span class="chip chip-draft">Draft</span> → <span class="chip chip-active">Active</span> → <span class="chip chip-superseded">Superseded</span> via the <code>Cut Version</code> and <code>Supersede</code> transitions, plus <code>Archive</code> → <span class="chip chip-archived">Archived</span> as a global transition reachable from any of the three — a real Jira workflow, transitioned automatically by ValorBOM, not typed by hand (see below)</td></tr>
+            <tr><td>Instructions Data</td><td>long text</td><td>JSON blob of this build's ordered assembly-instruction steps, rendered by the Hub UI (Sheet 04); step images are ordinary Jira attachments on this issue, referenced by attachment id inside the blob</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Status is a real Jira workflow, driven automatically — not typed by hand.</strong> This mirrors a pattern already running in the team's Jira: the Parts-purchasing flow walks tickets through <code>New → Request for Purchase → Approved → Sent to VFF → Ordered → Delivered</code> via named transitions, and ValorBOM already fires several of those itself — checking a shipment in moves <code>Ordered → Delivered</code> without anyone touching Jira's UI. Build's workflow is shorter: <code>Cut Version</code> (Draft → Active), <code>Supersede</code> (Active → Superseded), and a global <code>Archive</code> reachable from any of the three. ValorBOM fires the transition itself — cutting a version transitions the Build to Active, and in the same action transitions whichever sibling Build was previously Active to Superseded — so nobody has to remember to flip either one. But because it's a real workflow status, not a value only ValorBOM understands, a mentor can still open the ticket in Jira directly and transition it by hand if something needs correcting, exactly the same escape hatch the Parts workflow already relies on.</p>
+      <div class="table-wrap">
+        <table>
+          <caption>New fields on Assembly and Part</caption>
+          <thead><tr><th>Field</th><th>Type</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>Revision</td><td>single letter</td><td>A, B, C… — which iteration of this number this ticket is</td></tr>
+            <tr><td>Revises</td><td>issue link</td><td>Points back to the previous revision's ticket, chaining the history; blank on a first revision</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption>Relationship change</caption>
+          <thead><tr><th>Today</th><th>Proposed</th></tr></thead>
+          <tbody>
+            <tr><td>Part → Epic Link → Assembly (one parent, fixed)</td><td>Part → Epic Link → Assembly Revision <em>(still belongs to the Assembly number overall — that's a property of the number, not of which revision ticket happens to hold the link)</em></td></tr>
+            <tr><td>— no build concept —</td><td>Build → Epic Link → Assembly Revision; Part ←→ new link type <code>is used in</code> ←→ Build <em>(many-to-many)</em></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Naming convention v3.</strong> The trailing letter marks a <em>revision</em> — a new ticket, same number, one step in that identity's history — and it belongs on an Assembly or a Part, never on a Build. Number and revision are independent of each other, and independent across types:</p>
+      <div class="example">
+        <code>VR27A-1000A Intake</code> — the first revision of Assembly 1000.<br>
+        <code>VR27A-1000B Intake</code> — its second revision: same number, a new ticket, its own OnShape branch — but Builds keep counting from wherever Revision A left off (Build 3, not Build 1 again).<br>
+        <code>VR27B-2087 Intake Build 1</code> — a Build, linked up to whichever Assembly Revision ticket it belongs to.<br>
+        <code>VR27P-3005A Bash bar</code> / <code>VR27P-3005B Bash bar</code> — two revisions of the same Part slot, each its own ticket, each linked into only the one Build that uses it.
+      </div>
+      <p>A ticket with no revision letter yet is implicitly Revision A — nothing changes for the majority of Assemblies and Parts, which only ever get revised once, or not at all. The letter starts mattering the moment a second revision exists, and even then it's the <code>Revises</code> link, not the letter by itself, that makes the history actually navigable.</p>
+      <p><strong>Migration.</strong> Every existing Assembly and Part ticket becomes Revision A of itself — a field default, no new ticket, no <code>Revises</code> link needed since there's nothing before it. Every existing Assembly additionally gets one implicit <code>Build 1</code> issue, and every Part currently linked to that Assembly gets the new <code>is used in</code> link added to Build 1. Nothing already in Jira is deleted, renumbered, or relettered.</p>
+    </section>
+
+    <!-- SHEET 03 -->
+    <section class="sheet" id="sheet-03">
+      <div class="sheethead"><span class="n">03</span><h2>OnShape mapping</h2></div>
+      <p class="lead">A Build is committed to OnShape as a <strong>version</strong> — an immutable snapshot of the workspace at the moment the team locks in that BOM. A Revision is the bigger step: it forks its own OnShape <strong>branch</strong> — a new workspace split off from wherever the design diverged — so the prior revision's workspace and version history stay exactly as they were, fully inspectable, while the new revision moves forward on its own. Builds within a revision are just versions cut inside that revision's branch; sibling builds never need a branch between them, since they already share that branch's history up to whichever point each was versioned.</p>
+      <div class="table-wrap">
+        <table>
+          <caption>New OnshapeClient methods needed</caption>
+          <thead><tr><th>Method</th><th>Onshape endpoint</th><th>Used for</th></tr></thead>
+          <tbody>
+            <tr><td><code>createVersion(documentId, workspaceId, {name, description})</code></td><td><code>POST /api/documents/d/{d}/versions</code></td><td>Cutting a Build — name is the Build key, description links back to the Jira issue</td></tr>
+            <tr><td><code>listVersions(documentId)</code></td><td><code>GET /api/documents/d/{d}/versions</code></td><td>Prevent re-cutting a version that already exists for a Build</td></tr>
+            <tr><td><code>createBranch(documentId, fromVersionId, {name})</code></td><td><code>POST /api/documents/d/{d}/workspaces</code> (from version)</td><td>Starting a new Assembly Revision — forks a fresh workspace, tagged with the Revision's Jira key</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Metadata round-trip, two layers.</strong> The client already has <code>updatePartMetadata</code> and <code>updateElementMetadata</code> wired up from the last refactor, but nothing calls them yet. This plan puts them to work in two ways on the same call:</p>
+      <ul>
+        <li><strong>Identity, for ValorBOM.</strong> The first time the uploader creates a Jira Part for an OnShape element, it writes that Part's key, its Assembly key, and its current Build key back onto the element as custom properties. The next time anyone pastes a link to that same element — even after a rename — the uploader recognizes it by property, not by guessing from the name.</li>
+        <li><strong>Number and Revision, for anyone browsing OnShape directly.</strong> Every OnShape element already has native <code>Part number</code> and <code>Revision</code> fields — plain editable text, shown in the Properties dialog and every BOM table by default, confirmed against the team's own reference document (<code>VF27A-0000A</code>: Part number <code>0000</code>, Revision <code>A</code>). ValorBOM writes the bare number and letter into these on every save, so the BOM table and Properties dialog read the same identity Jira shows — not just an opaque internal id. Jira stays the authoritative source; this is a one-way mirror, not a second place revision can be set from.</li>
+      </ul>
+    </section>
+
+    <!-- SHEET 04 -->
+    <section class="sheet" id="sheet-04">
+      <div class="sheethead"><span class="n">04</span><h2>State &amp; sync</h2></div>
+      <p class="lead">ValorBOM today holds no state of its own — every page load re-derives everything from a live JQL query and a live OnShape BOM read. A Part belonging to more than one Build, and a Build carrying its own instructions, both look at first like they need somewhere new to live. They don't: Jira already has the right native mechanisms for both, once Build and Part lean on more of what a Jira issue can hold than a single custom field.</p>
+      <ul>
+        <li><strong>Which parts a Build uses.</strong> The <code>is used in</code> issue link from Sheet 02 — native, many-to-many, nothing to build.</li>
+        <li><strong>How many of each.</strong> Stays the Part ticket's existing Quantity field, same as today. The one thing this doesn't cover: a Build needing a different quantity of an otherwise-unchanged part. That's a deliberately accepted gap, not one this plan tries to close — see Sheet 09.</li>
+        <li><strong>OnShape version and branch.</strong> Already plain Jira fields on Build (Sheet 02) and on Assembly/Revision (the <code>documentId</code>/<code>workspaceId</code>/<code>elementId</code> fields the app already has today) — one workspace id per revision, nothing new invented.</li>
+        <li><strong>Assembly instructions.</strong> The new <code>Instructions Data</code> field on Build (Sheet 02), holding the ordered steps as a JSON blob the Hub UI reads and writes structurally. Step images are ordinary Jira attachments on the Build issue, referenced by attachment id inside that JSON — not a new storage system, just a field Jira already supports put to a more deliberate use.</li>
+        <li><strong>Who changed what, when.</strong> Jira's own issue history — every field, link, and status change is already tracked per issue. Nothing extra to log.</li>
+      </ul>
+      <figure class="diagram">
+        <svg viewBox="0 0 700 420" role="img" aria-label="Two-spoke diagram: the uploader sits between Jira, where it writes Assembly, Build, and Part issues, issue links, attachments, custom fields, and workflow transitions and reads them back via JQL and issue history, and OnShape, where it writes versions, branches, and metadata properties and reads BOM, version, and property data.">
+          <defs>
+            <marker id="arrow2b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path>
+            </marker>
+          </defs>
+          <g fill="none" stroke="currentColor" stroke-width="1.5">
+            <line x1="350" y1="90" x2="350" y2="175" marker-start="url(#arrow2b)" marker-end="url(#arrow2b)"></line>
+            <line x1="350" y1="255" x2="350" y2="330" marker-start="url(#arrow2b)" marker-end="url(#arrow2b)"></line>
+          </g>
+
+          <rect x="250" y="20" width="200" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+          <text x="350" y="48" text-anchor="middle" font-size="12.5" fill="currentColor" font-family="var(--font-mono)">JIRA</text>
+          <text x="350" y="66" text-anchor="middle" font-size="11" fill="currentColor">issues · links · attachments · fields</text>
+
+          <rect x="250" y="175" width="200" height="80" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+          <text x="350" y="210" text-anchor="middle" font-size="13" fill="currentColor" font-family="var(--font-mono)">VALORBOM</text>
+          <text x="350" y="228" text-anchor="middle" font-size="11.5" fill="currentColor">the uploader</text>
+          <text x="350" y="244" text-anchor="middle" font-size="11.5" fill="currentColor">(orchestrator)</text>
+
+          <rect x="250" y="330" width="200" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+          <text x="350" y="358" text-anchor="middle" font-size="12.5" fill="currentColor" font-family="var(--font-mono)">ONSHAPE</text>
+          <text x="350" y="376" text-anchor="middle" font-size="11" fill="currentColor">documents · versions · branches</text>
+
+          <text x="370" y="112" font-size="10.5" fill="var(--ink-soft)" text-anchor="start">writes issues, links, fields,</text>
+          <text x="370" y="126" font-size="10.5" fill="var(--ink-soft)" text-anchor="start">attachments, workflow transitions</text>
+          <text x="370" y="140" font-size="10.5" fill="var(--ink-soft)" text-anchor="start">reads via JQL + issue history</text>
+
+          <text x="370" y="277" font-size="10.5" fill="var(--ink-soft)" text-anchor="start">writes version, branch,</text>
+          <text x="370" y="291" font-size="10.5" fill="var(--ink-soft)" text-anchor="start">metadata properties</text>
+          <text x="370" y="305" font-size="10.5" fill="var(--ink-soft)" text-anchor="start">reads BOM, versions, props</text>
+        </svg>
+        <figcaption>Two systems, not three: Jira is authoritative for tickets, relationships, workflow state, and instruction content; OnShape is authoritative for CAD geometry. ValorBOM holds nothing of its own between requests.</figcaption>
+      </figure>
+      <p><strong>The sync rule.</strong> The existing fix that stops a CAD re-sync from clobbering Jira-only fields like powdercoat and thickness (each write only touches the fields it owns) extends in both directions: Jira writes never overwrite OnShape-authored geometry properties, and OnShape writes never overwrite Jira-authored ticket fields. Every sync is a merge of owned fields, never a full overwrite.</p>
+      <div class="decision">
+        <span class="tag">Decided</span>
+        <strong>No separate database.</strong> Jira already holds everything this plan needs: issue links for relationships, a structured field for instructions, a real workflow for Build status, native history for audit trail. Standing up a second system to hold a few megabytes of JSON wasn't worth the extra thing to run and back up. The one trade-off, accepted deliberately: a Part's quantity is a single number on its own ticket, not a number per Build it's used in — see Sheet 09.
+      </div>
+    </section>
+
+    <!-- SHEET 05 -->
+    <section class="sheet" id="sheet-05">
+      <div class="sheethead"><span class="n">05</span><h2>Designer tab — the CAD student flow</h2></div>
+      <p>The portal's navigation collapses to two tabs — <strong>Designer</strong> and <strong>Assembly</strong> — replacing today's single <code>/assembly</code> page with a home built for each kind of student. This sheet covers Designer; Sheet 06 covers Assembly.</p>
+      <p class="lead">The student's job stays exactly as small as it is today — paste a link — and the uploader carries the rest, asking only at the two points where a person actually has to decide something: whether this is a brand-new Assembly, and which Build the part belongs to.</p>
+      <figure class="diagram">
+        <svg viewBox="0 0 800 1100" role="img" aria-label="Flowchart: paste an OnShape link, resolve its metadata, check whether it is already stamped with Jira keys (if yes, jump straight to diff), otherwise check whether its Assembly already exists (if not, confirm creating one), then pick a Build, preview and diff parts, save, and optionally cut an OnShape version to transition the Build to Active.">
+          <defs>
+            <marker id="arrow3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path>
+            </marker>
+          </defs>
+
+          <g font-family="var(--font-body)" font-size="12.5" fill="currentColor">
+            <rect x="200" y="20" width="240" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+            <text x="320" y="49" text-anchor="middle">Paste OnShape document /</text>
+            <text x="320" y="66" text-anchor="middle">part-studio link</text>
+
+            <rect x="200" y="130" width="240" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+            <text x="320" y="153" text-anchor="middle">Resolve document, workspace,</text>
+            <text x="320" y="169" text-anchor="middle">element; read any stamped</text>
+            <text x="320" y="185" text-anchor="middle">Jira/Build properties</text>
+
+            <polygon points="320,240 470,290 320,340 170,290" fill="none" stroke="currentColor" stroke-width="1.6"></polygon>
+            <text x="320" y="284" text-anchor="middle" font-size="11.5">Already stamped with</text>
+            <text x="320" y="300" text-anchor="middle" font-size="11.5">Jira keys?</text>
+
+            <rect x="500" y="255" width="200" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+            <text x="600" y="278" text-anchor="middle" font-size="11.5">Open existing Part / Build</text>
+            <text x="600" y="294" text-anchor="middle" font-size="11.5">card — diff vs. current</text>
+            <text x="600" y="310" text-anchor="middle" font-size="11.5">OnShape BOM</text>
+
+            <polygon points="320,380 470,430 320,480 170,430" fill="none" stroke="currentColor" stroke-width="1.6"></polygon>
+            <text x="320" y="424" text-anchor="middle" font-size="11.5">Assembly already exists</text>
+            <text x="320" y="440" text-anchor="middle" font-size="11.5">for this document?</text>
+
+            <rect x="500" y="395" width="200" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+            <text x="600" y="418" text-anchor="middle" font-size="11.5">Confirm dialog →</text>
+            <text x="600" y="434" text-anchor="middle" font-size="11.5">create new Assembly</text>
+            <text x="600" y="450" text-anchor="middle" font-size="11.5">(Jira epic + number)</text>
+
+            <rect x="200" y="520" width="240" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+            <text x="320" y="543" text-anchor="middle">Pick a Build — existing</text>
+            <text x="320" y="559" text-anchor="middle">Draft/Active card, or + New,</text>
+            <text x="320" y="575" text-anchor="middle">optionally cloned from a sibling</text>
+
+            <rect x="200" y="630" width="240" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+            <text x="320" y="653" text-anchor="middle">Preview &amp; diff parts vs.</text>
+            <text x="320" y="669" text-anchor="middle">chosen Build — flags parts</text>
+            <text x="320" y="685" text-anchor="middle">shared with sibling Builds</text>
+
+            <rect x="200" y="740" width="240" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+            <text x="320" y="763" text-anchor="middle">Save → create/update Part</text>
+            <text x="320" y="779" text-anchor="middle">issues; link Parts ↔ Build;</text>
+            <text x="320" y="795" text-anchor="middle">stamp OnShape metadata</text>
+
+            <polygon points="320,850 470,900 320,950 170,900" fill="none" stroke="currentColor" stroke-width="1.6"></polygon>
+            <text x="320" y="894" text-anchor="middle" font-size="11.5">Ready to cut this</text>
+            <text x="320" y="910" text-anchor="middle" font-size="11.5">Build's version?</text>
+
+            <rect x="500" y="865" width="200" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"></rect>
+            <text x="600" y="893" text-anchor="middle" font-size="11.5">Stay in Draft —</text>
+            <text x="600" y="909" text-anchor="middle" font-size="11.5">keep iterating</text>
+
+            <rect x="200" y="990" width="240" height="80" rx="4" fill="none" stroke="var(--accent)" stroke-width="2"></rect>
+            <text x="320" y="1017" text-anchor="middle">Create OnShape version;</text>
+            <text x="320" y="1033" text-anchor="middle">transition Build to Active —</text>
+            <text x="320" y="1049" text-anchor="middle">prior Active auto-Supersedes</text>
+          </g>
+
+          <g fill="none" stroke="currentColor" stroke-width="1.4">
+            <line x1="320" y1="90" x2="320" y2="130" marker-end="url(#arrow3)"></line>
+            <line x1="320" y1="200" x2="320" y2="240" marker-end="url(#arrow3)"></line>
+            <line x1="320" y1="340" x2="320" y2="380" marker-end="url(#arrow3)"></line>
+            <line x1="470" y1="290" x2="500" y2="290" marker-end="url(#arrow3)"></line>
+            <line x1="470" y1="430" x2="500" y2="430" marker-end="url(#arrow3)"></line>
+            <line x1="320" y1="480" x2="320" y2="520" marker-end="url(#arrow3)"></line>
+            <line x1="320" y1="590" x2="320" y2="630" marker-end="url(#arrow3)"></line>
+            <line x1="320" y1="700" x2="320" y2="740" marker-end="url(#arrow3)"></line>
+            <line x1="320" y1="810" x2="320" y2="850" marker-end="url(#arrow3)"></line>
+            <line x1="470" y1="900" x2="500" y2="900" marker-end="url(#arrow3)"></line>
+            <line x1="320" y1="950" x2="320" y2="990" marker-end="url(#arrow3)"></line>
+            <path d="M700,430 L730,430 L730,555 L440,555" marker-end="url(#arrow3)"></path>
+            <path d="M700,290 L760,290 L760,665 L440,665" marker-end="url(#arrow3)"></path>
+          </g>
+          <g font-family="var(--font-mono)" font-size="10.5" fill="var(--ink-soft)">
+            <text x="480" y="282">yes</text>
+            <text x="480" y="422">no</text>
+            <text x="330" y="374">no</text>
+            <text x="320" y="502" text-anchor="middle">yes</text>
+            <text x="330" y="844">yes</text>
+            <text x="480" y="892">no</text>
+          </g>
+        </svg>
+        <figcaption>Two decision points only: whether OnShape already knows this element's identity, and whether it belongs to a new Assembly. Everything else — picking or cloning a Build, diffing parts, cutting the version — is a straight line.</figcaption>
+      </figure>
+      <ol class="steps">
+        <li><strong>Paste the link.</strong> Same single input box the tool has today; nothing new for the student to learn to get started.</li>
+        <li><strong>Confirm, only for a new Assembly.</strong> If the uploader can't find this document linked to any existing Assembly, it proposes a name and number and shows a confirm dialog before creating the Jira epic — a deliberate click, not a silent auto-create, so a stray paste doesn't spawn a duplicate epic.</li>
+        <li><strong>Pick a Build.</strong> A row of Build cards under the Assembly — Draft and Active, with status chips — plus <strong>+ New Build</strong>, which can start from a blank BOM or clone a sibling Build's parts list as a starting point (exactly the &quot;keep the plates, swap the bash bar&quot; case).</li>
+        <li><strong>Preview &amp; diff.</strong> The existing New/Exists/Changes table, now scoped to the chosen Build, with a &quot;shared with Build 1&quot; indicator on rows that already exist elsewhere under the Assembly — reusing a ticket instead of minting a duplicate.</li>
+        <li><strong>Fill in part data, right there in the table.</strong> Every &quot;New&quot; row is a real part number about to be minted, not a placeholder — material, machinery, powdercoat, thickness, quantity are all editable inline before saving, so a designer leaves with a fully-specified Part ticket, not a bare number to be filled in later by someone else.</li>
+        <li><strong>Save.</strong> Creates or updates Part issues, links them to the Build, and stamps the OnShape element with the resulting keys.</li>
+        <li><strong>Cut the version — separately, on purpose.</strong> A Build can be saved to many times while still Draft; cutting an OnShape version is its own explicit action, so a build isn't versioned on every small edit. ValorBOM transitions the Build to Active the moment it's cut, and in the same action transitions whichever sibling Build was previously Active to Superseded — two Jira workflow transitions, fired automatically, not two things a person has to remember.</li>
+      </ol>
+      <div class="decision">
+        <span class="tag">Scope note</span>
+        Starting a new Revision isn't part of this flow. Pasting a link only ever resolves to an existing Revision or proposes a brand-new Assembly — revising an assembly is a bigger call than picking a Build, so it lives as its own deliberate action on the Assembly tab (Sheet 06), never something inferred from a casual paste.
+      </div>
+    </section>
+
+    <!-- SHEET 06 -->
+    <section class="sheet" id="sheet-06">
+      <div class="sheethead"><span class="n">06</span><h2>Assembly tab — the one-stop shop</h2></div>
+      <p class="lead">Assembly students don't paste OnShape links; they need to know what to grab and how to put it together. A new page, <code>/assembly/:key</code>, replaces today's single flat parts table with a hub built around the thing they're actually deciding: which build.</p>
+      <ul>
+        <li><strong>Revision selector.</strong> Only shows up once an Assembly has more than one Revision — most never do. When it's there, it's a simple switcher above the Build tabs; the rest of the hub scopes to whichever Revision is selected.</li>
+        <li><strong>Build tabs.</strong> One tab per Build under the selected Revision, each carrying its status chip — Draft/Active/Superseded/Archived, a real Jira workflow ValorBOM drives automatically (Sheet 02). There's always exactly one Active tab per Revision, so it doubles as &quot;the one to grab&quot; without a separate flag anyone has to set.</li>
+        <li><strong>Bill of materials.</strong> Per-build parts list — quantity, material, machinery, powdercoat, thickness — pulling shared parts in once even though they're also used by a sibling build.</li>
+        <li><strong>Move or re-create, part by part.</strong> When the team moves from one Build to the next, each BOM row gets two explicit actions: <strong>Move to this Build</strong> links the same Part ticket into the new Build — the right call when nothing changed, like the side plates — and <strong>Re-create for this Build</strong> clones it into a new revision, linked only to the new Build — the right call when it did, like the bash bar. Neither happens silently; a part linked into two Builds was put there on purpose, not left over by accident.</li>
+        <li><strong>Current-build indicator.</strong> A Part linked into more than one Build shows which is current — its highest-numbered linked Build — with earlier ones listed as history, so a BOM row is never ambiguous about which build it actually belongs to today.</li>
+        <li><strong>Clone a part.</strong> For a part the assembly side needs that never touched CAD — a spare, a second copy of a fastener plate — duplicate an existing Part's data into a new, unrelated ticket (same material/machinery defaults, new number) without a round trip through Designer. Unlike Move/Re-create above, this doesn't create a new revision of anything; it's a fresh Part.</li>
+        <li><strong>Part management.</strong> Edit a Part's quantity, material, machinery, powdercoat, or thickness directly from the hub — the same fields Designer can set, available here too, since not every correction should require going back to OnShape.</li>
+        <li><strong>OnShape version link.</strong> One click from the BOM straight into the exact OnShape version that build was cut from.</li>
+        <li><strong>Assembly instructions.</strong> An ordered list of steps, each a short line of text plus an optional photo or diagram and an optional reference to a specific part and quantity — authored once per build, stored in the Build issue's <code>Instructions Data</code> field (Sheet 04), with an optional plain-text copy synced into the Jira Build issue's description for anyone without portal access.</li>
+        <li><strong>Print view.</strong> A clean, printable page per build — parts list plus steps plus images — built on the print-aware styling the app already has, meant for the pit table.</li>
+        <li><strong>Build comparison.</strong> A side-by-side of two builds' BOMs, so &quot;which bash bar do I grab&quot; has a direct answer instead of a guess from memory.</li>
+      </ul>
+    </section>
+
+    <!-- SHEET 07 -->
+    <section class="sheet" id="sheet-07">
+      <div class="sheethead"><span class="n">07</span><h2>Part lifecycle &amp; in-product guidance</h2></div>
+      <p class="lead">Both tabs are used by high schoolers, most of whom will touch ValorBOM for one season. The UI has to carry the explanation itself — where a Part is in its life, and what the four words on screen (Assembly, Build, Part, Revision) actually mean — rather than pointing to a wiki page nobody reads before the first regional.</p>
+      <figure class="diagram">
+        <svg viewBox="0 0 900 190" role="img" aria-label="Part lifecycle stepper: Previewed in the diff table, then Created as a Jira ticket, then In a Build once linked with a quantity, then Active once that Build's OnShape version is cut, then Superseded once a later Build replaces it.">
+          <defs>
+            <marker id="arrowLife" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path>
+            </marker>
+          </defs>
+          <g fill="none" stroke="currentColor" stroke-width="1.5">
+            <line x1="116" y1="50" x2="244" y2="50" marker-end="url(#arrowLife)"></line>
+            <line x1="296" y1="50" x2="424" y2="50" marker-end="url(#arrowLife)"></line>
+            <line x1="476" y1="50" x2="604" y2="50" marker-end="url(#arrowLife)"></line>
+            <line x1="656" y1="50" x2="784" y2="50" marker-end="url(#arrowLife)"></line>
+          </g>
+          <circle cx="90" cy="50" r="26" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
+          <circle cx="270" cy="50" r="26" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
+          <circle cx="450" cy="50" r="26" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
+          <circle cx="630" cy="50" r="26" fill="none" stroke="var(--accent)" stroke-width="2.2"></circle>
+          <circle cx="810" cy="50" r="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 3"></circle>
+
+          <g text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">
+            <text x="90" y="100">Previewed</text>
+            <text x="270" y="100">Created</text>
+            <text x="450" y="100">In a Build</text>
+            <text x="630" y="100">Active</text>
+            <text x="810" y="100">Superseded</text>
+          </g>
+          <g text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">
+            <text x="90" y="120">in the diff table,</text>
+            <text x="90" y="134">not saved yet</text>
+            <text x="270" y="120">its Jira ticket</text>
+            <text x="270" y="134">exists</text>
+            <text x="450" y="120">linked, with a</text>
+            <text x="450" y="134">quantity</text>
+            <text x="630" y="120">its Build's</text>
+            <text x="630" y="134">version is cut</text>
+            <text x="810" y="120">a later Build</text>
+            <text x="810" y="134">replaced it here</text>
+          </g>
+        </svg>
+        <figcaption>The same five-state stepper appears next to a Part on both tabs, so a student reads its status at a glance instead of piecing it together from ticket fields.</figcaption>
+      </figure>
+      <p>&quot;Active&quot; isn't exclusive to one Build — a Part moved forward into a later Build (Sheet 06's <strong>Move to this Build</strong>) just adds that Build to the same ticket, and the current-build indicator shows whichever is latest. <strong>Superseded</strong> means something more specific: a different ticket — a new revision made with <strong>Re-create for this Build</strong> — took its place for the newer Build, and this one stays exactly as it was for the Build it actually shipped in.</p>
+      <p>A Build gets the same treatment one size up: its <span class="chip chip-draft">Draft</span> <span class="chip chip-active">Active</span> <span class="chip chip-superseded">Superseded</span> <span class="chip chip-archived">Archived</span> chips are a real Jira workflow status (Sheet 02), driven automatically the same way the team's existing Parts-purchasing flow already drives Ordered/Delivered — so the chip a student sees can't quietly go stale, but a mentor can still correct it by hand in Jira if something needs fixing. An Assembly adds only the Revision letter underneath. Three tiers, one visual language.</p>
+      <p><strong>In-product guidance, not a manual.</strong></p>
+      <ul>
+        <li><strong>One vocabulary, everywhere.</strong> Jira-native terms — Epic Link, issue type, custom field — never surface in the student-facing UI. Only the four words the team already uses out loud: Assembly, Build, Part, Revision.</li>
+        <li><strong>Inline glossary.</strong> A small &quot;?&quot; beside any of those four words, anywhere they appear, opens a one-sentence, plain-language definition on the spot — not a link out to Confluence.</li>
+        <li><strong>Teaching empty states.</strong> Before an Assembly has a second Build, the <strong>+ New Build</strong> control's helper text explains what a Build is using the team's own example (&quot;same assembly, different combination of parts — like a 1&quot; vs. 2&quot; bash bar&quot;), right where a student is about to create one.</li>
+        <li><strong>Confirm dialogs explain the stakes.</strong> The new-Assembly and new-Revision confirm gates (Sheets 05–06) say in plain terms what's about to happen and why it matters, not just &quot;Are you sure?&quot;</li>
+      </ul>
+    </section>
+
+    <!-- SHEET 08 -->
+    <section class="sheet" id="sheet-08">
+      <div class="sheethead"><span class="n">08</span><h2>Rollout phases</h2></div>
+      <p class="lead">Ordered so each phase produces something usable on its own, rather than one large cutover.</p>
+      <ol class="phaselist">
+        <li><span class="ph">Phase 0</span><div><h3>Jira schema <span class="chip chip-active">Done</span></h3><p>Build issue type and its fields (<code>Build Number</code>, <code>Onshape Version Link</code>, <code>Instructions Data</code>), its own workflow (<code>Cut Version</code>/<code>Supersede</code>/<code>Archive</code>), the Revision field on Assembly and Part, and the <code>Used In</code> / <code>Revises</code> link types — all shipped. Assembly ended up as the stock Epic type renamed, not a new type (Sheet 02); Build has its own dedicated workflow, split off from the one Part shares.</p></div></li>
+        <li><span class="ph">Phase 1</span><div><h3>Backend foundations <span class="chip chip-active">Done</span></h3><p><code>BuildService</code> (continuous build numbering across a revision chain, <code>cutVersion</code> driving Cut Version/Supersede automatically, Archive) and <code>RevisionService</code> (walks the Revises chain, advances the revision letter); <code>createVersion</code>/<code>listVersions</code>/<code>createBranch</code> on the OnShape client (the branch request body is a best guess, flagged in the code for verification against Onshape's own API Explorer); <code>createIssueLink</code> on the Jira client; the one-time migration script, dry-run by default. 23 new tests, all passing. Not yet wired to any route — Phases 2 and 3 are what actually call this.</p></div></li>
+        <li><span class="ph">Phase 2</span><div><h3>Designer tab <span class="chip chip-active">Done</span></h3><p>Shipped the flow from Sheet 05 end to end: <code>AssemblySelection</code> reused as-is for the Assembly step; a new <code>BuildSelection</code> picker (dropdown plus create, with an optional clone-from-sibling); a new <code>DesignerPartsTable</code> that merges the Assembly-wide CAD preview with the Build's own linked-part list client-side, so an existing Part shows as reusable ("from another build") alongside the usual New/Changes rows, plus a Cut Version action wired to the real OnShape orchestration. <code>PartRow</code> grew two optional, backward-compatible props rather than forking it — the Assembly BOM page's table is untouched. Verified via a clean <code>vite build</code> and the full Jest suite (416/416); no browser-automation tool was available this session to click through it directly, so that pass is still owed before calling the UI itself trustworthy, not just its build.</p></div></li>
+        <li><span class="ph">Phase 3</span><div><h3>Assembly tab <span class="chip chip-active">Done</span></h3><p>Shipped: a new <code>/assembly/:key</code> page — Revision selector (only when a chain exists), Build tabs carrying the real status chip, and a per-build BOM that pulls in every Part linked across the Revision's sibling Builds, not just the active one. A row already in the active Build is directly editable (same fields Designer sets); a row that only belongs to a sibling renders as a candidate with the two explicit actions from Sheet 06 — <strong>Move to this Build</strong> (plain link) and <strong>Re-create for this Build</strong> (a real new Part revision via <code>RevisionService</code>, chained with Revises, linked only to the new Build). The current-build indicator is derived client-side from each part's full linked-build set rather than a separate query per part. Cut Version and Archive are one click from the hub itself. New backend surface: <code>BuildService.getBuildsForPart</code>, <code>BuildService.recreateForBuild</code>, <code>PartService.getStoriesByKeys</code>, <code>EpicService.getEpicByKey</code>, and the Revises-chain endpoint that Phase 1 had built but never routed. <strong>Clone a part</strong> shipped too: the team decided ValorBOM should allocate its own number rather than requiring a manual entry — <code>PartService.getNextPartNumber</code> finds one past the highest existing <code>V{seasonType}{year}P-NNNN</code> across the whole season (the number itself carries no Assembly identity, only "Epic Link" does, so numbering is flat per season, not per Assembly), and <code>clonePart</code> copies the source Part's BOM fields into a fresh, unrelated ticket at that number, Revision A, no Build link. A cloned-but-unlinked Part still needs to be findable, so the hub's BOM also pulls in every Part under the Assembly via the existing epic-linked fetch, not just Build-linked ones — it shows up immediately as a Move/Re-create candidate. Also shipped: a <strong>Print</strong> button backed by a dedicated print-only BOM (the app's global print rules strip columns by position, which would have dropped Qty) and a <strong>Compare builds</strong> panel, derived entirely from the already-loaded part list. 438/438 tests passing, clean <code>vite build</code>. Assembly instructions authoring (steps + images in the Build's <code>Instructions Data</code> field) moves to Phase 5 with the rest of the authoring work; the print view will pick the steps up once they exist. A live-data smoke test against the real Jira instance confirmed the new read-only endpoints work, but found the team's current tickets (gearbox-practice Parts, template clones) predate this build season's naming convention — there's no real Assembly yet to click through end-to-end against, independent of anything in this plan.</p></div></li>
+        <li><span class="ph">Phase 4</span><div><h3>Metadata round-trip</h3><p>Turn on <code>updatePartMetadata</code>/<code>updateElementMetadata</code> writes so repeat pastes resolve by stamped identity instead of name-matching.</p></div></li>
+        <li><span class="ph">Phase 5</span><div><h3>Guidance, instructions authoring &amp; polish</h3><p>The inline glossary and teaching empty states from Sheet 07; the instruction step editor with images; an activity log surfaced in the UI.</p></div></li>
+      </ol>
+    </section>
+
+    <!-- SHEET 09 -->
+    <section class="sheet" id="sheet-09">
+      <div class="sheethead"><span class="n">09</span><h2>Decisions</h2></div>
+      <p class="lead">The five judgment calls this plan raised, as settled by the team. Recorded here so the reasoning stays attached to the decision, not just the conclusion.</p>
+      <div class="qgrid">
+        <div class="decision"><span class="tag">Decided</span><strong>Anyone can create a Build.</strong> No lead gate — consistent with the team's existing preference for lightweight, confirm-but-don't-gate creation (Sheet 05's confirm dialog is a typo guard, not a permission check).</div>
+        <div class="decision"><span class="tag">Decided</span><strong>Anyone can start a Revision.</strong> Same answer as Build, even though revising a whole assembly is the bigger of the two calls — the team is choosing to trust students with it rather than route it through leads.</div>
+        <div class="decision"><span class="tag">Decided</span><strong>Every Assembly starts at Revision A.</strong> Confirmed as the default from Sheet 02 — nothing changes for the majority of Assemblies, which are only ever on Revision A.</div>
+        <div class="decision"><span class="tag">Decided</span><strong>Parts never span Assemblies.</strong> If the same design is needed under a different Assembly, that's a new Part number under that Assembly, not a shared link — the numbering scheme in Sheet 02 already assumed this. Within the same Assembly, a part carried into a later Revision only needs a new revision of itself if its design actually changed; reused unchanged, it's still just Revision A.</div>
+        <div class="decision"><span class="tag">Decided</span><strong>No separate database — Jira holds it all.</strong> Detailed in Sheet 04 — issue links, attachments, a real workflow for Build status, and a structured field for instructions cover what a side database would have, with one accepted trade-off: Part quantity is one number per ticket, not one per Build it's used in.</div>
+      </div>
+    </section>
+
+    <footer class="colophon">ValorBOM v3 planning set · 10 sheets · prepared 2026-09-26 · revised 2026-09-27</footer>
+  </main>
+</div>
