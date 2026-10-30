@@ -25,3 +25,16 @@ export function describeUpstreamError(err) {
   }
   return err?.message ?? String(err);
 }
+
+/**
+ * Which upstream system an error came from: 'tracker' for a JiraApiError,
+ * 'onshape' for an OnshapeApiError, null for our own errors.
+ *
+ * @param {Error} err
+ * @returns {'tracker'|'onshape'|null}
+ */
+export function upstreamSource(err) {
+  if (err?.name === 'JiraApiError') return 'tracker';
+  if (err?.name === 'OnshapeApiError') return 'onshape';
+  return null;
+}

@@ -377,3 +377,368 @@ describe('EpicService.generateEpicFromURL', () => {
     expect(onshapeClient.getElementMetadata).not.toHaveBeenCalled();
   });
 });
+
+describe('EpicService.getEpic', () => {
+  it('uses phrase JQL on summary and ignores a hit whose parsed number differs', async () => {
+    const jiraClient = makeJiraClient({
+      searchIssues: jest.fn().mockResolvedValue([
+        { key: 'HAR-1', fields: { summary: 'VF27A-0000B Test Assembly' } },
+        { key: 'HAR-2', fields: { summary: 'VF27A-0000A Test Assembly' } },
+      ]),
+    });
+    const service = new EpicService({ jiraClient });
+    const result = await service.getEpic('VF27A-0000A');
+    const [jql] = jiraClient.searchIssues.mock.calls[0];
+    expect(jql).toContain('summary ~ "\\"VF27A-0000A\\""');
+    expect(jql).not.toContain('text ~');
+    expect(result.key).toBe('HAR-2');
+  });
+
+  it('returns null when no hit has exactly that number', async () => {
+    const jiraClient = makeJiraClient({
+      searchIssues: jest.fn().mockResolvedValue([{ key: 'HAR-1', fields: { summary: 'VF27A-0000B X' } }]),
+    });
+    await expect(new EpicService({ jiraClient }).getEpic('VF27A-0000A')).resolves.toBeNull();
+  });
+});
+
+describe('EpicService onboarding (B5)', () => {
+  const DOC = '8c64dfdcb66184646a7a3f17';
+  const WS = '82f00d3cbea6901ac26040bd';
+  const EL = 'faea62821490977c33bc8d7c';
+  const OTHER = '0123456789abcdef01234567';
+  const URL = `https://cad.onshape.com/documents/${DOC}/w/${WS}/e/${EL}`;
+  const SUMMARY = 'VF27A-0000A Test Assembly';
+
+  const savedProject = process.env.PROJECT_KEY;
+  beforeAll(() => { process.env.PROJECT_KEY = 'HAR'; });
+  afterAll(() => {
+    if (savedProject === undefined) delete process.env.PROJECT_KEY;
+    else process.env.PROJECT_KEY = savedProject;
+  });
+
+  function metadata(overrides = {}) {
+    const values = { Name: 'Test Assembly', 'Part number': '0000', Revision: 'A', Project: 'VF27', ...overrides };
+    const ids = {
+      Name: '57f3fb8efa3416c06701d60d',
+      'Part number': '57f3fb8efa3416c06701d60f',
+      Revision: '57f3fb8efa3416c06701d610',
+      Project: '57f3fb8efa3416c06701d613',
+    };
+    return {
+      elementType: 1,
+      mimeType: 'onshape/assembly',
+      properties: Object.entries(ids).map(([name, propertyId]) => ({ name, propertyId, value: values[name] })),
+    };
+  }
+
+  function assemblyIssue(key, { doc = DOC, ws = WS, el = EL, summary = SUMMARY, created = '2026-10-29T20:15:40.000+0000' } = {}) {
+    return {
+      key,
+      fields: {
+        summary,
+        issuetype: { name: 'Assembly' },
+        status: { name: 'New' },
+        created,
+        customfield_10300: doc,
+        customfield_10301: ws,
+        customfield_10302: el,
+      },
+    };
+  }
+
+  /**
+   * Route searchIssues by query: element lookups, number lookups, and the
+   * Build-number query BuildService runs.
+   */
+  function setup({ byElement = [], byNumber = [], meta = metadata(), createIssue, buildService, getIssue } = {}) {
+    const searchIssues = jest.fn(async (jql) => {
+      if (jql.includes('cf[10302]')) return byElement;
+      if (jql.includes('summary ~')) return byNumber;
+      return [];
+    });
+    const jiraClient = makeJiraClient({
+      searchIssues,
+      createIssue: createIssue ?? jest.fn().mockResolvedValue({ key: 'HAR-2050' }),
+      getIssue: getIssue ?? jest.fn(),
+    });
+    const onshapeClient = {
+      baseUrl: 'https://cad.onshape.com',
+      getElementMetadata: jest.fn().mockResolvedValue(meta),
+    };
+    const builds = buildService ?? {
+      createBuild: jest.fn().mockResolvedValue({
+        key: 'HAR-2051', summary: 'Test Assembly Build 1', assemblyKey: 'HAR-2050',
+        buildNumber: 1, status: 'Draft', onshapeVersionLink: null,
+      }),
+    };
+    const service = new EpicService({ jiraClient, onshapeClient, buildService: builds });
+    return { service, jiraClient, onshapeClient, buildService: builds };
+  }
+
+  describe('previewOnboarding', () => {
+    it('answers exists for an exact element and document match on this workspace, without reading OnShape', async () => {
+      const { service, onshapeClient, jiraClient } = setup({ byElement: [assemblyIssue('HAR-2030')] });
+      const result = await service.previewOnboarding(URL);
+      expect(result).toEqual(expect.objectContaining({ status: 'exists', matchedOn: 'workspace' }));
+      expect(result.assembly.key).toBe('HAR-2030');
+      expect(onshapeClient.getElementMetadata).not.toHaveBeenCalled();
+      const [jql] = jiraClient.searchIssues.mock.calls[0];
+      expect(jql).toBe(`project = HAR AND issuetype = Assembly AND cf[10302] ~ "${EL}"`);
+    });
+
+    it('answers matchedOn document for a match on another workspace', async () => {
+      const { service } = setup({ byElement: [assemblyIssue('HAR-2030', { ws: OTHER })] });
+      const result = await service.previewOnboarding(URL);
+      expect(result).toEqual(expect.objectContaining({ status: 'exists', matchedOn: 'document' }));
+    });
+
+    it('prefers the same-workspace match over a newer one elsewhere', async () => {
+      const { service } = setup({
+        byElement: [
+          assemblyIssue('HAR-2040', { ws: OTHER, created: '2026-10-30T00:00:00.000+0000' }),
+          assemblyIssue('HAR-2030'),
+        ],
+      });
+      const result = await service.previewOnboarding(URL);
+      expect(result.assembly.key).toBe('HAR-2030');
+      expect(result.matchedOn).toBe('workspace');
+    });
+
+    it('does not count the same element id in a different document as a duplicate', async () => {
+      const { service } = setup({ byElement: [assemblyIssue('HAR-2030', { doc: OTHER })] });
+      const result = await service.previewOnboarding(URL);
+      expect(result.status).toBe('new');
+    });
+
+    it('ignores a ~ hit whose element id is not an exact match', async () => {
+      const { service } = setup({ byElement: [assemblyIssue('HAR-2030', { el: `${EL.slice(0, 23)}0` })] });
+      const result = await service.previewOnboarding(URL);
+      expect(result.status).toBe('new');
+    });
+
+    it('proposes the Assembly built from the OnShape properties', async () => {
+      const { service, jiraClient } = setup();
+      const result = await service.previewOnboarding(URL);
+      expect(result).toEqual({
+        status: 'new',
+        proposed: expect.objectContaining({
+          summary: SUMMARY,
+          fullPartNumber: 'VF27A-0000A',
+          name: 'Test Assembly',
+          revision: 'A',
+          seasonLabel: 'Facility 2027',
+          documentId: DOC,
+          workspaceId: WS,
+          elementId: EL,
+        }),
+      });
+      expect(jiraClient.createIssue).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 with the other Assembly when the number belongs to another element', async () => {
+      const { service } = setup({ byNumber: [assemblyIssue('HAR-2040', { el: OTHER, summary: 'VF27A-0000A Old Test' })] });
+      await expect(service.previewOnboarding(URL)).rejects.toMatchObject({
+        status: 409,
+        message: 'VF27A-0000A is already used by HAR-2040.',
+        details: { assembly: expect.objectContaining({ key: 'HAR-2040' }), proposed: expect.objectContaining({ summary: SUMMARY }) },
+      });
+    });
+
+    it('lists incomplete properties in problems[]', async () => {
+      const { service } = setup({ meta: metadata({ Project: null, 'Part number': '12' }) });
+      await expect(service.previewOnboarding(URL)).rejects.toMatchObject({
+        status: 400,
+        details: {
+          problems: [
+            { property: 'Project', issue: 'missing', hint: expect.any(String) },
+            { property: 'Part number', issue: 'invalid', value: '12', hint: expect.any(String) },
+          ],
+        },
+      });
+    });
+
+    it('refuses a version link with a hint to use the workspace link', async () => {
+      const { service, jiraClient } = setup();
+      await expect(service.previewOnboarding(`https://cad.onshape.com/documents/${DOC}/v/${WS}/e/${EL}`))
+        .rejects.toMatchObject({ status: 400, message: 'Use the link to the workspace (it has /w/ in it), not a version.' });
+      expect(jiraClient.searchIssues).not.toHaveBeenCalled();
+    });
+
+    it('refuses ids that are not 24 hex characters before any JQL', async () => {
+      const { service, jiraClient } = setup();
+      await expect(service.previewOnboarding('https://cad.onshape.com/documents/aaa/w/bbb/e/ccc'))
+        .rejects.toMatchObject({ status: 400 });
+      expect(jiraClient.searchIssues).not.toHaveBeenCalled();
+    });
+
+    it('turns an OnShape 404 into a student-facing 400', async () => {
+      const { service, onshapeClient } = setup();
+      onshapeClient.getElementMetadata.mockRejectedValue(Object.assign(new Error('nf'), { status: 404 }));
+      await expect(service.previewOnboarding(URL)).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringContaining("OnShape couldn't open that link"),
+      });
+    });
+
+    it('passes other OnShape errors through', async () => {
+      const { OnshapeApiError } = await import('../../src/server/clients/onshapeClient.js');
+      const { service, onshapeClient } = setup();
+      onshapeClient.getElementMetadata.mockRejectedValue(new OnshapeApiError('bad gateway', 502, '/metadata'));
+      await expect(service.previewOnboarding(URL)).rejects.toMatchObject({ status: 502, name: 'OnshapeApiError' });
+    });
+  });
+
+  describe('onboardAssembly', () => {
+    it('creates the Assembly and Build 1 and builds the Assembly without a read', async () => {
+      const getIssue = jest.fn().mockRejectedValue(new Error('should not be read'));
+      const { service, jiraClient, buildService } = setup({ getIssue });
+      const result = await service.onboardAssembly({ url: URL, expectedSummary: SUMMARY });
+      expect(result.status).toBe('created');
+      expect(result.buildError).toBeNull();
+      expect(result.build.key).toBe('HAR-2051');
+      expect(result.assembly).toEqual(expect.objectContaining({
+        key: 'HAR-2050',
+        fullPartNumber: 'VF27A-0000A',
+        revision: 'A',
+        onshapeUrl: `https://cad.onshape.com/documents/${DOC}/w/${WS}/e/${EL}`,
+      }));
+      expect(getIssue).not.toHaveBeenCalled();
+      expect(jiraClient.createIssue).toHaveBeenCalledTimes(1);
+      expect(buildService.createBuild).toHaveBeenCalledWith({
+        assemblyKey: 'HAR-2050', revisionChainKeys: ['HAR-2050'], name: 'Test Assembly',
+      });
+    });
+
+    it('gives Build 1 a summary with no " - " suffix', async () => {
+      const { BuildService } = await import('../../src/server/services/buildService.js');
+      const buildJira = {
+        searchIssues: jest.fn().mockResolvedValue([]),
+        createIssue: jest.fn().mockResolvedValue({ key: 'HAR-2051' }),
+      };
+      const { service } = setup({ buildService: new BuildService({ jiraClient: buildJira }) });
+      const result = await service.onboardAssembly({ url: URL, expectedSummary: SUMMARY });
+      expect(buildJira.createIssue.mock.calls[0][0].summary).toBe('Test Assembly Build 1');
+      expect(result.build.summary).toBe('Test Assembly Build 1');
+      expect(result.build.summary).not.toContain(' - ');
+    });
+
+    it('answers exists and creates nothing when the element is already onboarded', async () => {
+      const { service, jiraClient, buildService } = setup({ byElement: [assemblyIssue('HAR-2030')] });
+      const result = await service.onboardAssembly({ url: URL, expectedSummary: SUMMARY });
+      expect(result).toEqual(expect.objectContaining({ status: 'exists', build: null }));
+      expect(result.assembly.key).toBe('HAR-2030');
+      expect(jiraClient.createIssue).not.toHaveBeenCalled();
+      expect(buildService.createBuild).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 with proposed when the OnShape summary drifted', async () => {
+      const { service, jiraClient } = setup();
+      await expect(service.onboardAssembly({ url: URL, expectedSummary: 'VF27A-0000A Old Name' }))
+        .rejects.toMatchObject({
+          status: 409,
+          message: 'The OnShape properties changed since you checked. Review the new name.',
+          details: { proposed: expect.objectContaining({ summary: SUMMARY }) },
+        });
+      expect(jiraClient.createIssue).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 with assembly when the number is used by another element', async () => {
+      const { service, jiraClient } = setup({ byNumber: [assemblyIssue('HAR-2040', { el: OTHER })] });
+      await expect(service.onboardAssembly({ url: URL, expectedSummary: SUMMARY }))
+        .rejects.toMatchObject({ status: 409, details: { assembly: expect.objectContaining({ key: 'HAR-2040' }) } });
+      expect(jiraClient.createIssue).not.toHaveBeenCalled();
+    });
+
+    it('returns created with buildError when Build 1 fails', async () => {
+      const { JiraApiError } = await import('../../src/server/clients/jiraClient.js');
+      const buildService = { createBuild: jest.fn().mockRejectedValue(new JiraApiError('down', 503, '/issue')) };
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const { service } = setup({ buildService });
+      const result = await service.onboardAssembly({ url: URL, expectedSummary: SUMMARY });
+      warn.mockRestore();
+      expect(result).toEqual(expect.objectContaining({
+        status: 'created',
+        build: null,
+        buildError: "the team tracker didn't respond (503)",
+      }));
+      expect(result.assembly.key).toBe('HAR-2050');
+    });
+
+    it('creates no Build when the Assembly create fails', async () => {
+      const { JiraApiError } = await import('../../src/server/clients/jiraClient.js');
+      const { service, buildService } = setup({
+        createIssue: jest.fn().mockRejectedValue(new JiraApiError('down', 503, '/issue')),
+      });
+      await expect(service.onboardAssembly({ url: URL, expectedSummary: SUMMARY })).rejects.toMatchObject({ status: 503 });
+      expect(buildService.createBuild).not.toHaveBeenCalled();
+    });
+
+    it('runs one create for two concurrent calls; the second answers exists with the Build', async () => {
+      const { service, jiraClient, buildService } = setup();
+      const [a, b] = await Promise.all([
+        service.onboardAssembly({ url: URL, expectedSummary: SUMMARY }),
+        service.onboardAssembly({ url: URL, expectedSummary: SUMMARY }),
+      ]);
+      expect(jiraClient.createIssue).toHaveBeenCalledTimes(1);
+      expect(buildService.createBuild).toHaveBeenCalledTimes(1);
+      expect(a.status).toBe('created');
+      expect(b).toEqual({ status: 'exists', assembly: a.assembly, build: a.build });
+    });
+
+    it('gives a concurrent waiter with a different summary a 409 drift', async () => {
+      const { service } = setup();
+      const results = await Promise.allSettled([
+        service.onboardAssembly({ url: URL, expectedSummary: SUMMARY }),
+        service.onboardAssembly({ url: URL, expectedSummary: 'VF27A-0000A Other' }),
+      ]);
+      expect(results[0].status).toBe('fulfilled');
+      expect(results[1].status).toBe('rejected');
+      expect(results[1].reason).toMatchObject({ status: 409, details: { proposed: expect.objectContaining({ summary: SUMMARY }) } });
+    });
+
+    it('lets a waiter re-run when the first call failed', async () => {
+      const { JiraApiError } = await import('../../src/server/clients/jiraClient.js');
+      const createIssue = jest.fn()
+        .mockRejectedValueOnce(new JiraApiError('down', 503, '/issue'))
+        .mockResolvedValueOnce({ key: 'HAR-2052' });
+      const { service } = setup({ createIssue });
+      const results = await Promise.allSettled([
+        service.onboardAssembly({ url: URL, expectedSummary: SUMMARY }),
+        service.onboardAssembly({ url: URL, expectedSummary: SUMMARY }),
+      ]);
+      expect(results[0].status).toBe('rejected');
+      expect(results[1].status).toBe('fulfilled');
+      expect(results[1].value.assembly.key).toBe('HAR-2052');
+      expect(createIssue).toHaveBeenCalledTimes(2);
+    });
+
+    it('remembers a just-created Assembly so a preview during search lag answers exists', async () => {
+      const getIssue = jest.fn().mockResolvedValue(assemblyIssue('HAR-2050'));
+      const { service, onshapeClient } = setup({ getIssue });
+      await service.onboardAssembly({ url: URL, expectedSummary: SUMMARY });
+      onshapeClient.getElementMetadata.mockClear();
+
+      const result = await service.previewOnboarding(URL);
+      expect(result).toEqual(expect.objectContaining({ status: 'exists', matchedOn: 'workspace' }));
+      expect(result.assembly.key).toBe('HAR-2050');
+      expect(getIssue).toHaveBeenCalledWith('HAR-2050', expect.any(Object));
+      expect(onshapeClient.getElementMetadata).not.toHaveBeenCalled();
+    });
+
+    it('does not use the recently-created record for a different document', async () => {
+      const getIssue = jest.fn();
+      const { service } = setup({ getIssue });
+      await service.onboardAssembly({ url: URL, expectedSummary: SUMMARY });
+      const result = await service.previewOnboarding(`https://cad.onshape.com/documents/${OTHER}/w/${WS}/e/${EL}`);
+      expect(result.status).toBe('new');
+      expect(getIssue).not.toHaveBeenCalled();
+    });
+
+    it('requires a buildService', async () => {
+      const service = new EpicService({ jiraClient: makeJiraClient(), onshapeClient: {} });
+      await expect(service.onboardAssembly({ url: URL, expectedSummary: SUMMARY }))
+        .rejects.toThrow('onboardAssembly requires a buildService dependency');
+    });
+  });
+});

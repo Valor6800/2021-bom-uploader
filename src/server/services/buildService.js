@@ -9,6 +9,8 @@ import { sanitizeJQL } from '../utils/validators.js';
 import { BuildField, BuildStatus, BuildTransition, LinkType, RevisionField } from '../utils/buildConstants.js';
 import { applyPartMask, formatPartNumber } from '../utils/partMask.js';
 import { nextRevisionLetter } from './revisionService.js';
+import { badRequest } from '../middleware/httpError.js';
+import { describeUpstreamError, upstreamSource } from '../utils/upstreamError.js';
 
 const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL';
 
@@ -72,27 +74,86 @@ export class BuildService {
    * callers still carry the usual read-then-write race since this isn't
    * transactional, but at least the number itself is never hand-typed.
    *
+   * The revision chain is derived here (when revisionService is injected)
+   * and unioned with any keys the caller sent, so a stale client copy can
+   * only raise the next number, never reuse one.
+   *
+   * `cloneFromBuildKey` is only validated here, before anything is created:
+   * it must be a Build of this Assembly's chain. Copying its Parts is the
+   * caller's next step (`cloneBuildParts`).
+   *
    * @param {object} params
    * @param {string} params.assemblyKey        The immediate parent ticket
-   * @param {string[]} [params.revisionChainKeys]  Defaults to [assemblyKey];
-   *   pass the full chain once a Revision exists so numbering stays continuous
+   * @param {string[]} [params.revisionChainKeys]  Extra chain keys from the caller
    * @param {string} params.name                Human name, e.g. "Intake"
-   * @returns {Promise<{ key: string, buildNumber: number }>}
+   * @param {string} [params.description]       Optional, appended as " - …"
+   * @param {string} [params.cloneFromBuildKey] Source Build to validate
+   * @returns {Promise<{ key: string, summary: string, assemblyKey: string,
+   *   buildNumber: number, status: string, onshapeVersionLink: null }>}
    */
-  async createBuild({ assemblyKey, revisionChainKeys, name }) {
-    const chainKeys = revisionChainKeys?.length ? revisionChainKeys : [assemblyKey];
+  async createBuild({ assemblyKey, revisionChainKeys, name, description, cloneFromBuildKey }) {
+    const chainKeys = await this._chainFor(assemblyKey, revisionChainKeys);
+
+    if (cloneFromBuildKey) {
+      await this._checkCloneSource(cloneFromBuildKey, chainKeys);
+    }
+
     const buildNumber = await this.getNextBuildNumber(chainKeys);
+    const note = typeof description === 'string' ? description.trim() : '';
+    const summary = note
+      ? `${name} Build ${buildNumber} - ${note}`
+      : `${name} Build ${buildNumber}`;
 
     const fields = {
       project: { key: JIRA_PROJECT },
       issuetype: { name: 'Build' },
-      summary: `${name} Build ${buildNumber}`,
+      summary,
       [BuildField.ASSEMBLY_LINK]: assemblyKey,
       [BuildField.BUILD_NUMBER]: buildNumber,
     };
 
     const result = await this.jiraClient.createIssue(fields);
-    return { key: result.key, buildNumber };
+    return {
+      key: result.key,
+      summary,
+      assemblyKey,
+      buildNumber,
+      status: BuildStatus.DRAFT,
+      onshapeVersionLink: null,
+    };
+  }
+
+  /**
+   * The Assembly's revision chain: the server-side chain (when
+   * revisionService is available) unioned with the caller's keys.
+   * @private
+   */
+  async _chainFor(assemblyKey, revisionChainKeys) {
+    const derived = this.revisionService
+      ? await this.revisionService.getRevisionChain(assemblyKey)
+      : [assemblyKey];
+    return [...new Set([assemblyKey, ...derived, ...(revisionChainKeys ?? [])])];
+  }
+
+  /**
+   * A clone source must be a Build whose Assembly is in this chain, so a
+   * crafted request can't copy another Assembly's Parts.
+   * @private
+   */
+  async _checkCloneSource(cloneFromBuildKey, chainKeys) {
+    const refused = badRequest(`"${cloneFromBuildKey}" isn't a Build of this Assembly`);
+    let source;
+    try {
+      source = await this.jiraClient.getIssue(cloneFromBuildKey, {
+        fields: ['issuetype', BuildField.ASSEMBLY_LINK],
+      });
+    } catch (err) {
+      if (err?.status === 404) throw refused;
+      throw err;
+    }
+    const isBuild = source?.fields?.issuetype?.name === 'Build';
+    const epic = source?.fields?.[BuildField.ASSEMBLY_LINK];
+    if (!isBuild || !chainKeys.includes(epic)) throw refused;
   }
 
   /**
@@ -201,16 +262,33 @@ export class BuildService {
    * a part that needs to be different in the new Build is still a Re-create,
    * not something this touches.
    *
+   * Keeps going past a Part whose link fails, so one bad link doesn't leave
+   * the rest uncopied; reading the source Build's Parts failing still throws.
+   *
    * @param {string} fromBuildKey
    * @param {string} toBuildKey
-   * @returns {Promise<{ linked: string[] }>}
+   * @returns {Promise<{ linked: string[], failed: { partKey: string, error: string,
+   *   status: number|null, source: string|null }[] }>}
    */
   async cloneBuildParts(fromBuildKey, toBuildKey) {
     const partKeys = await this.getLinkedParts(fromBuildKey);
+    const linked = [];
+    const failed = [];
     for (const partKey of partKeys) {
-      await this.linkPartToBuild(partKey, toBuildKey);
+      try {
+        await this.linkPartToBuild(partKey, toBuildKey);
+        linked.push(partKey);
+      } catch (err) {
+        console.warn('[clone]', partKey, 'into', toBuildKey, 'failed:', err?.status, err?.message);
+        failed.push({
+          partKey,
+          error: describeUpstreamError(err),
+          status: err?.status ?? null,
+          source: upstreamSource(err),
+        });
+      }
     }
-    return { linked: partKeys };
+    return { linked, failed };
   }
 
   /**

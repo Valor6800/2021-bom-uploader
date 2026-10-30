@@ -11,6 +11,8 @@
  * OnshapeApiError all expose it) and defaults to 500. Logs 5xx errors.
  */
 
+import { upstreamSource } from '../utils/upstreamError.js';
+
 /** 404 handler for unknown /api routes (mount before the error handler). */
 export function apiNotFound(req, res) {
   res.status(404).json({ error: `Not found: ${req.method} ${req.originalUrl}`, status: 404 });
@@ -34,7 +36,7 @@ export function errorHandler(err, req, res, next) {
   }
 
   // `details` go first so they can never overwrite error, status or source.
-  const source = errorSource(err);
+  const source = upstreamSource(err);
   res.status(status).json({
     ...(err.details ?? {}),
     error: err.message || 'Internal Server Error',
@@ -43,12 +45,3 @@ export function errorHandler(err, req, res, next) {
   });
 }
 
-/**
- * Which upstream system an error came from, so the client can choose its
- * wording without matching message text. Our own errors have no source.
- */
-function errorSource(err) {
-  if (err?.name === 'JiraApiError') return 'tracker';
-  if (err?.name === 'OnshapeApiError') return 'onshape';
-  return null;
-}

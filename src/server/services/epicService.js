@@ -6,7 +6,8 @@
 import { applyTitleMask, applyPartMask } from '../utils/partMask.js';
 import { sanitizeJQL, validateIssueKey } from '../utils/validators.js';
 import { RevisionField } from '../utils/buildConstants.js';
-import { badRequest, HttpError } from '../middleware/httpError.js';
+import { badRequest, conflict, HttpError } from '../middleware/httpError.js';
+import { describeUpstreamError } from '../utils/upstreamError.js';
 import {
   ASSEMBLY_FIELDS, KEY_SHAPED_RE, isAssemblyIssue, searchAssemblyList, toAssembly,
 } from '../utils/assemblySearch.js';
@@ -19,6 +20,22 @@ const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL
  */
 const ONSHAPE_URL_REGEX =
   /\/documents\/([a-f0-9]+)\/w\/([a-f0-9]+)\/e\/([a-f0-9]+)/i;
+
+/** A version (/v/) or microversion (/m/) link, which can't be onboarded. */
+const ONSHAPE_VERSION_URL_REGEX = /\/documents\/[a-f0-9]+\/[vm]\/[a-f0-9]+/i;
+
+/** OnShape document, workspace and element ids are 24 hex characters. */
+const ONSHAPE_ID_RE = /^[a-f0-9]{24}$/i;
+
+/** How long a just-created Assembly is remembered for duplicate checks. */
+const RECENTLY_CREATED_MS = 10 * 60 * 1000;
+
+const INVALID_URL_MESSAGE =
+  'Invalid Onshape URL format. Expected: https://cad.onshape.com/documents/{docId}/w/{wsId}/e/{elemId}';
+
+const DRIFT_MESSAGE = 'The OnShape properties changed since you checked. Review the new name.';
+
+const SEASON_NAMES = { R: 'Robot', F: 'Facility' };
 
 /**
  * OnShape's built-in element property ids, matched first; the display name is
@@ -55,10 +72,17 @@ export class EpicService {
    * @param {object} deps
    * @param {import('../clients/jiraClient.js').JiraClient} deps.jiraClient
    * @param {import('../clients/onshapeClient.js').OnshapeClient} deps.onshapeClient
+   * @param {import('./buildService.js').BuildService} [deps.buildService]
+   *   Only required for `onboardAssembly`, which creates Build 1.
    */
-  constructor({ jiraClient, onshapeClient }) {
+  constructor({ jiraClient, onshapeClient, buildService }) {
     this.jiraClient = jiraClient;
     this.onshapeClient = onshapeClient;
+    this.buildService = buildService;
+    /** elementId → { assembly, at }: Assemblies this process created recently. */
+    this._recentlyCreated = new Map();
+    /** elementId → Promise of the running onboarding for that element. */
+    this._onboarding = new Map();
   }
 
   /**
@@ -86,14 +110,27 @@ export class EpicService {
    * @returns {Promise<object|null>}
    */
   async getEpic(fullPartNumber) {
+    const issue = await this._findIssueByNumber(fullPartNumber);
+    return issue ? this._parseEpics([issue])[0] : null;
+  }
+
+  /**
+   * The raw Assembly issue whose parsed number is exactly `fullPartNumber`.
+   * A phrase search narrows the set; the exact compare happens in code.
+   * @private
+   */
+  async _findIssueByNumber(fullPartNumber) {
     const safe = sanitizeJQL(fullPartNumber);
     const jql =
       `project = ${JIRA_PROJECT} AND issuetype = Assembly AND ` +
-      `text ~ "${safe}"`;
+      `summary ~ "\\"${safe}\\""`;
 
-    const issues = await this.jiraClient.searchIssues(jql, { paginate: true });
-    const epics = this._parseEpics(issues);
-    return epics.find((e) => e.fullPartNumber === fullPartNumber) ?? null;
+    const issues = await this.jiraClient.searchIssues(jql, { paginate: true, fields: ASSEMBLY_FIELDS });
+    return issues.find((issue) => {
+      const summary = issue.fields?.summary ?? '';
+      const parsed = applyPartMask(summary) ?? applyTitleMask(summary);
+      return parsed?.fullPartNumber === fullPartNumber;
+    }) ?? null;
   }
 
   /**
@@ -207,32 +244,79 @@ export class EpicService {
   }
 
   /**
-   * Generate a Jira epic from an Onshape assembly URL.
-   *
-   * The Assembly number is built entirely from the assembly's own OnShape
-   * properties: Project (e.g. "VF27") + "A-" + Part number ("0000") +
-   * Revision ("A") + " " + Name, giving "VF27A-0000A Test Assembly". Every
-   * one of those properties must be filled in and well-formed; otherwise
-   * nothing is created and a 400 lists every property that needs fixing.
+   * Generate a Jira epic from an Onshape assembly URL (legacy, replaced by
+   * onboardAssembly; removed in INC-9).
    *
    * @param {string} onshapeURL
    * @returns {Promise<{ key: string, summary: string }>}
    */
   async generateEpicFromURL(onshapeURL) {
-    const match = ONSHAPE_URL_REGEX.exec(onshapeURL);
-    if (!match) {
-      throw badRequest(
-        `Invalid Onshape URL format. Expected: https://cad.onshape.com/documents/{docId}/w/{wsId}/e/{elemId}`,
-      );
-    }
-
-    const [, documentId, workspaceId, elementId] = match;
-
-    const metadata = await this.onshapeClient.getElementMetadata(
+    const resolved = await this.resolveOnshapeAssembly(onshapeURL);
+    const { summary, revision, documentId, workspaceId, elementId } = resolved;
+    const result = await this.createEpic({
+      summary,
+      revision,
       documentId,
       workspaceId,
       elementId,
-    );
+    });
+    return { ...result, summary };
+  }
+
+  /**
+   * Parse a pasted OnShape workspace link into its three ids. Runs before
+   * any network call.
+   *
+   * @param {string} onshapeURL
+   * @returns {{ documentId: string, workspaceId: string, elementId: string }}
+   * @throws {HttpError} 400 for a version link or any other unusable URL
+   */
+  parseOnshapeUrl(onshapeURL) {
+    const url = String(onshapeURL ?? '').trim();
+    if (ONSHAPE_VERSION_URL_REGEX.test(url)) {
+      throw badRequest('Use the link to the workspace (it has /w/ in it), not a version.');
+    }
+    const match = ONSHAPE_URL_REGEX.exec(url);
+    if (!match) throw badRequest(INVALID_URL_MESSAGE);
+    const [, documentId, workspaceId, elementId] = match;
+    // The 24-character id check happens in findAssembliesForElement, before
+    // the ids reach JQL; the legacy from-url path never builds JQL from them.
+    return {
+      documentId: documentId.toLowerCase(),
+      workspaceId: workspaceId.toLowerCase(),
+      elementId: elementId.toLowerCase(),
+    };
+  }
+
+  /**
+   * Resolve a pasted OnShape URL into the Assembly it would become.
+   *
+   * The Assembly number is built entirely from the assembly's own OnShape
+   * properties: Project (e.g. "VF27") + "A-" + Part number ("0000") +
+   * Revision ("A") + " " + Name, giving "VF27A-0000A Test Assembly". Every
+   * one of those properties must be filled in and well-formed; otherwise a
+   * 400 lists every property that needs fixing, with `problems[]` in the body.
+   *
+   * @param {string} onshapeURL
+   * @returns {Promise<object>} the proposed Assembly
+   */
+  async resolveOnshapeAssembly(onshapeURL) {
+    return this._readOnshapeAssembly(this.parseOnshapeUrl(onshapeURL));
+  }
+
+  /** @private */
+  async _readOnshapeAssembly({ documentId, workspaceId, elementId }) {
+    let metadata;
+    try {
+      metadata = await this.onshapeClient.getElementMetadata(documentId, workspaceId, elementId);
+    } catch (err) {
+      if (err?.status === 403 || err?.status === 404) {
+        throw badRequest(
+          "OnShape couldn't open that link. Check it's an assembly tab in a document shared with the team.",
+        );
+      }
+      throw err;
+    }
     // The metadata API reports elementType as a numeric enum (1 = assembly)
     // and mimeType as e.g. "onshape/assembly" or "onshape/partstudio".
     const isAssembly =
@@ -249,21 +333,28 @@ export class EpicService {
     const properties = Array.isArray(metadata?.properties) ? metadata.properties : [];
     const missing = [];
     const malformed = [];
+    const problems = [];
     const values = {};
     for (const { prop, pattern, hint } of REQUIRED_ASSEMBLY_PROPERTIES) {
       const value = readProperty(properties, prop);
       values[prop.name] = value;
-      if (!value) missing.push(prop.name);
-      else if (!pattern.test(value)) malformed.push(`${prop.name} "${value}" (expected ${hint})`);
+      if (!value) {
+        missing.push(prop.name);
+        problems.push({ property: prop.name, issue: 'missing', hint });
+      } else if (!pattern.test(value)) {
+        malformed.push(`${prop.name} "${value}" (expected ${hint})`);
+        problems.push({ property: prop.name, issue: 'invalid', value, hint });
+      }
     }
 
-    if (missing.length || malformed.length) {
-      const problems = [];
-      if (missing.length) problems.push(`missing ${missing.join(', ')}`);
-      if (malformed.length) problems.push(`invalid ${malformed.join('; ')}`);
+    if (problems.length) {
+      const parts = [];
+      if (missing.length) parts.push(`missing ${missing.join(', ')}`);
+      if (malformed.length) parts.push(`invalid ${malformed.join('; ')}`);
       throw badRequest(
-        `OnShape assembly properties are incomplete: ${problems.join('. ')}. ` +
+        `OnShape assembly properties are incomplete: ${parts.join('. ')}. ` +
         `Set them in the assembly's Properties dialog in OnShape and try again.`,
+        { problems },
       );
     }
 
@@ -271,16 +362,203 @@ export class EpicService {
     const partNumber = values[ONSHAPE_PROPERTY.PART_NUMBER.name];
     const revision = values[ONSHAPE_PROPERTY.REVISION.name];
     const name = values[ONSHAPE_PROPERTY.NAME.name];
-    const summary = `${project}A-${partNumber}${revision} ${name}`;
-
-    const result = await this.createEpic({
-      summary,
+    const fullPartNumber = `${project}A-${partNumber}${revision}`;
+    const seasonType = project[1];
+    return {
+      summary: `${fullPartNumber} ${name}`,
+      fullPartNumber,
+      name,
+      project,
+      partNumber,
       revision,
+      seasonLabel: `${SEASON_NAMES[seasonType]} 20${project.slice(2)}`,
       documentId,
       workspaceId,
       elementId,
+    };
+  }
+
+  /**
+   * Assemblies already onboarded from this OnShape element, any status.
+   * The JQL `~` match is only a narrowing step; the element and document
+   * ids are compared exactly in code. An element id in a different
+   * document is a copy, a different design, and not a duplicate.
+   *
+   * @param {string} documentId
+   * @param {string} workspaceId
+   * @param {string} elementId
+   * @returns {Promise<{ assembly: object, matchedOn: 'workspace'|'document' }|null>}
+   */
+  async findAssembliesForElement(documentId, workspaceId, elementId) {
+    if (![documentId, workspaceId, elementId].every((id) => ONSHAPE_ID_RE.test(id))) {
+      throw badRequest(INVALID_URL_MESSAGE);
+    }
+    const project = sanitizeJQL(process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL');
+    const jql =
+      `project = ${project} AND issuetype = Assembly AND cf[10302] ~ "${sanitizeJQL(elementId)}"`;
+    const issues = await this.jiraClient.searchIssues(jql, { paginate: true, fields: ASSEMBLY_FIELDS });
+
+    const same = (a, b) => String(a ?? '').toLowerCase() === b;
+    const matches = issues
+      .filter((i) => same(i.fields?.customfield_10302, elementId)
+        && same(i.fields?.customfield_10300, documentId))
+      .map((i) => this._toAssembly(i))
+      .sort((a, b) => String(b.created ?? '').localeCompare(String(a.created ?? '')));
+    if (!matches.length) return null;
+
+    const onWorkspace = matches.find((a) => same(a.workspaceId, workspaceId));
+    return onWorkspace
+      ? { assembly: onWorkspace, matchedOn: 'workspace' }
+      : { assembly: matches[0], matchedOn: 'document' };
+  }
+
+  /**
+   * Read-only check of a pasted OnShape link before onboarding (design 6.5).
+   *
+   * @param {string} url
+   * @returns {Promise<{ status: 'exists', assembly: object, matchedOn: string }
+   *   | { status: 'new', proposed: object }>}
+   * @throws {HttpError} 409 with `assembly` and `proposed` when the number
+   *   belongs to another OnShape assembly; 400 for an unusable link
+   */
+  async previewOnboarding(url) {
+    const ids = this.parseOnshapeUrl(url);
+    const existing = await this._findExisting(ids);
+    if (existing) return { status: 'exists', ...existing };
+
+    const proposed = await this._readOnshapeAssembly(ids);
+
+    const clash = await this._findIssueByNumber(proposed.fullPartNumber);
+    if (clash) {
+      const assembly = this._toAssembly(clash);
+      throw conflict(
+        `${proposed.fullPartNumber} is already used by ${assembly.key}.`,
+        { assembly, proposed },
+      );
+    }
+    return { status: 'new', proposed };
+  }
+
+  /**
+   * Duplicate check: the tracker first, then this process's record of
+   * Assemblies it created in the last 10 minutes (covers search lag).
+   * @private
+   */
+  async _findExisting({ documentId, workspaceId, elementId }) {
+    const found = await this.findAssembliesForElement(documentId, workspaceId, elementId);
+    if (found) return found;
+
+    const recent = this._recentlyCreated.get(elementId);
+    if (!recent) return null;
+    if (Date.now() - recent.at > RECENTLY_CREATED_MS) {
+      this._recentlyCreated.delete(elementId);
+      return null;
+    }
+    if (recent.documentId !== documentId) return null;
+    // A failed read propagates: answering "new" here would risk a duplicate.
+    const issue = await this.jiraClient.getIssue(recent.key, { fields: ASSEMBLY_FIELDS });
+    return { assembly: this._toAssembly(issue), matchedOn: 'workspace' };
+  }
+
+  /**
+   * Create the Assembly and its Build 1 from a confirmed OnShape link
+   * (design 6.6). One onboarding runs per OnShape element at a time; a
+   * second caller waits for the first and answers from its result.
+   *
+   * @param {object} params
+   * @param {string} params.url
+   * @param {string} params.expectedSummary  The summary the user confirmed
+   * @returns {Promise<{ status: 'created'|'exists', assembly: object,
+   *   build: object|null, buildError?: string|null }>}
+   */
+  async onboardAssembly({ url, expectedSummary }) {
+    if (!this.buildService) {
+      throw new Error('onboardAssembly requires a buildService dependency');
+    }
+    const ids = this.parseOnshapeUrl(url);
+
+    const running = this._onboarding.get(ids.elementId);
+    if (running) {
+      let first;
+      try {
+        first = await running;
+      } catch {
+        // The first call failed; run the whole sequence for this caller.
+        if (this._onboarding.get(ids.elementId) === running) this._onboarding.delete(ids.elementId);
+        return this.onboardAssembly({ url, expectedSummary });
+      }
+      if (first.response.assembly.summary !== expectedSummary) {
+        throw conflict(DRIFT_MESSAGE, { proposed: first.proposed ?? null });
+      }
+      return { status: 'exists', assembly: first.response.assembly, build: first.response.build ?? null };
+    }
+
+    const promise = this._onboardOnce(ids, expectedSummary);
+    this._onboarding.set(ids.elementId, promise);
+    try {
+      return (await promise).response;
+    } finally {
+      this._onboarding.delete(ids.elementId);
+    }
+  }
+
+  /** @private */
+  async _onboardOnce(ids, expectedSummary) {
+    const existing = await this._findExisting(ids);
+    if (existing) {
+      return { response: { status: 'exists', assembly: existing.assembly, build: null }, proposed: null };
+    }
+
+    const proposed = await this._readOnshapeAssembly(ids);
+    const clash = await this._findIssueByNumber(proposed.fullPartNumber);
+    if (clash) {
+      const assembly = this._toAssembly(clash);
+      throw conflict(`${proposed.fullPartNumber} is already used by ${assembly.key}.`, { assembly });
+    }
+    if (proposed.summary !== expectedSummary) {
+      throw conflict(DRIFT_MESSAGE, { proposed });
+    }
+
+    const { key } = await this.createEpic({
+      summary: proposed.summary,
+      revision: proposed.revision,
+      documentId: proposed.documentId,
+      workspaceId: proposed.workspaceId,
+      elementId: proposed.elementId,
     });
-    return { ...result, summary };
+
+    // Built from what was just written, without a read that could fail or lag.
+    const assembly = this._toAssembly({
+      key,
+      fields: {
+        summary: proposed.summary,
+        issuetype: { name: 'Assembly' },
+        [RevisionField.REVISION]: proposed.revision,
+        customfield_10300: proposed.documentId,
+        customfield_10301: proposed.workspaceId,
+        customfield_10302: proposed.elementId,
+        status: { name: 'New' },
+        created: new Date().toISOString(),
+      },
+    });
+    this._recentlyCreated.set(proposed.elementId, {
+      key, documentId: proposed.documentId, at: Date.now(),
+    });
+
+    let build = null;
+    let buildError = null;
+    try {
+      build = await this.buildService.createBuild({
+        assemblyKey: key,
+        revisionChainKeys: [key],
+        name: proposed.name,
+      });
+    } catch (err) {
+      console.warn('[onboard] Build 1 for', key, 'failed:', err?.status, err?.message);
+      buildError = describeUpstreamError(err);
+    }
+
+    return { response: { status: 'created', assembly, build, buildError }, proposed };
   }
 
   // ---------------------------------------------------------------------------

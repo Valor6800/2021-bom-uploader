@@ -15,6 +15,16 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { badRequest } from '../middleware/httpError.js';
+import { validateIssueKey } from '../utils/validators.js';
+import { describeUpstreamError } from '../utils/upstreamError.js';
+
+const CONTROL_RE = /[\x00-\x1f\x7f]/;
+
+/** Throw a 400 naming `field` unless `value` is a valid key of this project. */
+function requireKey(field, value) {
+  const check = validateIssueKey(value);
+  if (!check.valid) throw badRequest(`${field}: ${check.error}`);
+}
 
 /**
  * @param {object} deps
@@ -44,22 +54,64 @@ export default function buildRoutes({ buildService }) {
   }));
 
   /**
-   * POST /api/builds  { assemblyKey, revisionChainKeys?, name, cloneFromBuildKey? }
+   * POST /api/builds
+   *   { assemblyKey, name, description?, revisionChainKeys?, cloneFromBuildKey? }
+   * → { build, linked, failed, cloneError }
+   *
+   * A clone that fails after the Build exists still answers 200 with the
+   * Build and `cloneError`, so the new Build is never hidden behind an error.
    */
   router.post('/', asyncHandler(async (req, res) => {
-    const { assemblyKey, revisionChainKeys, name, cloneFromBuildKey } = req.body;
+    const body = req.body ?? {};
+    const { assemblyKey, revisionChainKeys, cloneFromBuildKey } = body;
 
-    if (!assemblyKey || !name) {
+    if (!assemblyKey || !body.name) {
       throw badRequest('Missing required body parameters: assemblyKey, name');
     }
+    requireKey('assemblyKey', assemblyKey);
 
-    const result = await buildService.createBuild({ assemblyKey, revisionChainKeys, name });
-
-    if (cloneFromBuildKey) {
-      await buildService.cloneBuildParts(cloneFromBuildKey, result.key);
+    if (typeof body.name !== 'string') throw badRequest('name must be a string');
+    const name = body.name.trim();
+    if (name.length < 1 || name.length > 80 || CONTROL_RE.test(name)) {
+      throw badRequest('name must be 1 to 80 characters with no control characters');
     }
 
-    res.json(result);
+    let description;
+    if (body.description !== undefined && body.description !== null) {
+      if (typeof body.description !== 'string') throw badRequest('description must be a string');
+      if (CONTROL_RE.test(body.description)) {
+        throw badRequest('description must not contain control characters');
+      }
+      const collapsed = body.description.trim().replace(/\s+/g, ' ');
+      if (collapsed.length > 60) throw badRequest('description is limited to 60 characters');
+      description = collapsed || undefined;
+    }
+
+    if (revisionChainKeys !== undefined) {
+      if (!Array.isArray(revisionChainKeys) || revisionChainKeys.length > 50) {
+        throw badRequest('revisionChainKeys must be an array of at most 50 keys');
+      }
+      revisionChainKeys.forEach((k, i) => requireKey(`revisionChainKeys[${i}]`, k));
+    }
+    if (cloneFromBuildKey !== undefined) requireKey('cloneFromBuildKey', cloneFromBuildKey);
+
+    const build = await buildService.createBuild({
+      assemblyKey, revisionChainKeys, name, description, cloneFromBuildKey,
+    });
+
+    let linked = [];
+    let failed = [];
+    let cloneError = null;
+    if (cloneFromBuildKey) {
+      try {
+        ({ linked, failed } = await buildService.cloneBuildParts(cloneFromBuildKey, build.key));
+      } catch (err) {
+        cloneError = describeUpstreamError(err);
+        console.warn('[builds] clone into', build.key, 'failed:', err?.status, err?.message);
+      }
+    }
+
+    res.json({ build, linked, failed, cloneError });
   }));
 
   /**

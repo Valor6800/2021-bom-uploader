@@ -234,3 +234,106 @@ describe('POST /api/epics/from-url', () => {
     expect(res.body.error).toContain('missing Project, Revision');
   });
 });
+
+describe('POST /api/epics/onboard/preview', () => {
+  const URL = 'https://cad.onshape.com/documents/8c64dfdcb66184646a7a3f17/w/82f00d3cbea6901ac26040bd/e/faea62821490977c33bc8d7c';
+
+  it.each([
+    ['a missing url', {}],
+    ['a non-string url', { url: 42 }],
+    ['a blank url', { url: '   ' }],
+    ['a url over 2000 characters', { url: `https://cad.onshape.com/${'a'.repeat(2000)}` }],
+  ])('answers 400 for %s without calling the service', async (_, body) => {
+    const epicService = { previewOnboarding: jest.fn() };
+    const res = await request(buildApp(epicService)).post('/api/epics/onboard/preview').send(body);
+    expect(res.status).toBe(400);
+    expect(epicService.previewOnboarding).not.toHaveBeenCalled();
+  });
+
+  it('trims the url and returns the preview', async () => {
+    const epicService = { previewOnboarding: jest.fn().mockResolvedValue({ status: 'new', proposed: { summary: 'S' } }) };
+    const res = await request(buildApp(epicService)).post('/api/epics/onboard/preview').send({ url: `  ${URL}  ` });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'new', proposed: { summary: 'S' } });
+    expect(epicService.previewOnboarding).toHaveBeenCalledWith(URL);
+  });
+
+  it('sends problems[] in the 400 body for incomplete OnShape properties', async () => {
+    const epicService = new EpicService({
+      jiraClient: { searchIssues: jest.fn().mockResolvedValue([]) },
+      onshapeClient: {
+        getElementMetadata: jest.fn().mockResolvedValue({
+          elementType: 1,
+          mimeType: 'onshape/assembly',
+          properties: [
+            { name: 'Name', propertyId: '57f3fb8efa3416c06701d60d', value: 'Test Assembly' },
+            { name: 'Part number', propertyId: '57f3fb8efa3416c06701d60f', value: '12' },
+            { name: 'Revision', propertyId: '57f3fb8efa3416c06701d610', value: 'A' },
+          ],
+        }),
+      },
+    });
+    const res = await request(buildApp(epicService)).post('/api/epics/onboard/preview').send({ url: URL });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('missing Project');
+    expect(res.body.problems).toEqual([
+      { property: 'Project', issue: 'missing', hint: expect.any(String) },
+      { property: 'Part number', issue: 'invalid', value: '12', hint: expect.any(String) },
+    ]);
+  });
+
+  it('answers 409 with the other Assembly for a number conflict', async () => {
+    const { conflict } = await import('../../src/server/middleware/httpError.js');
+    const epicService = {
+      previewOnboarding: jest.fn().mockRejectedValue(
+        conflict('VF27A-0000A is already used by VAL-2040.', { assembly: { key: 'VAL-2040' }, proposed: { summary: 'S' } }),
+      ),
+    };
+    const res = await request(buildApp(epicService)).post('/api/epics/onboard/preview').send({ url: URL });
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      assembly: { key: 'VAL-2040' },
+      proposed: { summary: 'S' },
+      error: 'VF27A-0000A is already used by VAL-2040.',
+      status: 409,
+    });
+  });
+});
+
+describe('POST /api/epics/onboard', () => {
+  const URL = 'https://cad.onshape.com/documents/8c64dfdcb66184646a7a3f17/w/82f00d3cbea6901ac26040bd/e/faea62821490977c33bc8d7c';
+
+  it.each([
+    ['a missing url', { expectedSummary: 'S' }],
+    ['a missing expectedSummary', { url: URL }],
+    ['a non-string expectedSummary', { url: URL, expectedSummary: 5 }],
+    ['an expectedSummary over 255 characters', { url: URL, expectedSummary: 's'.repeat(256) }],
+  ])('answers 400 for %s without calling the service', async (_, body) => {
+    const epicService = { onboardAssembly: jest.fn() };
+    const res = await request(buildApp(epicService)).post('/api/epics/onboard').send(body);
+    expect(res.status).toBe(400);
+    expect(epicService.onboardAssembly).not.toHaveBeenCalled();
+  });
+
+  it('returns the created Assembly and Build', async () => {
+    const body = { status: 'created', assembly: { key: 'VAL-2050' }, build: { key: 'VAL-2051' }, buildError: null };
+    const epicService = { onboardAssembly: jest.fn().mockResolvedValue(body) };
+    const res = await request(buildApp(epicService)).post('/api/epics/onboard')
+      .send({ url: URL, expectedSummary: 'VF27A-0000A Test Assembly' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(body);
+    expect(epicService.onboardAssembly).toHaveBeenCalledWith({ url: URL, expectedSummary: 'VF27A-0000A Test Assembly' });
+  });
+
+  it('answers 409 with proposed on summary drift', async () => {
+    const { conflict } = await import('../../src/server/middleware/httpError.js');
+    const epicService = {
+      onboardAssembly: jest.fn().mockRejectedValue(
+        conflict('The OnShape properties changed since you checked. Review the new name.', { proposed: { summary: 'New' } }),
+      ),
+    };
+    const res = await request(buildApp(epicService)).post('/api/epics/onboard').send({ url: URL, expectedSummary: 'Old' });
+    expect(res.status).toBe(409);
+    expect(res.body.proposed).toEqual({ summary: 'New' });
+  });
+});

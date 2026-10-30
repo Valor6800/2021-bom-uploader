@@ -11,6 +11,14 @@ const { apiNotFound, errorHandler } = await import('../../src/server/middleware/
 const { cors } = await import('../../src/server/middleware/cors.js');
 const { default: buildRoutes } = await import('../../src/server/routes/buildRoutes.js');
 
+// validateIssueKey reads the project at call time; pin it for these tests.
+const savedProject = process.env.PROJECT_KEY;
+beforeAll(() => { process.env.PROJECT_KEY = 'VAL'; });
+afterAll(() => {
+  if (savedProject === undefined) delete process.env.PROJECT_KEY;
+  else process.env.PROJECT_KEY = savedProject;
+});
+
 function buildApp(buildService) {
   const app = express();
   app.use(cors);
@@ -48,6 +56,11 @@ describe('GET /api/builds', () => {
 });
 
 describe('POST /api/builds', () => {
+  const BUILD = {
+    key: 'VAL-11', summary: 'Intake Build 2', assemblyKey: 'VAL-1',
+    buildNumber: 2, status: 'Draft', onshapeVersionLink: null,
+  };
+
   it('requires assemblyKey and name', async () => {
     const app = buildApp({});
     const res = await request(app).post('/api/builds').send({ assemblyKey: 'VAL-1' });
@@ -56,7 +69,7 @@ describe('POST /api/builds', () => {
 
   it('creates a build without cloning when cloneFromBuildKey is omitted', async () => {
     const buildService = {
-      createBuild: jest.fn().mockResolvedValue({ key: 'VAL-11', buildNumber: 2 }),
+      createBuild: jest.fn().mockResolvedValue(BUILD),
       cloneBuildParts: jest.fn(),
     };
     const app = buildApp(buildService);
@@ -64,22 +77,104 @@ describe('POST /api/builds', () => {
     const res = await request(app).post('/api/builds').send({ assemblyKey: 'VAL-1', name: 'Intake' });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ key: 'VAL-11', buildNumber: 2 });
+    expect(res.body).toEqual({ build: BUILD, linked: [], failed: [], cloneError: null });
     expect(buildService.cloneBuildParts).not.toHaveBeenCalled();
   });
 
   it('clones parts from the given sibling when cloneFromBuildKey is set', async () => {
     const buildService = {
-      createBuild: jest.fn().mockResolvedValue({ key: 'VAL-11', buildNumber: 2 }),
-      cloneBuildParts: jest.fn().mockResolvedValue({ linked: ['VAL-50'] }),
+      createBuild: jest.fn().mockResolvedValue(BUILD),
+      cloneBuildParts: jest.fn().mockResolvedValue({ linked: ['VAL-50'], failed: [] }),
     };
     const app = buildApp(buildService);
 
-    await request(app).post('/api/builds').send({
+    const res = await request(app).post('/api/builds').send({
       assemblyKey: 'VAL-1', name: 'Intake', cloneFromBuildKey: 'VAL-10',
     });
 
+    expect(buildService.createBuild).toHaveBeenCalledWith(expect.objectContaining({ cloneFromBuildKey: 'VAL-10' }));
     expect(buildService.cloneBuildParts).toHaveBeenCalledWith('VAL-10', 'VAL-11');
+    expect(res.body).toEqual({ build: BUILD, linked: ['VAL-50'], failed: [], cloneError: null });
+  });
+
+  it('answers 200 with the Build and cloneError when the clone throws', async () => {
+    const { JiraApiError } = await import('../../src/server/clients/jiraClient.js');
+    const buildService = {
+      createBuild: jest.fn().mockResolvedValue(BUILD),
+      cloneBuildParts: jest.fn().mockRejectedValue(new JiraApiError('down', 503, '/search')),
+    };
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await request(buildApp(buildService)).post('/api/builds').send({
+      assemblyKey: 'VAL-1', name: 'Intake', cloneFromBuildKey: 'VAL-10',
+    });
+    warn.mockRestore();
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      build: BUILD, linked: [], failed: [], cloneError: "the team tracker didn't respond (503)",
+    });
+  });
+
+  it('passes a foreign clone source 400 from the service through', async () => {
+    const { badRequest } = await import('../../src/server/middleware/httpError.js');
+    const buildService = {
+      createBuild: jest.fn().mockRejectedValue(badRequest('"VAL-77" isn\'t a Build of this Assembly')),
+      cloneBuildParts: jest.fn(),
+    };
+    const res = await request(buildApp(buildService)).post('/api/builds').send({
+      assemblyKey: 'VAL-1', name: 'Intake', cloneFromBuildKey: 'VAL-77',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('"VAL-77" isn\'t a Build of this Assembly');
+    expect(buildService.cloneBuildParts).not.toHaveBeenCalled();
+  });
+
+  it('trims and collapses the description and passes it on', async () => {
+    const buildService = { createBuild: jest.fn().mockResolvedValue(BUILD) };
+    await request(buildApp(buildService)).post('/api/builds').send({
+      assemblyKey: 'VAL-1', name: ' Intake ', description: '  1in   bash bar ',
+    });
+    expect(buildService.createBuild).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Intake', description: '1in bash bar',
+    }));
+  });
+
+  it('treats a whitespace-only description as absent', async () => {
+    const buildService = { createBuild: jest.fn().mockResolvedValue(BUILD) };
+    const res = await request(buildApp(buildService)).post('/api/builds').send({
+      assemblyKey: 'VAL-1', name: 'Intake', description: '   ',
+    });
+    expect(res.status).toBe(200);
+    expect(buildService.createBuild.mock.calls[0][0].description).toBeUndefined();
+  });
+
+  it.each([
+    ['a 61-character description', { description: 'x'.repeat(61) }, 'description'],
+    ['a number description', { description: 12 }, 'description'],
+    ['a control character in description', { description: 'bash\u0007bar' }, 'description'],
+    ['a malformed assemblyKey', { assemblyKey: 'val-1' }, 'assemblyKey'],
+    ['an assemblyKey from another project', { assemblyKey: 'HAR-1' }, 'assemblyKey'],
+    ['a non-string name', { name: 5 }, 'name'],
+    ['an 81-character name', { name: 'n'.repeat(81) }, 'name'],
+    ['revisionChainKeys that is not an array', { revisionChainKeys: 'VAL-1' }, 'revisionChainKeys'],
+    ['51 revisionChainKeys', { revisionChainKeys: Array.from({ length: 51 }, (_, i) => `VAL-${i + 1}`) }, 'revisionChainKeys'],
+    ['a bad revisionChainKeys entry', { revisionChainKeys: ['VAL-1', 'nope'] }, 'revisionChainKeys[1]'],
+    ['a bad cloneFromBuildKey', { cloneFromBuildKey: 'VAL-' }, 'cloneFromBuildKey'],
+  ])('answers 400 for %s', async (_, override, field) => {
+    const buildService = { createBuild: jest.fn() };
+    const res = await request(buildApp(buildService)).post('/api/builds').send({
+      assemblyKey: 'VAL-1', name: 'Intake', ...override,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain(field);
+    expect(buildService.createBuild).not.toHaveBeenCalled();
+  });
+
+  it('accepts a 60-character description', async () => {
+    const buildService = { createBuild: jest.fn().mockResolvedValue(BUILD) };
+    const res = await request(buildApp(buildService)).post('/api/builds').send({
+      assemblyKey: 'VAL-1', name: 'Intake', description: 'd'.repeat(60),
+    });
+    expect(res.status).toBe(200);
   });
 });
 

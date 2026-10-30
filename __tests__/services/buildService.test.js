@@ -112,7 +112,14 @@ describe('BuildService.createBuild', () => {
 
     const result = await service.createBuild({ assemblyKey: 'VAL-1', name: 'Intake' });
 
-    expect(result).toEqual({ key: 'VAL-11', buildNumber: 2 });
+    expect(result).toEqual({
+      key: 'VAL-11',
+      summary: 'Intake Build 2',
+      assemblyKey: 'VAL-1',
+      buildNumber: 2,
+      status: BuildStatus.DRAFT,
+      onshapeVersionLink: null,
+    });
     const [fields] = jiraClient.createIssue.mock.calls[0];
     expect(fields.issuetype).toEqual({ name: 'Build' });
     expect(fields.summary).toBe('Intake Build 2');
@@ -283,7 +290,7 @@ describe('BuildService.cloneBuildParts', () => {
 
     const result = await service.cloneBuildParts('VAL-10', 'VAL-11');
 
-    expect(result).toEqual({ linked: ['VAL-50', 'VAL-51'] });
+    expect(result).toEqual({ linked: ['VAL-50', 'VAL-51'], failed: [] });
     expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'VAL-50', 'VAL-11');
     expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'VAL-51', 'VAL-11');
   });
@@ -294,7 +301,7 @@ describe('BuildService.cloneBuildParts', () => {
 
     const result = await service.cloneBuildParts('VAL-10', 'VAL-11');
 
-    expect(result).toEqual({ linked: [] });
+    expect(result).toEqual({ linked: [], failed: [] });
     expect(jiraClient.createIssueLink).not.toHaveBeenCalled();
   });
 });
@@ -405,5 +412,150 @@ describe('BuildService.recreateForBuild', () => {
 
     await expect(service.recreateForBuild({ partKey: 'VAL-50', targetBuildKey: 'VAL-11' }))
       .rejects.toThrow('Part number format');
+  });
+});
+
+describe('BuildService.createBuild (INC-3)', () => {
+  function chainService({ chain = ['VAL-1'], builds = [], getIssue, createKey = 'VAL-12' } = {}) {
+    const jiraClient = makeJiraClient({
+      searchIssues: jest.fn().mockResolvedValue(builds),
+      createIssue: jest.fn().mockResolvedValue({ key: createKey }),
+      getIssue: getIssue ?? jest.fn(),
+    });
+    const revisionService = makeRevisionService({
+      getRevisionChain: jest.fn().mockResolvedValue(chain),
+    });
+    return { jiraClient, revisionService, service: new BuildService({ jiraClient, revisionService }) };
+  }
+
+  it('derives the chain on the server and unions it with the caller keys', async () => {
+    const { service, jiraClient, revisionService } = chainService({ chain: ['VAL-1B', 'VAL-1'] });
+    await service.createBuild({ assemblyKey: 'VAL-1B', revisionChainKeys: ['VAL-1B', 'VAL-7'], name: 'Intake' });
+    expect(revisionService.getRevisionChain).toHaveBeenCalledWith('VAL-1B');
+    const [jql] = jiraClient.searchIssues.mock.calls[0];
+    expect(jql).toContain('"Epic Link" in (VAL-1B, VAL-1, VAL-7)');
+  });
+
+  it('numbers past a Build the stale client chain did not know about', async () => {
+    const { service } = chainService({
+      chain: ['VAL-1B', 'VAL-1'],
+      builds: [buildIssue('VAL-10', { buildNumber: 4, status: BuildStatus.ACTIVE, assemblyKey: 'VAL-1' })],
+    });
+    const result = await service.createBuild({ assemblyKey: 'VAL-1B', revisionChainKeys: ['VAL-1B'], name: 'Intake' });
+    expect(result.buildNumber).toBe(5);
+  });
+
+  it('returns the Build object a client can select before search indexes it', async () => {
+    const { service } = chainService({
+      builds: [buildIssue('VAL-10', { buildNumber: 1, status: BuildStatus.ACTIVE })],
+    });
+    const result = await service.createBuild({ assemblyKey: 'VAL-1', name: 'Test Assembly' });
+    expect(result).toEqual({
+      key: 'VAL-12',
+      summary: 'Test Assembly Build 2',
+      assemblyKey: 'VAL-1',
+      buildNumber: 2,
+      status: 'Draft',
+      onshapeVersionLink: null,
+    });
+  });
+
+  it('appends the description to the summary and still writes the number to customfield_10501', async () => {
+    const { service, jiraClient } = chainService({
+      builds: [buildIssue('VAL-10', { buildNumber: 1, status: BuildStatus.ACTIVE })],
+    });
+    const result = await service.createBuild({ assemblyKey: 'VAL-1', name: 'Test Assembly', description: '1in bash bar' });
+    const [fields] = jiraClient.createIssue.mock.calls[0];
+    expect(fields.summary).toBe('Test Assembly Build 2 - 1in bash bar');
+    expect(result.summary).toBe('Test Assembly Build 2 - 1in bash bar');
+    expect(fields.customfield_10501).toBe(2);
+    expect(result.buildNumber).toBe(2);
+  });
+
+  it('writes customfield_10501 equal to the returned number with no description (B6)', async () => {
+    const { service, jiraClient } = chainService({
+      builds: [buildIssue('VAL-10', { buildNumber: 1, status: BuildStatus.ACTIVE })],
+    });
+    const result = await service.createBuild({ assemblyKey: 'VAL-1', name: 'Test Assembly', description: '   ' });
+    const [fields] = jiraClient.createIssue.mock.calls[0];
+    expect(fields.summary).toBe('Test Assembly Build 2');
+    expect(fields.customfield_10501).toBe(2);
+    expect(fields.customfield_10501).toBe(result.buildNumber);
+  });
+
+  it('accepts a clone source that is a Build of this chain', async () => {
+    const getIssue = jest.fn().mockResolvedValue({
+      key: 'VAL-10', fields: { issuetype: { name: 'Build' }, customfield_10110: 'VAL-1' },
+    });
+    const { service, jiraClient } = chainService({ chain: ['VAL-1B', 'VAL-1'], getIssue });
+    await service.createBuild({ assemblyKey: 'VAL-1B', name: 'Intake', cloneFromBuildKey: 'VAL-10' });
+    expect(getIssue).toHaveBeenCalledWith('VAL-10', { fields: ['issuetype', 'customfield_10110'] });
+    expect(jiraClient.createIssue).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['another Assembly', { issuetype: { name: 'Build' }, customfield_10110: 'VAL-99' }],
+    ['a Part', { issuetype: { name: 'Part' }, customfield_10110: 'VAL-1' }],
+  ])('refuses a clone source belonging to %s with 400 before creating anything', async (_, fields) => {
+    const getIssue = jest.fn().mockResolvedValue({ key: 'VAL-77', fields });
+    const { service, jiraClient } = chainService({ getIssue });
+    await expect(service.createBuild({ assemblyKey: 'VAL-1', name: 'Intake', cloneFromBuildKey: 'VAL-77' }))
+      .rejects.toMatchObject({ status: 400, message: '"VAL-77" isn\'t a Build of this Assembly' });
+    expect(jiraClient.createIssue).not.toHaveBeenCalled();
+  });
+
+  it('turns a 404 clone source into the same 400', async () => {
+    const getIssue = jest.fn().mockRejectedValue(Object.assign(new Error('nope'), { status: 404 }));
+    const { service, jiraClient } = chainService({ getIssue });
+    await expect(service.createBuild({ assemblyKey: 'VAL-1', name: 'Intake', cloneFromBuildKey: 'VAL-77' }))
+      .rejects.toMatchObject({ status: 400 });
+    expect(jiraClient.createIssue).not.toHaveBeenCalled();
+  });
+
+  it('writes no OnShape Version Link or Instructions Data on create (B6)', async () => {
+    const { service, jiraClient } = chainService();
+    await service.createBuild({ assemblyKey: 'VAL-1', name: 'Intake' });
+    const [fields] = jiraClient.createIssue.mock.calls[0];
+    expect(fields).not.toHaveProperty('customfield_10502');
+    expect(fields).not.toHaveProperty('customfield_10503');
+  });
+});
+
+describe('BuildService.cutVersion writes the OnShape Version Link (B6)', () => {
+  it('writes customfield_10502 on the Build', async () => {
+    const jiraClient = makeJiraClient();
+    const service = new BuildService({ jiraClient });
+    await service.cutVersion({ buildKey: 'VAL-11', assemblyKey: 'VAL-1', onshapeVersionLink: 'https://cad.onshape.com/v' });
+    expect(jiraClient.updateIssue).toHaveBeenCalledWith('VAL-11', { customfield_10502: 'https://cad.onshape.com/v' });
+  });
+});
+
+describe('BuildService.cloneBuildParts partial failure', () => {
+  it('keeps linking past a failed Part and reports it with student text', async () => {
+    const { JiraApiError } = await import('../../src/server/clients/jiraClient.js');
+    const jiraClient = makeJiraClient({
+      searchIssues: jest.fn().mockResolvedValue([{ key: 'VAL-50' }, { key: 'VAL-51' }, { key: 'VAL-52' }]),
+      createIssueLink: jest.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new JiraApiError('down', 503, '/issueLink'))
+        .mockResolvedValueOnce(undefined),
+    });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const service = new BuildService({ jiraClient });
+    const result = await service.cloneBuildParts('VAL-10', 'VAL-11');
+    warn.mockRestore();
+    expect(result.linked).toEqual(['VAL-50', 'VAL-52']);
+    expect(result.failed).toEqual([{
+      partKey: 'VAL-51',
+      error: "the team tracker didn't respond (503)",
+      status: 503,
+      source: 'tracker',
+    }]);
+  });
+
+  it('throws when reading the source Build fails', async () => {
+    const jiraClient = makeJiraClient({ searchIssues: jest.fn().mockRejectedValue(new Error('search down')) });
+    const service = new BuildService({ jiraClient });
+    await expect(service.cloneBuildParts('VAL-10', 'VAL-11')).rejects.toThrow('search down');
   });
 });
