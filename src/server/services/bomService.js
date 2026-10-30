@@ -244,6 +244,8 @@ export class BOMService {
     for (const item of items) {
       // Skip nested sub-assembly items (item path contains ".")
       if (item.item && String(item.item).lastIndexOf('.') >= 0) continue;
+      // Skip rows OnShape marks "Exclude from all BOMs" (a boolean in the response)
+      if (item.excludeFromBom === true) continue;
 
       const identified = this._identifyRow(item, keys, assemblyPrefix);
       if (!identified.parsed) {

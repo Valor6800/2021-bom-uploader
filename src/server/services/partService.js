@@ -7,6 +7,7 @@ import { badRequest } from '../middleware/httpError.js';
 import { applyPartMask, applyTitleMask, formatPartNumber } from '../utils/partMask.js';
 import { validatePartPayload, sanitizeJQL } from '../utils/validators.js';
 import { Powdercoat, Thickness, Material, Machinery } from '../utils/bomConstants.js';
+import { RevisionField } from '../utils/buildConstants.js';
 
 const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL';
 
@@ -210,7 +211,16 @@ export class PartService {
    * @private
    */
   async _getAssemblySeason(epicKey) {
-    const issue = await this.jiraClient.getIssue(epicKey, { fields: ['summary'] });
+    // A failed lookup must not sink the whole preview: rows that carry their
+    // own Project still identify, and the rest come back unidentified with
+    // the existing "missing Project" message.
+    let issue;
+    try {
+      issue = await this.jiraClient.getIssue(epicKey, { fields: ['summary'] });
+    } catch (err) {
+      console.warn('[preview] season lookup for', epicKey, 'failed:', err.status, err.message);
+      return null;
+    }
     const summary = issue?.fields?.summary ?? '';
     const parsed = applyPartMask(summary) ?? applyTitleMask(summary);
     return parsed ? { seasonType: parsed.seasonType, year: parsed.year } : null;
@@ -327,7 +337,12 @@ export class PartService {
     });
 
     if (!valid) {
-      throw new Error(`Validation failed: ${errors.join('; ')}`);
+      throw badRequest(`Validation failed: ${errors.join('; ')}`);
+    }
+
+    if (payload.revision !== undefined && payload.revision !== null
+      && !(typeof payload.revision === 'string' && /^[A-Z]$/.test(payload.revision))) {
+      throw badRequest('Validation failed: revision must be a single capital letter (A-Z)');
     }
   }
 
@@ -335,17 +350,21 @@ export class PartService {
    * Build Jira issue fields from a part payload.
    * Machinery → array of {value}, material/powdercoat/thickness → {value},
    * quantity → number. Omit powdercoat/thickness when "None".
+   * Revision comes from the payload, else the summary's letter, else "A".
    * @private
    */
   _buildJiraFields(payload) {
+    const summary = payload.summary ?? payload.fullPartNumber;
+    const revision = payload.revision ?? applyPartMask(summary ?? '')?.version ?? 'A';
     const fields = {
       project: { key: JIRA_PROJECT },
-      summary: payload.summary ?? payload.fullPartNumber,
+      summary,
       issuetype: { name: 'Part' },
       customfield_10201: [{ value: payload.machinery }],   // Machinery
       customfield_10206: payload.quantity,                  // Quantity
       customfield_10110: payload.epic,                      // Epic Link
       customfield_10202: { value: payload.material },       // Material
+      [RevisionField.REVISION]: revision,                   // Revision
     };
 
     if (payload.powdercoat && payload.powdercoat !== Powdercoat.NONE) {

@@ -67,3 +67,26 @@ describe('GET /api/parts/by-keys', () => {
     expect(partService.getStoriesByKeys).toHaveBeenCalledWith(['VAL-50', 'VAL-51']);
   });
 });
+const { PartService } = await import('../../src/server/services/partService.js');
+describe('POST /api/stories validation (B1)', () => {
+  function appWithRealService() {
+    const jiraClient = { createIssue: jest.fn().mockResolvedValue({ key: 'HAR-3000' }) };
+    return { jiraClient, app: buildApp(new PartService({ jiraClient })) };
+  }
+  const body = {
+    summary: 'VF27P-0001A Plate', epic: 'HAR-2030', material: 'AL 6061', machinery: 'CNC Mill', quantity: 1,
+  };
+  it('answers 400 for revision "AA"', async () => {
+    const { jiraClient, app } = appWithRealService();
+    const res = await request(app).post('/api/stories').send({ ...body, revision: 'AA' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/^Validation failed: /);
+    expect(jiraClient.createIssue).not.toHaveBeenCalled();
+  });
+  it('answers 400 for material "Steel"', async () => {
+    const { jiraClient, app } = appWithRealService();
+    const res = await request(app).post('/api/stories').send({ ...body, material: 'Steel' });
+    expect(res.status).toBe(400);
+    expect(jiraClient.createIssue).not.toHaveBeenCalled();
+  });
+});

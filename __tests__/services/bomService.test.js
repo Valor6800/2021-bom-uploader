@@ -169,3 +169,24 @@ describe('BOMService.getBOM / getBOMReport', () => {
     expect(onshapeClient.getAssemblyBOM).toHaveBeenCalledWith('d-report', 'w', 'e', { multiLevel: true });
   });
 });
+describe('BOMService._parseBOM — rows excluded from BOMs (B4)', () => {
+  const service = new BOMService({ onshapeClient: {} });
+  it('skips an excluded row with no Part number without reporting it', () => {
+    const { parts, unidentified } = service._parseBOM(
+      bom([row(), row({ item: '2', partNumber: '', name: 'Fastener', excludeFromBom: true })]), 'HAR-1', VF27,
+    );
+    expect(parts.map((p) => p.fullPartNumber)).toEqual(['VF27P-0001A']);
+    expect(unidentified).toEqual([]);
+  });
+  it('skips an excluded row that has a valid Part number', () => {
+    const { parts, unidentified } = service._parseBOM(
+      bom([row({ excludeFromBom: true })]), 'HAR-1', VF27,
+    );
+    expect(parts).toEqual([]);
+    expect(unidentified).toEqual([]);
+  });
+  it('parses a row with excludeFromBom false normally', () => {
+    const { parts } = service._parseBOM(bom([row({ excludeFromBom: false })]), 'HAR-1', VF27);
+    expect(parts.map((p) => p.fullPartNumber)).toEqual(['VF27P-0001A']);
+  });
+});
