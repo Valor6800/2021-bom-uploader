@@ -74,11 +74,13 @@ export class BOMService {
    * @param {{ seasonType?: string, year?: string }} [assembly]
    *   The Assembly's season, used as the part-number prefix for rows whose
    *   own Project property is empty.
+   * @param {{ fresh?: boolean }} [options]  `fresh` skips the cache read
+   *   (the fetched BOM is still cached).
    * @returns {Promise<{ parts: object[], unidentified: object[] }>}
    */
-  async getBOMReport(epicKey, documentId, workspaceId, elementId, assembly) {
+  async getBOMReport(epicKey, documentId, workspaceId, elementId, assembly, { fresh = false } = {}) {
     const cacheKey = `${documentId}:${workspaceId}:${elementId}`;
-    const cached = BOM_CACHE.get(cacheKey);
+    const cached = fresh ? null : BOM_CACHE.get(cacheKey);
 
     if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
       return this._parseBOM(cached.data, epicKey, assembly);

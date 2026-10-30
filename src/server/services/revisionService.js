@@ -99,7 +99,18 @@ export class RevisionService {
     };
 
     const result = await this.jiraClient.createIssue(fields);
-    await this.jiraClient.createIssueLink(LinkType.REVISES, previousKey, result.key);
+    try {
+      await this.jiraClient.createIssueLink(LinkType.REVISES, previousKey, result.key);
+    } catch (err) {
+      // The ticket exists now; say which one, so a caller can show it and
+      // refuse a second revision instead of creating another.
+      console.warn('[revision]', result.key, 'created but Revises link to', previousKey,
+        'failed:', err?.status, err?.message);
+      if (err && typeof err === 'object') {
+        err.details = { ...err.details, key: result.key, revision, stage: 'revises-link' };
+      }
+      throw err;
+    }
 
     return { key: result.key, revision };
   }

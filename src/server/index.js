@@ -74,11 +74,12 @@ try {
 // Instantiate services (dependency injection)
 // ---------------------------------------------------------------------------
 const bomService = new BOMService({ onshapeClient });
-const partService = new PartService({ jiraClient, bomService });
-const exportService = new ExportService({ onshapeClient });
+// Built before PartService, which scopes Part reads to the Revision chain.
 const revisionService = new RevisionService({ jiraClient });
+const partService = new PartService({ jiraClient, bomService, revisionService });
+const exportService = new ExportService({ onshapeClient });
 // Built before EpicService, which creates Build 1 when onboarding an Assembly.
-const buildService = new BuildService({ jiraClient, onshapeClient, revisionService });
+const buildService = new BuildService({ jiraClient, onshapeClient, revisionService, partService });
 const epicService = new EpicService({ jiraClient, onshapeClient, buildService });
 
 const orderSheetService = sheetsClient ? new OrderSheetService({ sheetsClient }) : null;

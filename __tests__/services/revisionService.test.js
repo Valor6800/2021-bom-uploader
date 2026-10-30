@@ -149,3 +149,31 @@ describe('RevisionService.createRevision', () => {
     expect(fields.customfield_10202).toEqual({ value: 'AL 6061' });
   });
 });
+
+describe('RevisionService.createRevision Revises link failure (INC-4)', () => {
+  it('rethrows the original error with key, revision and stage revises-link', async () => {
+    const original = Object.assign(new Error('down'), { name: 'JiraApiError', status: 503 });
+    const jiraClient = makeJiraClient({
+      getIssue: jest.fn().mockResolvedValue({ fields: { [RevisionField.REVISION]: 'A', project: { key: 'VAL' } } }),
+      createIssue: jest.fn().mockResolvedValue({ key: 'VAL-901' }),
+      createIssueLink: jest.fn().mockRejectedValue(original),
+    });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const service = new RevisionService({ jiraClient });
+    const caught = await service.createRevision({ previousKey: 'VAL-50', issueTypeName: 'Part', summary: 'VR26P-0001B X' })
+      .catch((e) => e);
+    warn.mockRestore();
+    expect(caught).toBe(original);
+    expect(caught.status).toBe(503);
+    expect(caught.details).toEqual({ key: 'VAL-901', revision: 'B', stage: 'revises-link' });
+  });
+
+  it('returns { key, revision } when the link succeeds', async () => {
+    const jiraClient = makeJiraClient({
+      getIssue: jest.fn().mockResolvedValue({ fields: { [RevisionField.REVISION]: 'A', project: { key: 'VAL' } } }),
+    });
+    const service = new RevisionService({ jiraClient });
+    await expect(service.createRevision({ previousKey: 'VAL-50', issueTypeName: 'Part', summary: 'VR26P-0001B X' }))
+      .resolves.toEqual({ key: 'VAL-900', revision: 'B' });
+  });
+});

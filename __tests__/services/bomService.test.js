@@ -190,3 +190,21 @@ describe('BOMService._parseBOM — rows excluded from BOMs (B4)', () => {
     expect(parts.map((p) => p.fullPartNumber)).toEqual(['VF27P-0001A']);
   });
 });
+
+describe('BOMService.getBOMReport fresh option (INC-4)', () => {
+  it('reads OnShape again with fresh: true and a warm cache', async () => {
+    const onshapeClient = { getAssemblyBOM: jest.fn().mockResolvedValue(bom([row()])) };
+    const service = new BOMService({ onshapeClient });
+    await service.getBOMReport('HAR-1', 'd-fresh', 'w', 'e', VF27);
+    await service.getBOMReport('HAR-1', 'd-fresh', 'w', 'e', VF27, { fresh: true });
+    expect(onshapeClient.getAssemblyBOM).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the cache without it', async () => {
+    const onshapeClient = { getAssemblyBOM: jest.fn().mockResolvedValue(bom([row()])) };
+    const service = new BOMService({ onshapeClient });
+    await service.getBOMReport('HAR-1', 'd-cached', 'w', 'e', VF27);
+    await service.getBOMReport('HAR-1', 'd-cached', 'w', 'e', VF27);
+    expect(onshapeClient.getAssemblyBOM).toHaveBeenCalledTimes(1);
+  });
+});

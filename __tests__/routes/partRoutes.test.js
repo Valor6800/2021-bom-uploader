@@ -90,3 +90,114 @@ describe('POST /api/stories validation (B1)', () => {
     expect(jiraClient.createIssue).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// INC-4: chain reads, preview validation, clone validation
+// ---------------------------------------------------------------------------
+
+// validateIssueKey reads the project at call time; pin it for these tests.
+const savedProject = process.env.PROJECT_KEY;
+beforeAll(() => { process.env.PROJECT_KEY = 'VAL'; });
+afterAll(() => {
+  if (savedProject === undefined) delete process.env.PROJECT_KEY;
+  else process.env.PROJECT_KEY = savedProject;
+});
+
+describe('GET /api/stories?chain=1', () => {
+  it('returns the chain stories', async () => {
+    const partService = { getStoriesForChain: jest.fn().mockResolvedValue({ chain: ['VAL-1'], stories: [{ key: 'VAL-50' }] }) };
+    const res = await request(buildApp(partService)).get('/api/stories?key=VAL-1&chain=1');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([{ key: 'VAL-50' }]);
+    expect(partService.getStoriesForChain).toHaveBeenCalledWith('VAL-1');
+  });
+
+  it('answers 400 for chain=2', async () => {
+    const partService = { getStoriesForChain: jest.fn() };
+    const res = await request(buildApp(partService)).get('/api/stories?key=VAL-1&chain=2');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('chain must be 1');
+  });
+
+  it('answers 400 for a lower-case key', async () => {
+    const partService = { getStoriesForChain: jest.fn() };
+    const res = await request(buildApp(partService)).get('/api/stories?key=val-1&chain=1');
+    expect(res.status).toBe(400);
+    expect(partService.getStoriesForChain).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 for a Part key without searching', async () => {
+    const jiraClient = {
+      getIssue: jest.fn().mockResolvedValue({ fields: { issuetype: { name: 'Part' } } }),
+      searchIssues: jest.fn(),
+    };
+    const res = await request(buildApp(new PartService({ jiraClient }))).get('/api/stories?key=VAL-2031&chain=1');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('"VAL-2031" is not an Assembly');
+    expect(jiraClient.searchIssues).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a key that does not exist', async () => {
+    const jiraClient = {
+      getIssue: jest.fn().mockRejectedValue(Object.assign(new Error('nope'), { status: 404 })),
+      searchIssues: jest.fn(),
+    };
+    const res = await request(buildApp(new PartService({ jiraClient }))).get('/api/stories?key=VAL-9&chain=1');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('No Assembly VAL-9 found');
+  });
+
+  it('keeps the unscoped key path unchanged', async () => {
+    const partService = { getStoriesByEpic: jest.fn().mockResolvedValue([]) };
+    const res = await request(buildApp(partService)).get('/api/stories?key=VAL-1');
+    expect(res.status).toBe(200);
+    expect(partService.getStoriesByEpic).toHaveBeenCalledWith('VAL-1');
+  });
+});
+
+describe('POST /api/parts/preview validation', () => {
+  const ID = 'a'.repeat(24);
+  const body = { epicKey: 'VAL-1', documentId: ID, workspaceId: ID, elementId: ID };
+
+  it('passes fresh through', async () => {
+    const partService = { previewParts: jest.fn().mockResolvedValue({ newParts: [] }) };
+    const res = await request(buildApp(partService)).post('/api/parts/preview').send({ ...body, fresh: true });
+    expect(res.status).toBe(200);
+    expect(partService.previewParts).toHaveBeenCalledWith({ ...body, fresh: true });
+  });
+
+  it.each([
+    ['a non-hex elementId', { elementId: 'not-hex' }, /elementId/],
+    ['fresh "yes"', { fresh: 'yes' }, /fresh/],
+    ['a bad epicKey', { epicKey: 'har-1' }, /epicKey/],
+  ])('answers 400 for %s', async (_, extra, message) => {
+    const partService = { previewParts: jest.fn() };
+    const res = await request(buildApp(partService)).post('/api/parts/preview').send({ ...body, ...extra });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(message);
+    expect(partService.previewParts).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/parts/:key/clone validation', () => {
+  it.each([
+    ['a bad source key', '/api/parts/HAR-50/clone', { epicKey: 'VAL-1' }],
+    ['a bad epicKey', '/api/parts/VAL-50/clone', { epicKey: 'val-1' }],
+    ['an empty name', '/api/parts/VAL-50/clone', { epicKey: 'VAL-1', name: '   ' }],
+    ['a name over 80 characters', '/api/parts/VAL-50/clone', { epicKey: 'VAL-1', name: 'x'.repeat(81) }],
+    ['a quantity of 0', '/api/parts/VAL-50/clone', { epicKey: 'VAL-1', quantity: 0 }],
+  ])('answers 400 for %s', async (_, url, body) => {
+    const partService = { clonePart: jest.fn() };
+    const res = await request(buildApp(partService)).post(url).send(body);
+    expect(res.status).toBe(400);
+    expect(partService.clonePart).not.toHaveBeenCalled();
+  });
+
+  it('returns key, fullPartNumber and part', async () => {
+    const part = { key: 'VAL-99', fullPartNumber: 'VR26P-0002A' };
+    const partService = { clonePart: jest.fn().mockResolvedValue({ key: 'VAL-99', fullPartNumber: 'VR26P-0002A Spare', part }) };
+    const res = await request(buildApp(partService)).post('/api/parts/VAL-50/clone').send({ epicKey: 'VAL-1', name: ' Spare ' });
+    expect(res.body).toEqual({ key: 'VAL-99', fullPartNumber: 'VR26P-0002A Spare', part });
+    expect(partService.clonePart).toHaveBeenCalledWith({ sourceKey: 'VAL-50', epicKey: 'VAL-1', name: 'Spare', quantity: undefined });
+  });
+});

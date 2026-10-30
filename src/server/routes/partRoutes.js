@@ -13,9 +13,17 @@
  */
 
 import { Router } from 'express';
-import { sanitizeJQL } from '../utils/validators.js';
+import { sanitizeJQL, validateIssueKey, validateQuantity } from '../utils/validators.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { badRequest } from '../middleware/httpError.js';
+
+const ONSHAPE_ID_RE = /^[a-f0-9]{24}$/i;
+
+/** Throw a 400 naming `field` unless `value` is a valid key of this project. */
+function requireKey(field, value) {
+  const check = validateIssueKey(value);
+  if (!check.valid) throw badRequest(`${field}: ${check.error}`);
+}
 
 /**
  * @param {object} deps
@@ -28,9 +36,18 @@ export default function partRoutes({ partService, exportService }) {
 
   /**
    * GET /api/stories?key=...  or  GET /api/stories?partNumber=...
+   * GET /api/stories?key=...&chain=1 — Parts across the Assembly's whole
+   * Revision chain, one per Part number (newest Revision wins).
    */
   router.get('/stories', asyncHandler(async (req, res) => {
-    const { key, partNumber } = req.query;
+    const { key, partNumber, chain } = req.query;
+
+    if (chain !== undefined) {
+      if (chain !== '1') throw badRequest('chain must be 1');
+      requireKey('key', key);
+      const { stories } = await partService.getStoriesForChain(key);
+      return res.json(stories);
+    }
 
     if (!key && !partNumber) {
       throw badRequest('Missing required query parameter: key or partNumber');
@@ -100,12 +117,26 @@ export default function partRoutes({ partService, exportService }) {
   /**
    * POST /api/parts/:key/clone  { epicKey, name?, quantity? }
    * "Clone a part" (Sheet 06) — a fresh, unrelated ticket, not a revision.
+   * → { key, fullPartNumber, part }
    */
   router.post('/parts/:key/clone', asyncHandler(async (req, res) => {
-    const { epicKey, name, quantity } = req.body;
+    const { epicKey, quantity } = req.body ?? {};
+    let { name } = req.body ?? {};
 
     if (!epicKey) {
       throw badRequest('Missing required body parameter: epicKey');
+    }
+    requireKey('key', req.params.key);
+    requireKey('epicKey', epicKey);
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim().length < 1 || name.trim().length > 80) {
+        throw badRequest('name must be 1 to 80 characters');
+      }
+      name = name.trim();
+    }
+    if (quantity !== undefined) {
+      const check = validateQuantity(quantity);
+      if (!check.valid) throw badRequest(`quantity: ${check.error}`);
     }
 
     const result = await partService.clonePart({ sourceKey: req.params.key, epicKey, name, quantity });
@@ -113,16 +144,28 @@ export default function partRoutes({ partService, exportService }) {
   }));
 
   /**
-   * POST /api/parts/preview  { epicKey, documentId, workspaceId, elementId }
+   * POST /api/parts/preview  { epicKey, documentId, workspaceId, elementId, fresh? }
+   * `fresh: true` skips the 60-second BOM cache (Update from CAD).
    */
   router.post('/parts/preview', asyncHandler(async (req, res) => {
-    const { epicKey, documentId, workspaceId, elementId } = req.body;
+    const { epicKey, documentId, workspaceId, elementId, fresh } = req.body ?? {};
 
     if (!epicKey || !documentId || !workspaceId || !elementId) {
       throw badRequest('Missing required body parameters: epicKey, documentId, workspaceId, elementId');
     }
+    requireKey('epicKey', epicKey);
+    for (const [field, value] of Object.entries({ documentId, workspaceId, elementId })) {
+      if (typeof value !== 'string' || !ONSHAPE_ID_RE.test(value)) {
+        throw badRequest(`${field} must be a 24-character OnShape id`);
+      }
+    }
+    if (fresh !== undefined && typeof fresh !== 'boolean') {
+      throw badRequest('fresh must be true or false');
+    }
 
-    const preview = await partService.previewParts({ epicKey, documentId, workspaceId, elementId });
+    const preview = await partService.previewParts({
+      epicKey, documentId, workspaceId, elementId, fresh: fresh === true,
+    });
     res.json(preview);
   }));
 
