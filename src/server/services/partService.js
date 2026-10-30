@@ -4,7 +4,7 @@
  */
 
 import { badRequest } from '../middleware/httpError.js';
-import { applyPartMask, formatPartNumber } from '../utils/partMask.js';
+import { applyPartMask, applyTitleMask, formatPartNumber } from '../utils/partMask.js';
 import { validatePartPayload, sanitizeJQL } from '../utils/validators.js';
 import { Powdercoat, Thickness, Material, Machinery } from '../utils/bomConstants.js';
 
@@ -177,8 +177,11 @@ export class PartService {
   async previewParts(params) {
     const { epicKey, documentId, workspaceId, elementId } = params;
 
-    const [bomItems, existingStories] = await Promise.all([
-      this.bomService.getBOM(epicKey, documentId, workspaceId, elementId),
+    // The Assembly's season ("VF27A-0000A ..." → F/27) is the prefix for BOM
+    // rows that only carry a bare 4-digit Part number and no Project.
+    const [{ parts: bomItems, unidentified }, existingStories] = await Promise.all([
+      this._getAssemblySeason(epicKey).then((assembly) =>
+        this.bomService.getBOMReport(epicKey, documentId, workspaceId, elementId, assembly)),
       this.getStoriesByEpic(epicKey),
     ]);
 
@@ -193,7 +196,24 @@ export class PartService {
       newParts: unmatched,
       existingParts: matched,
       duplicates,
+      unidentified,
     };
+  }
+
+  /**
+   * Season of an Assembly, parsed from its Jira summary the same way
+   * EpicService._parseEpics does. Null when the summary has no
+   * V{R|F}{yy}A- prefix.
+   *
+   * @param {string} epicKey
+   * @returns {Promise<{ seasonType: string, year: string } | null>}
+   * @private
+   */
+  async _getAssemblySeason(epicKey) {
+    const issue = await this.jiraClient.getIssue(epicKey, { fields: ['summary'] });
+    const summary = issue?.fields?.summary ?? '';
+    const parsed = applyPartMask(summary) ?? applyTitleMask(summary);
+    return parsed ? { seasonType: parsed.seasonType, year: parsed.year } : null;
   }
 
   /**

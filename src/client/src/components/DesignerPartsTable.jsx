@@ -7,6 +7,7 @@ import Card from './ui/Card.jsx';
 import Button from './ui/Button.jsx';
 import Alert from './ui/Alert.jsx';
 import DuplicateWarning from './parts/DuplicateWarning.jsx';
+import UnidentifiedPartsWarning from './parts/UnidentifiedPartsWarning.jsx';
 import PartsTableToolbar from './parts/PartsTableToolbar.jsx';
 import PartRow from './parts/PartRow.jsx';
 
@@ -39,6 +40,7 @@ export default function DesignerPartsTable({ jiraBaseUrl }) {
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [duplicates, setDuplicates] = useState([]);
+  const [unidentified, setUnidentified] = useState([]);
   const [cutting, setCutting] = useState(false);
   const [cutMsg, setCutMsg] = useState(null); // { type: 'success'|'error', text }
 
@@ -93,6 +95,7 @@ export default function DesignerPartsTable({ jiraBaseUrl }) {
     if (!selectedEpic || !selectedBuild) return;
     setLoading(true);
     setDuplicates([]);
+    setUnidentified([]);
     try {
       const preview = await previewParts({
         epicKey: selectedEpic.key,
@@ -126,6 +129,7 @@ export default function DesignerPartsTable({ jiraBaseUrl }) {
 
       setSelected(new Set(newItems.map(selectionKey)));
       setDuplicates(preview.duplicates || []);
+      setUnidentified(preview.unidentified || []);
       setRows(merged);
     } catch (err) {
       console.error('Update from CAD failed:', err);
@@ -264,6 +268,7 @@ export default function DesignerPartsTable({ jiraBaseUrl }) {
         </div>
       )}
       <DuplicateWarning duplicates={duplicates} />
+      <UnidentifiedPartsWarning parts={unidentified} />
 
       <div className="table-wrapper">
         <table className="table">
@@ -287,7 +292,9 @@ export default function DesignerPartsTable({ jiraBaseUrl }) {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={9} className="table-empty">
-                  No parts found. Click "Update from CAD" to load the BOM.
+                  {unidentified.length > 0
+                    ? 'No parts could be identified from the BOM. See the rows listed above.'
+                    : 'No parts found. Click "Update from CAD" to load the BOM.'}
                 </td>
               </tr>
             )}

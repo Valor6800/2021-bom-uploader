@@ -110,3 +110,55 @@ describe('PartService.getStoriesByKeys', () => {
     expect(jql).toContain('key in (VAL-50, VAL-51)');
   });
 });
+
+describe('PartService.previewParts', () => {
+  function makeBomService(report) {
+    return {
+      getBOMReport: jest.fn().mockResolvedValue(report),
+      compareBOMWithJira: jest.fn().mockReturnValue({ matched: [], unmatched: report.parts }),
+    };
+  }
+
+  it('passes the Assembly season parsed from its Jira summary to the BOM parser', async () => {
+    const jiraClient = makeJiraClient({
+      getIssue: jest.fn().mockResolvedValue({ fields: { summary: 'VF27A-0000A Test Assembly' } }),
+    });
+    const bomService = makeBomService({ parts: [], unidentified: [] });
+    const service = new PartService({ jiraClient, bomService });
+
+    await service.previewParts({ epicKey: 'HAR-2030', documentId: 'd', workspaceId: 'w', elementId: 'e' });
+
+    expect(jiraClient.getIssue).toHaveBeenCalledWith('HAR-2030', { fields: ['summary'] });
+    expect(bomService.getBOMReport).toHaveBeenCalledWith(
+      'HAR-2030', 'd', 'w', 'e', { seasonType: 'F', year: '27' },
+    );
+  });
+
+  it('passes a null season when the Assembly summary has no prefix', async () => {
+    const jiraClient = makeJiraClient({
+      getIssue: jest.fn().mockResolvedValue({ fields: { summary: 'Test Assembly' } }),
+    });
+    const bomService = makeBomService({ parts: [], unidentified: [] });
+    const service = new PartService({ jiraClient, bomService });
+
+    await service.previewParts({ epicKey: 'HAR-1', documentId: 'd', workspaceId: 'w', elementId: 'e' });
+
+    expect(bomService.getBOMReport.mock.calls[0][4]).toBeNull();
+  });
+
+  it('returns unidentified BOM rows alongside new and existing parts', async () => {
+    const jiraClient = makeJiraClient({
+      getIssue: jest.fn().mockResolvedValue({ fields: { summary: 'VF27A-0000A Test Assembly' } }),
+    });
+    const part = { fullPartNumber: 'VF27P-0001A', name: 'Test Part', quantity: 1 };
+    const missing = { name: 'Bracket', partNumber: '0002', problems: ['missing Revision'] };
+    const bomService = makeBomService({ parts: [part], unidentified: [missing] });
+    const service = new PartService({ jiraClient, bomService });
+
+    const preview = await service.previewParts({ epicKey: 'HAR-1', documentId: 'd', workspaceId: 'w', elementId: 'e' });
+
+    expect(preview.newParts).toEqual([part]);
+    expect(preview.existingParts).toEqual([]);
+    expect(preview.unidentified).toEqual([missing]);
+  });
+});
