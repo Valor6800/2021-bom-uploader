@@ -1,9 +1,10 @@
 /**
- * Epic Routes — GET /api/epics, GET /api/epics/:key, POST /api/epics/from-url
+ * Epic Routes — GET /api/epics, GET /api/epics/search, GET /api/epics/:key,
+ * POST /api/epics/from-url
  */
 
 import { Router } from 'express';
-import { sanitizeJQL } from '../utils/validators.js';
+import { sanitizeJQL, validateIssueKey } from '../utils/validators.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { badRequest } from '../middleware/httpError.js';
 
@@ -35,10 +36,43 @@ export default function epicRoutes({ epicService }) {
   }));
 
   /**
-   * GET /api/epics/:key — a single Assembly by Jira key, for direct links
-   * into the Assembly hub (Sheet 06).
+   * GET /api/epics/search?q&limit&includeClosed=1 — Home's Assembly search.
+   * Registered before /:key, which would otherwise capture "search".
+   */
+  router.get('/search', asyncHandler(async (req, res) => {
+    const { q = '', limit, includeClosed } = req.query;
+    if (typeof q !== 'string') {
+      throw badRequest('q must be a single string');
+    }
+    const query = q.replace(/[\x00-\x1f\x7f]/g, '').trim();
+    if (query.length > 100) {
+      throw badRequest('Search is limited to 100 characters');
+    }
+    let max = 50;
+    if (limit !== undefined) {
+      if (typeof limit !== 'string' || !/^\d+$/.test(limit) || +limit < 1 || +limit > 50) {
+        throw badRequest('limit must be an integer from 1 to 50');
+      }
+      max = Number(limit);
+    }
+    if (includeClosed !== undefined && includeClosed !== '0' && includeClosed !== '1') {
+      throw badRequest('includeClosed must be 0 or 1');
+    }
+    const result = await epicService.searchAssemblies(query, {
+      limit: max,
+      includeClosed: includeClosed === '1',
+    });
+    res.json(result);
+  }));
+
+  /**
+   * GET /api/epics/:key — a single Assembly by key, numbered or not.
    */
   router.get('/:key', asyncHandler(async (req, res) => {
+    const check = validateIssueKey(req.params.key);
+    if (!check.valid) {
+      throw badRequest(check.error);
+    }
     const epic = await epicService.getEpicByKey(req.params.key);
 
     if (!epic) {

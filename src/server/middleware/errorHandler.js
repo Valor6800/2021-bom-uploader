@@ -2,7 +2,10 @@
  * Shared error-handling middleware and API 404 handler.
  *
  * Centralizes the response shape that every route previously duplicated:
- *   { error: <message>, status: <code> }
+ *   { ...details, error: <message>, status: <code>, source? }
+ *
+ * `details` come from an HttpError; `source` is 'tracker' for a
+ * JiraApiError and 'onshape' for an OnshapeApiError.
  *
  * Reads `.status` off the thrown error (HttpError, JiraApiError,
  * OnshapeApiError all expose it) and defaults to 500. Logs 5xx errors.
@@ -30,5 +33,22 @@ export function errorHandler(err, req, res, next) {
     return next(err);
   }
 
-  res.status(status).json({ error: err.message || 'Internal Server Error', status });
+  // `details` go first so they can never overwrite error, status or source.
+  const source = errorSource(err);
+  res.status(status).json({
+    ...(err.details ?? {}),
+    error: err.message || 'Internal Server Error',
+    status,
+    ...(source && { source }),
+  });
+}
+
+/**
+ * Which upstream system an error came from, so the client can choose its
+ * wording without matching message text. Our own errors have no source.
+ */
+function errorSource(err) {
+  if (err?.name === 'JiraApiError') return 'tracker';
+  if (err?.name === 'OnshapeApiError') return 'onshape';
+  return null;
 }

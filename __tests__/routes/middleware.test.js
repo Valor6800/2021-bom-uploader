@@ -9,7 +9,9 @@ import express from 'express';
 import request from 'supertest';
 
 const { asyncHandler } = await import('../../src/server/middleware/asyncHandler.js');
-const { badRequest, HttpError } = await import('../../src/server/middleware/httpError.js');
+const { badRequest, conflict, HttpError } = await import('../../src/server/middleware/httpError.js');
+const { JiraApiError } = await import('../../src/server/clients/jiraClient.js');
+const { OnshapeApiError } = await import('../../src/server/clients/onshapeClient.js');
 const { apiNotFound, errorHandler } = await import('../../src/server/middleware/errorHandler.js');
 const { cors } = await import('../../src/server/middleware/cors.js');
 const { default: partRoutes } = await import('../../src/server/routes/partRoutes.js');
@@ -159,5 +161,76 @@ describe('httpError', () => {
     expect(err).toBeInstanceOf(HttpError);
     expect(err.status).toBe(400);
     expect(err.message).toBe('nope');
+  });
+});
+
+describe('error body details and source', () => {
+  function appThrowing(makeError) {
+    const app = express();
+    app.get('/api/boom', asyncHandler(async () => { throw makeError(); }));
+    app.use(errorHandler);
+    return app;
+  }
+  let errorSpy;
+  beforeEach(() => { errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {}); });
+  afterEach(() => errorSpy.mockRestore());
+
+  it('spreads details into the body', async () => {
+    const res = await request(appThrowing(() => badRequest('Bad', { problems: ['a', 'b'] }))).get('/api/boom');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ problems: ['a', 'b'], error: 'Bad', status: 400 });
+  });
+
+  it('never lets details overwrite error or status', async () => {
+    const err = badRequest('Bad');
+    // Bypasses the constructor guard to prove the spread order on its own.
+    err.details = { error: 'hijack', status: 200, extra: 1 };
+    const res = await request(appThrowing(() => err)).get('/api/boom');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ extra: 1, error: 'Bad', status: 400 });
+  });
+
+  it('conflict() gives 409 with buildStatus', async () => {
+    const res = await request(appThrowing(() => conflict('Already cut', { buildStatus: 'Active' }))).get('/api/boom');
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ buildStatus: 'Active', error: 'Already cut', status: 409 });
+  });
+
+  it('marks a JiraApiError 503 with source tracker', async () => {
+    const res = await request(appThrowing(() => new JiraApiError('Service Unavailable', 503, 'x'))).get('/api/boom');
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'Service Unavailable', status: 503, source: 'tracker' });
+  });
+
+  it('marks a tracker network failure (status 0) as a 500 from the tracker', async () => {
+    const res = await request(appThrowing(() => new JiraApiError('ECONNRESET', 0, 'x'))).get('/api/boom');
+    expect(res.status).toBe(500);
+    expect(res.body.source).toBe('tracker');
+  });
+
+  it('marks an OnshapeApiError with source onshape', async () => {
+    const res = await request(appThrowing(() => new OnshapeApiError('Bad gateway', 502, 'x'))).get('/api/boom');
+    expect(res.status).toBe(502);
+    expect(res.body).toEqual({ error: 'Bad gateway', status: 502, source: 'onshape' });
+  });
+
+  it('gives an HttpError no source', async () => {
+    const res = await request(appThrowing(() => badRequest('Bad'))).get('/api/boom');
+    expect(res.body).not.toHaveProperty('source');
+  });
+});
+
+describe('HttpError details', () => {
+  it.each(['error', 'status', 'source'])('throws at construction for reserved key %s', (key) => {
+    expect(() => conflict('x', { [key]: 'Active' }))
+      .toThrow(`HttpError details may not use reserved key '${key}'`);
+    expect(() => new HttpError(400, 'x', { [key]: 1 })).toThrow(Error);
+  });
+
+  it('stores details and keeps the 400 default for badRequest', () => {
+    const err = badRequest('x', { problems: [] });
+    expect(err.status).toBe(400);
+    expect(err.details).toEqual({ problems: [] });
+    expect(badRequest('y').details).toBeUndefined();
   });
 });

@@ -4,9 +4,12 @@
  */
 
 import { applyTitleMask, applyPartMask } from '../utils/partMask.js';
-import { sanitizeJQL } from '../utils/validators.js';
+import { sanitizeJQL, validateIssueKey } from '../utils/validators.js';
 import { RevisionField } from '../utils/buildConstants.js';
-import { badRequest } from '../middleware/httpError.js';
+import { badRequest, HttpError } from '../middleware/httpError.js';
+import {
+  ASSEMBLY_FIELDS, KEY_SHAPED_RE, isAssemblyIssue, searchAssemblyList, toAssembly,
+} from '../utils/assemblySearch.js';
 
 const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL';
 
@@ -94,16 +97,82 @@ export class EpicService {
   }
 
   /**
-   * Retrieve a single epic by its Jira issue key — what the Assembly hub
-   * (Sheet 06) needs to resolve a direct /assembly/:key link.
+   * Retrieve a single Assembly by its tracker key, numbered or not.
    *
-   * @param {string} key  Jira issue key, e.g. "VAL-1"
-   * @returns {Promise<object|null>}
+   * @param {string} key  Tracker key, e.g. "HAR-2030" (already validated)
+   * @returns {Promise<object|null>} the toAssembly shape, or null when the
+   *   key belongs to something other than an Assembly
+   * @throws {HttpError} 404 when the key doesn't exist
    */
   async getEpicByKey(key) {
-    const issue = await this.jiraClient.getIssue(key);
-    const [epic] = this._parseEpics([issue]);
-    return epic ?? null;
+    let issue;
+    try {
+      issue = await this.jiraClient.getIssue(key);
+    } catch (err) {
+      if (err?.status === 404) throw new HttpError(404, `No Assembly ${key} found`);
+      throw err;
+    }
+    if (!isAssemblyIssue(issue)) return null;
+    return this._toAssembly(issue);
+  }
+
+  /**
+   * Search every Assembly by key, name, number or season (design 3.1.1).
+   *
+   * One JQL lists the Assembly set; matching and ranking happen in code
+   * because JQL can't find a bare number or a season word. A key-shaped
+   * query also reads that key directly, which finds a closed Assembly even
+   * when closed ones are excluded.
+   *
+   * @param {string} query  Already stripped of control characters and trimmed
+   * @param {object} [options]
+   * @param {number} [options.limit=50]
+   * @param {boolean} [options.includeClosed=false]
+   * @returns {Promise<{ query: string, total: number, results: object[], groups: object[]|null }>}
+   */
+  async searchAssemblies(query, { limit = 50, includeClosed = false } = {}) {
+    // Read the project at call time, as validateIssueKey does, so the list
+    // query and the key lookup always target the same project.
+    const project = sanitizeJQL(process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL');
+    const statusClause = includeClosed ? '' : ' AND status not in (Closed, Finished)';
+    const jql =
+      `project = ${project} AND issuetype = Assembly${statusClause} ORDER BY created DESC`;
+
+    const [issues, direct] = await Promise.all([
+      this.jiraClient.searchIssues(jql, { paginate: true, fields: ASSEMBLY_FIELDS }),
+      this._lookupKey(query),
+    ]);
+
+    const byKey = new Map();
+    for (const issue of issues) byKey.set(issue.key, this._toAssembly(issue));
+    if (direct && !byKey.has(direct.key)) byKey.set(direct.key, this._toAssembly(direct));
+
+    return searchAssemblyList([...byKey.values()], query, limit);
+  }
+
+  /**
+   * Direct read for a key-shaped query. Never fails the search: a missing
+   * key or a lookup error just means no extra hit.
+   * @private
+   */
+  async _lookupKey(query) {
+    if (!KEY_SHAPED_RE.test(query)) return null;
+    const key = query.toUpperCase();
+    if (!validateIssueKey(key).valid) return null;
+    try {
+      const issue = await this.jiraClient.getIssue(key, { fields: ASSEMBLY_FIELDS });
+      return isAssemblyIssue(issue) ? issue : null;
+    } catch (err) {
+      if (err?.status !== 404) {
+        console.warn('[search] key lookup for', key, 'failed:', err?.status, err?.message);
+      }
+      return null;
+    }
+  }
+
+  /** @private */
+  _toAssembly(issue) {
+    return toAssembly(issue, { onshapeBaseUrl: this.onshapeClient?.baseUrl });
   }
 
   /**

@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import { EpicService } from '../../src/server/services/epicService.js';
+import { JiraApiError } from '../../src/server/clients/jiraClient.js';
 
 function makeJiraClient(overrides = {}) {
   return {
@@ -9,28 +10,32 @@ function makeJiraClient(overrides = {}) {
 }
 
 describe('EpicService.getEpicByKey', () => {
-  it('returns the parsed epic for a matching Assembly issue', async () => {
+  it('returns the Assembly shape for a numbered Assembly', async () => {
     const jiraClient = makeJiraClient({
       getIssue: jest.fn().mockResolvedValue({
         key: 'VAL-1',
         fields: {
           summary: 'VR26A-0001 End Effector',
+          issuetype: { name: 'Epic' },
           customfield_10300: 'doc1',
           customfield_10301: 'ws1',
           customfield_10302: 'el1',
         },
       }),
     });
-    const service = new EpicService({ jiraClient });
+    const service = new EpicService({ jiraClient, onshapeClient: { baseUrl: 'https://cad.onshape.com' } });
 
     const result = await service.getEpicByKey('VAL-1');
 
     expect(result).toEqual(expect.objectContaining({
       key: 'VAL-1',
+      summary: 'VR26A-0001 End Effector',
+      numbered: true,
       fullPartNumber: 'VR26A-0001',
       documentId: 'doc1',
       workspaceId: 'ws1',
       elementId: 'el1',
+      onshapeUrl: 'https://cad.onshape.com/documents/doc1/w/ws1/e/el1',
     }));
   });
 
@@ -38,7 +43,7 @@ describe('EpicService.getEpicByKey', () => {
     const jiraClient = makeJiraClient({
       getIssue: jest.fn().mockResolvedValue({
         key: 'HAR-2027',
-        fields: { summary: 'VF27A-0000A Test Assembly' },
+        fields: { summary: 'VF27A-0000A Test Assembly', issuetype: { name: 'Assembly' } },
       }),
     });
     const service = new EpicService({ jiraClient });
@@ -50,21 +55,196 @@ describe('EpicService.getEpicByKey', () => {
       seasonType: 'F',
       year: '27',
       partNumber: '0000',
-      version: 'A',
+      revision: 'A',
       name: 'Test Assembly',
-      isEpic: true,
+      numbered: true,
     }));
   });
 
-  it('returns null when the issue summary does not match the Assembly/Part number format', async () => {
+  it('returns an unnumbered Assembly instead of dropping it', async () => {
     const jiraClient = makeJiraClient({
-      getIssue: jest.fn().mockResolvedValue({ key: 'VAL-99', fields: { summary: 'Not an assembly' } }),
+      getIssue: jest.fn().mockResolvedValue({
+        key: 'HAR-1984',
+        fields: { summary: 'VF27-0200 Tooling', issuetype: { name: 'Epic' } },
+      }),
     });
     const service = new EpicService({ jiraClient });
 
-    const result = await service.getEpicByKey('VAL-99');
+    const result = await service.getEpicByKey('HAR-1984');
 
-    expect(result).toBeNull();
+    expect(result).toEqual(expect.objectContaining({
+      key: 'HAR-1984',
+      numbered: false,
+      name: 'VF27-0200 Tooling',
+      seasonLabel: 'Facility 2027',
+    }));
+  });
+
+  it('returns null for a key that is not an Assembly, even if its summary parses', async () => {
+    const jiraClient = makeJiraClient({
+      getIssue: jest.fn().mockResolvedValue({
+        key: 'HAR-2031',
+        fields: { summary: 'VF27P-0001A Bracket', issuetype: { name: 'Part' } },
+      }),
+    });
+    const service = new EpicService({ jiraClient });
+
+    expect(await service.getEpicByKey('HAR-2031')).toBeNull();
+  });
+
+  it('turns a tracker 404 into a 404 "No Assembly … found"', async () => {
+    const jiraClient = makeJiraClient({
+      getIssue: jest.fn().mockRejectedValue(new JiraApiError('Issue does not exist', 404, 'x')),
+    });
+    const service = new EpicService({ jiraClient });
+
+    await expect(service.getEpicByKey('HAR-9')).rejects.toMatchObject({
+      status: 404,
+      message: 'No Assembly HAR-9 found',
+    });
+  });
+
+  it('passes other tracker errors through', async () => {
+    const err = new JiraApiError('down', 503, 'x');
+    const service = new EpicService({ jiraClient: makeJiraClient({ getIssue: jest.fn().mockRejectedValue(err) }) });
+
+    await expect(service.getEpicByKey('HAR-9')).rejects.toBe(err);
+  });
+});
+
+describe('EpicService.searchAssemblies', () => {
+  const savedProject = process.env.PROJECT_KEY;
+  beforeEach(() => { process.env.PROJECT_KEY = 'HAR'; });
+  afterEach(() => {
+    if (savedProject === undefined) delete process.env.PROJECT_KEY;
+    else process.env.PROJECT_KEY = savedProject;
+  });
+
+  function issue(key, summary, { status = 'New', type = 'Epic', created = '2026-01-01T00:00:00.000+0000' } = {}) {
+    return { key, fields: { summary, status: { name: status }, issuetype: { name: type }, created } };
+  }
+  const OPEN = [
+    issue('HAR-2030', 'VF27A-0000A Test Assembly', { created: '2026-10-29T00:00:00.000+0000' }),
+    issue('HAR-1984', 'VF27-0200 Tooling', { created: '2026-09-02T00:00:00.000+0000' }),
+    issue('HAR-1972', 'Second end effector', { created: '2026-06-01T00:00:00.000+0000' }),
+  ];
+  const CLOSED = issue('HAR-1990', 'VR26A-0300A Old Climber', { status: 'Closed' });
+
+  function makeService({ list = OPEN, direct } = {}) {
+    const jiraClient = makeJiraClient({
+      searchIssues: jest.fn().mockResolvedValue(list),
+      getIssue: direct ?? jest.fn().mockRejectedValue(new JiraApiError('Issue does not exist', 404, 'x')),
+    });
+    return { service: new EpicService({ jiraClient, onshapeClient: { baseUrl: 'https://cad.onshape.com' } }), jiraClient };
+  }
+
+  it('lists open Assemblies with one JQL that excludes closed ones', async () => {
+    const { service, jiraClient } = makeService();
+
+    const result = await service.searchAssemblies('');
+
+    const [jql, options] = jiraClient.searchIssues.mock.calls[0];
+    expect(jql).toMatch(/AND issuetype = Assembly AND status not in \(Closed, Finished\) ORDER BY created DESC$/);
+    expect(options).toEqual(expect.objectContaining({ paginate: true, fields: expect.arrayContaining(['summary', 'status', 'created', 'issuetype', 'customfield_10500']) }));
+    expect(jiraClient.getIssue).not.toHaveBeenCalled();
+    expect(result.total).toBe(3);
+    expect(result.groups.map((g) => g.label)).toEqual(['Facility 2027', 'Other']);
+  });
+
+  it('reads the project at call time, matching validateIssueKey', async () => {
+    const { service, jiraClient } = makeService();
+
+    await service.searchAssemblies('');
+
+    expect(jiraClient.searchIssues.mock.calls[0][0]).toMatch(/^project = HAR AND /);
+  });
+
+  it('drops the status clause when includeClosed is true, so a closed one matches by name', async () => {
+    const { service, jiraClient } = makeService({ list: [...OPEN, CLOSED] });
+
+    const result = await service.searchAssemblies('climber', { includeClosed: true });
+
+    expect(jiraClient.searchIssues.mock.calls[0][0]).not.toContain('status not in');
+    expect(result.results).toEqual([expect.objectContaining({ key: 'HAR-1990', closed: true })]);
+  });
+
+  it('upper-cases a key-shaped query before getIssue and merges the hit by key', async () => {
+    const direct = jest.fn().mockResolvedValue(OPEN[0]);
+    const { service, jiraClient } = makeService({ direct });
+
+    const result = await service.searchAssemblies('har-2030');
+
+    expect(jiraClient.getIssue).toHaveBeenCalledWith('HAR-2030', expect.objectContaining({ fields: expect.any(Array) }));
+    expect(result.total).toBe(1);
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]).toEqual(expect.objectContaining({ key: 'HAR-2030', score: 100 }));
+  });
+
+  it('ignores a 404 from the key lookup', async () => {
+    const { service } = makeService();
+
+    const result = await service.searchAssemblies('HAR-999999');
+
+    expect(result).toEqual({ query: 'HAR-999999', total: 0, results: [], groups: null });
+  });
+
+  it('drops a key hit that is not an Assembly', async () => {
+    const direct = jest.fn().mockResolvedValue(issue('HAR-2031', 'VF27P-0001A Bracket', { type: 'Part' }));
+    const { service } = makeService({ direct });
+
+    const result = await service.searchAssemblies('HAR-2031');
+
+    expect(result.total).toBe(0);
+  });
+
+  it('finds a closed Assembly by key with includeClosed off and marks it closed', async () => {
+    const direct = jest.fn().mockResolvedValue(CLOSED);
+    const { service, jiraClient } = makeService({ direct });
+
+    const result = await service.searchAssemblies('HAR-1990');
+
+    expect(jiraClient.searchIssues.mock.calls[0][0]).toContain('status not in (Closed, Finished)');
+    expect(result.total).toBe(1);
+    expect(result.results[0]).toEqual(expect.objectContaining({ key: 'HAR-1990', closed: true, score: 100 }));
+  });
+
+  it('does not look up a key from another project', async () => {
+    const { service, jiraClient } = makeService();
+
+    await service.searchAssemblies('VAL-1');
+
+    expect(jiraClient.getIssue).not.toHaveBeenCalled();
+  });
+
+  it('logs and ignores a non-404 key lookup failure', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const direct = jest.fn().mockRejectedValue(new JiraApiError('down', 503, 'x'));
+    const { service } = makeService({ direct });
+
+    const result = await service.searchAssemblies('HAR-2030');
+
+    expect(result.total).toBe(1);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('propagates a failure of the main search', async () => {
+    const err = new JiraApiError('down', 503, 'x');
+    const jiraClient = makeJiraClient({ searchIssues: jest.fn().mockRejectedValue(err) });
+    const service = new EpicService({ jiraClient });
+
+    await expect(service.searchAssemblies('intake')).rejects.toBe(err);
+  });
+
+  it('counts total before the cap with 60 Assemblies and limit 50', async () => {
+    const list = Array.from({ length: 60 }, (_, i) => issue(`HAR-${3000 + i}`, `VR27A-${String(i).padStart(4, '0')}A Thing ${i}`));
+    const { service } = makeService({ list });
+
+    const result = await service.searchAssemblies('', { limit: 50 });
+
+    expect(result.total).toBe(60);
+    expect(result.results).toHaveLength(50);
+    expect(result.groups.flatMap((g) => g.keys)).toEqual(result.results.map((a) => a.key));
   });
 });
 
