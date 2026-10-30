@@ -44,19 +44,23 @@ export default function Dialog({
     }
   }, [open, initialFocusRef]);
 
-  // Restore focus once the dialog has closed, however it closed.
+  // Restore focus once the dialog has closed, however it closed. The
+  // cleanup covers a Dialog unmounted while open, which fires no `close`.
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return undefined;
-    const handleClose = () => {
+    const restore = () => {
       const target = returnFocusRef.current;
       returnFocusRef.current = null;
       if (target && typeof target.focus === 'function' && document.contains(target)) {
         target.focus();
       }
     };
-    dialog.addEventListener('close', handleClose);
-    return () => dialog.removeEventListener('close', handleClose);
+    dialog.addEventListener('close', restore);
+    return () => {
+      dialog.removeEventListener('close', restore);
+      restore();
+    };
   }, []);
 
   // Esc fires `cancel`; keep the element's open state owned by React.
@@ -65,9 +69,18 @@ export default function Dialog({
     onClose();
   };
 
-  // A click whose target is the <dialog> itself landed on the backdrop.
+  // A backdrop click is one whose press and release both land on the
+  // <dialog> itself. A drag that starts in the panel (selecting text in an
+  // input) and ends on the backdrop also targets the <dialog>, so the press
+  // target is recorded and checked too.
+  const pressedOnBackdrop = useRef(false);
+  const handleMouseDown = (e) => {
+    pressedOnBackdrop.current = e.target === ref.current;
+  };
   const handleClick = (e) => {
-    if (e.target === ref.current) onClose();
+    const onBackdrop = pressedOnBackdrop.current && e.target === ref.current;
+    pressedOnBackdrop.current = false;
+    if (onBackdrop) onClose();
   };
 
   return (
@@ -77,6 +90,7 @@ export default function Dialog({
       aria-labelledby={titleId}
       aria-describedby={description ? descId : undefined}
       onCancel={handleCancel}
+      onMouseDown={handleMouseDown}
       onClick={handleClick}
     >
       <div className="dialog-panel">

@@ -1,4 +1,4 @@
-import { friendlyError } from '../../src/client/src/lib/friendlyError.js';
+import { friendlyError, friendlyClause } from '../../src/client/src/lib/friendlyError.js';
 import { ApiError, AuthRequiredError } from '../../src/client/src/api/client.js';
 
 const apiError = (status, body) => new ApiError(body.error ?? `Request failed: ${status}`, status, body);
@@ -12,6 +12,11 @@ describe('friendlyError', () => {
   it('describes a tracker network failure (sent as 500) as not responding', () => {
     expect(friendlyError(apiError(500, { error: 'ECONNRESET', status: 500, source: 'tracker' })))
       .toBe("The team tracker didn't respond (500).");
+  });
+
+  it('describes a tracker status 0 as no connection', () => {
+    expect(friendlyError(new ApiError('x', 0, { source: 'tracker' })))
+      .toBe("The team tracker didn't respond (no connection).");
   });
 
   it('describes a tracker 400 as a refusal', () => {
@@ -37,6 +42,13 @@ describe('friendlyError', () => {
   it('says the server is unreachable when fetch throws a TypeError', () => {
     expect(friendlyError(new TypeError('Failed to fetch')))
       .toBe("Couldn't reach ValorBOM. Is the server running?");
+  });
+
+  it('lowers only a leading "The" for use after a colon', () => {
+    expect(friendlyClause(apiError(503, { status: 503, source: 'tracker' })))
+      .toBe("the team tracker didn't respond (503).");
+    expect(friendlyClause(apiError(502, { status: 502, source: 'onshape' })))
+      .toBe("OnShape didn't respond (502).");
   });
 
   it('keeps a sign-in error message', () => {

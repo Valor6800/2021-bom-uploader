@@ -1,0 +1,187 @@
+{
+  "bomTable": {
+    "formatVersion": "1.2",
+    "name": "BOM : Test Assembly",
+    "type": "multiLevel",
+    "headers": [
+      {
+        "name": "Item",
+        "propertyName": "item",
+        "visible": true,
+        "propertyId": "5ace8269c046ad612c65a0ba"
+      },
+      {
+        "name": "Quantity",
+        "propertyName": "quantity",
+        "visible": true,
+        "propertyId": "5ace84d3c046ad611c65a0dd"
+      },
+      {
+        "name": "Part number",
+        "propertyName": "partNumber",
+        "visible": true,
+        "propertyId": "57f3fb8efa3416c06701d60f"
+      },
+      {
+        "name": "Description",
+        "propertyName": "description",
+        "visible": true,
+        "propertyId": "57f3fb8efa3416c06701d60e"
+      },
+      {
+        "name": "Name",
+        "propertyName": "name",
+        "visible": true,
+        "propertyId": "57f3fb8efa3416c06701d60d"
+      },
+      {
+        "name": "Material",
+        "propertyName": "material",
+        "visible": true,
+        "propertyId": "57f3fb8efa3416c06701d615"
+      },
+      {
+        "name": "Revision",
+        "propertyName": "revision",
+        "visible": true,
+        "propertyId": "57f3fb8efa3416c06701d610"
+      },
+      {
+        "name": "Appearance",
+        "propertyName": "appearance",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d60c"
+      },
+      {
+        "name": "State",
+        "propertyName": "state",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d611"
+      },
+      {
+        "name": "Vendor",
+        "propertyName": "vendor",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d612"
+      },
+      {
+        "name": "Project",
+        "propertyName": "project",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d613"
+      },
+      {
+        "name": "Product line",
+        "propertyName": "productLine",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d614"
+      },
+      {
+        "name": "Title 1",
+        "propertyName": "title1",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d616"
+      },
+      {
+        "name": "Title 2",
+        "propertyName": "title2",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d617"
+      },
+      {
+        "name": "Title 3",
+        "propertyName": "title3",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d618"
+      },
+      {
+        "name": "Not revision managed",
+        "propertyName": "notRevisionManaged",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d61d"
+      },
+      {
+        "name": "Exclude from all BOMs",
+        "propertyName": "excludeFromBom",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d61e"
+      },
+      {
+        "name": "Unit of measure",
+        "propertyName": "57f3fb8efa3416c06701d623",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d623"
+      },
+      {
+        "name": "Category",
+        "propertyName": "category",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d625"
+      },
+      {
+        "name": "Mass",
+        "propertyName": "57f3fb8efa3416c06701d626",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d626"
+      },
+      {
+        "name": "Subassembly BOM behavior",
+        "propertyName": "bomBehavior",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d633"
+      },
+      {
+        "name": "Snap 3D Cad to AR scan blob",
+        "propertyName": "snap3dcadtoarscanblob",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d644"
+      },
+      {
+        "name": "Snap 3D Cad to AR scan xml",
+        "propertyName": "snap3dcadtoarscanxml",
+        "visible": false,
+        "propertyId": "57f3fb8efa3416c06701d645"
+      },
+      {
+        "name": "Tessellation quality",
+        "propertyName": "5ace8269c046ad612c65a0bb",
+        "visible": false,
+        "propertyId": "5ace8269c046ad612c65a0bb"
+      }
+    ],
+    "items": [
+      {
+        "itemSource": {
+          "configuration": "default",
+          "partIdentity": "0fdc143ef0a01448ab3f97f3",
+          "wvmId": "82f00d3cbea6901ac26040bd",
+          "documentId": "8c64dfdcb66184646a7a3f17",
+          "elementId": "dee530f014572997b748614a",
+          "fullConfiguration": "default",
+          "isStandardContent": false,
+          "wvmType": "w",
+          "viewHref": "https://cad.onshape.com/documents/8c64dfdcb66184646a7a3f17/w/82f00d3cbea6901ac26040bd/e/dee530f014572997b748614a?configuration=default",
+          "sourceElementMicroversionId": "d893157185984b8166c6b335",
+          "partId": "JHD",
+          "relatedOccurrences": [
+            "MCtv7BIuX+6h1PZ6d"
+          ],
+          "indentLevel": 0,
+          "rowId": "cc6e9a7cc1b73b2e78619982"
+        },
+        "excludeFromBom": false,
+        "material": {
+          "id": "PLA",
+          "displayName": "PLA",
+          "libraryName": "Onshape Material Library"
+        },
+        "quantity": 1,
+        "revision": "A",
+        "name": "Test Part",
+        "partNumber": "0001",
+        "project": "",
+        "item": "1"
+      }
+    ]
+  }
+}

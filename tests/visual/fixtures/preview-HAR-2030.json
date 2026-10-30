@@ -1,0 +1,134 @@
+{
+  "status": 200,
+  "body": {
+    "newParts": [
+      {
+        "summary": "VF27P-0004A Spacer",
+        "name": "Spacer",
+        "version": "A",
+        "year": "27",
+        "seasonType": "F",
+        "partNumber": "0004",
+        "fullPartNumber": "VF27P-0004A",
+        "isEpic": false,
+        "quantity": 4,
+        "material": "PETG-CF",
+        "thickness": "None",
+        "machinery": "3D Printer",
+        "powdercoat": "None",
+        "epic": "HAR-2030"
+      },
+      {
+        "summary": "VF27P-0006A Shaft",
+        "name": "Shaft",
+        "version": "A",
+        "year": "27",
+        "seasonType": "F",
+        "partNumber": "0006",
+        "fullPartNumber": "VF27P-0006A",
+        "isEpic": false,
+        "quantity": 1,
+        "material": "Steel",
+        "thickness": "None",
+        "machinery": "None",
+        "powdercoat": "None",
+        "epic": "HAR-2030"
+      }
+    ],
+    "existingParts": [
+      {
+        "bomItem": {
+          "summary": "VF27P-0001A Test Part",
+          "name": "Test Part",
+          "version": "A",
+          "year": "27",
+          "seasonType": "F",
+          "partNumber": "0001",
+          "fullPartNumber": "VF27P-0001A",
+          "isEpic": false,
+          "quantity": 3,
+          "material": "PLA",
+          "thickness": "None",
+          "machinery": "3D Printer",
+          "powdercoat": "None",
+          "epic": "HAR-2030"
+        },
+        "story": {
+          "summary": "VF27P-0001A Test Part",
+          "name": "Test Part",
+          "version": "A",
+          "year": "27",
+          "seasonType": "F",
+          "partNumber": "0001",
+          "fullPartNumber": "VF27P-0001A",
+          "isEpic": false,
+          "key": "HAR-2031",
+          "epic": "HAR-2030",
+          "material": "PLA",
+          "machinery": "3D Printer",
+          "powdercoat": "None",
+          "quantity": 1,
+          "thickness": "None",
+          "project": "HAR"
+        },
+        "changes": {
+          "count": 1,
+          "quantity": 3
+        }
+      },
+      {
+        "bomItem": {
+          "summary": "VF27P-0002A Plate",
+          "name": "Plate",
+          "version": "A",
+          "year": "27",
+          "seasonType": "F",
+          "partNumber": "0002",
+          "fullPartNumber": "VF27P-0002A",
+          "isEpic": false,
+          "quantity": 2,
+          "material": "AL 6061",
+          "thickness": "None",
+          "machinery": "CNC Router",
+          "powdercoat": "None",
+          "epic": "HAR-2030"
+        },
+        "story": {
+          "summary": "VF27P-0002A Plate",
+          "name": "Plate",
+          "version": "A",
+          "year": "27",
+          "seasonType": "F",
+          "partNumber": "0002",
+          "fullPartNumber": "VF27P-0002A",
+          "isEpic": false,
+          "key": "HAR-2032",
+          "epic": "HAR-2030",
+          "material": "AL 6061",
+          "machinery": "CNC Router",
+          "powdercoat": "None",
+          "quantity": 2,
+          "thickness": "None",
+          "project": "HAR"
+        },
+        "changes": {
+          "count": 0
+        }
+      }
+    ],
+    "duplicates": [],
+    "unidentified": [
+      {
+        "item": "3",
+        "name": "Bracket",
+        "partNumber": "0005",
+        "revision": "",
+        "project": "",
+        "quantity": 1,
+        "problems": [
+          "missing Revision"
+        ]
+      }
+    ]
+  }
+}

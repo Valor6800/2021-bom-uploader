@@ -33,3 +33,15 @@ export function friendlyError(err) {
   // fetch() itself threw: the local ValorBOM server is unreachable.
   return "Couldn't reach ValorBOM. Is the server running?";
 }
+
+/**
+ * friendlyError for use after an action prefix and a colon:
+ * "Couldn't load the Builds: the team tracker didn't respond (503)."
+ * Only the leading "The" is lowered; names like OnShape keep their case.
+ *
+ * @param {Error} err
+ * @returns {string}
+ */
+export function friendlyClause(err) {
+  return friendlyError(err).replace(/^The /, 'the ');
+}

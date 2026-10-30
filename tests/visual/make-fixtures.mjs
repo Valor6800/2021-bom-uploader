@@ -25,6 +25,7 @@ const OUT_DIR = path.join(__dirname, 'fixtures');
 const { PurchasingService } = await import('../../src/server/services/purchasingService.js');
 const { ReceivingService } = await import('../../src/server/services/receivingService.js');
 const { PartField } = await import('../../src/server/utils/purchasingConstants.js');
+const { makeBomFixtures, checkBomFixtures } = await import('./bom-fixtures.mjs');
 
 // ---------------------------------------------------------------------------
 // Fake clients
@@ -221,6 +222,9 @@ const receiving = new ReceivingService({
 });
 fixtures.receiving = { status: 200, body: await receiving.getReceiving() };
 
+// Designer and Assembly screens (tests/visual/bom-fixtures.mjs).
+Object.assign(fixtures, await makeBomFixtures());
+
 // The gate's signed-out answer (src/server/auth/requireAuth.js).
 fixtures['auth-401'] = { status: 401, body: { error: 'Not signed in', status: 401, loginUrl: '/auth/login' } };
 
@@ -239,6 +243,8 @@ assert(fixtures['purchasing-queue'].body.vendorGroups.length > 1, 'purchasing qu
 assert(fixtures.receiving.body.tickets.length > 0, 'receiving has no tickets');
 const assemblyKey = fixtures.receiving.body.tickets.find((t) => t.assembly)?.assembly.key;
 assert(assemblyKey?.startsWith('HAR-'), `generated Assembly key "${assemblyKey}" does not start with HAR-`);
+assert(fixtures['epic-HAR-2030'].body.key.startsWith('HAR-'), 'generated Assembly key does not start with HAR-');
+checkBomFixtures(fixtures, assert);
 
 await fs.mkdir(OUT_DIR, { recursive: true });
 for (const [name, fixture] of Object.entries(fixtures)) {

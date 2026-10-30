@@ -1,0 +1,20 @@
+{
+  "status": 200,
+  "body": {
+    "builds": [
+      {
+        "key": "HAR-2052",
+        "status": "Active",
+        "assemblyKey": "HAR-2030",
+        "onshapeVersionLink": "https://cad.onshape.com/documents/0a1b2c3d4e5f60718293a4b5/v/6e7f8a9b0c1d2e3f4a5b6c7d/e/1234567890abcdef12345678"
+      },
+      {
+        "key": "HAR-2051",
+        "status": "Active",
+        "assemblyKey": "HAR-2030",
+        "onshapeVersionLink": "https://cad.onshape.com/documents/8c64dfdcb66184646a7a3f17/v/5d1c0e2f9a7b3c4d5e6f7a8b/e/faea62821490977c33bc8d7c"
+      }
+    ],
+    "missing": []
+  }
+}

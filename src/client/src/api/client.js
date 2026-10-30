@@ -235,6 +235,16 @@ export function createBuild(payload) {
   });
 }
 
+/**
+ * Build statuses read by key (search lags a status change). At most 10.
+ * @param {string[]} keys
+ * @returns {Promise<{ builds: { key: string, status: string, assemblyKey: string|null,
+ *   onshapeVersionLink: string|null }[], missing: string[] }>}
+ */
+export function fetchBuildStatuses(keys) {
+  return request(`/api/builds/status?keys=${encodeURIComponent(keys.join(','))}`);
+}
+
 export function fetchBuildParts(buildKey) {
   return request(`/api/builds/${encodeURIComponent(buildKey)}/parts`);
 }

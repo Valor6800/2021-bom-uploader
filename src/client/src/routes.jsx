@@ -1,3 +1,4 @@
+import { Navigate } from 'react-router-dom';
 import AppLayout from './layout/AppLayout.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import AssemblyBomPage from './pages/AssemblyBomPage.jsx';
@@ -21,7 +22,13 @@ export const routes = [
       { index: true, element: <DashboardPage /> },
       { path: 'assembly', element: <AssemblyBomPage /> },
       { path: 'assembly/:key', element: <AssemblyHubPage /> },
-      { path: 'designer', element: <DesignerPage /> },
+      { path: 'a/:key/design', element: <DesignerPage /> },
+      // The Designer's mode switch links here. Until the new Assembly page
+      // lands (INC-7) it shows the existing Assembly hub.
+      { path: 'a/:key/assemble', element: <AssemblyHubPage /> },
+      // The old Designer page never worked (design section 1); the new one
+      // lives under /a/:key/design.
+      { path: 'designer', element: <Navigate to="/" replace /> },
       { path: 'purchasing', element: <PurchasingQueuePage /> },
       { path: 'receiving', element: <ReceivingPage /> },
       { path: '*', element: <NotFoundPage /> },

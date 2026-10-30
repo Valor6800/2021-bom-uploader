@@ -22,7 +22,7 @@ export default function UnidentifiedPartsWarning({ parts }) {
             <span className="text-orange font-semibold">
               {part.name || `Unnamed row${part.item ? ` ${part.item}` : ''}`}
             </span>
-            <span className="text-dim text-sm ml-2">— {part.problems.join('; ')}</span>
+            <span className="text-muted text-sm ml-2">— {part.problems.join('; ')}</span>
           </li>
         ))}
       </ul>

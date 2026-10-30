@@ -102,6 +102,7 @@ function matchRoute(route, method, url) {
  * @property {(page: import('playwright').Page, ctx: object) => Promise<void>} [run]
  *   Interactions and assertions; may call ctx.shot(name) for extra shots.
  * @property {boolean} [skipMainShot]
+ * @property {string} [init]        Script run before the page loads (addInitScript)
  * @property {string[]} [axeKnown]  axe rule ids reported but not failed. Only
  *   for legacy, non-BOM screens whose colours design section 4.2 keeps on
  *   purpose (e.g. #6b7280 "dim" text); never allowed with `bom: true`.
@@ -112,6 +113,632 @@ const LEGACY_COLOURS = ['color-contrast', 'link-in-text-block'];
 
 const purchasingSignedIn = [{ method: 'GET', path: '/api/purchasing/queue', fixture: 'purchasing-queue' }];
 const receivingSignedIn = [{ method: 'GET', path: '/api/receiving', fixture: 'receiving' }];
+
+// ---------------------------------------------------------------------------
+// INC-6: Designer page helpers and scenarios
+// ---------------------------------------------------------------------------
+
+const DESIGN_URL = '/a/HAR-2030/design';
+
+/** Answer with `name`'s fixture. */
+const fx = (name) => () => fixture(name);
+
+/** Requests the page made, filtered by method and path (string or RegExp). */
+function sent(ctx, method, pathMatch) {
+  return ctx.state.requests.filter((r) => r.method === method
+    && (pathMatch instanceof RegExp ? pathMatch.test(r.path) : r.path === pathMatch));
+}
+
+async function waitForSent(ctx, method, pathMatch, count = 1, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const list = sent(ctx, method, pathMatch);
+    if (list.length >= count) return list;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new CheckError(`Check failed: expected ${count} ${method} ${pathMatch} request(s), saw ${sent(ctx, method, pathMatch).length}`);
+}
+
+async function expectText(page, text, timeout = 5000) {
+  await page.getByText(text, { exact: false }).first().waitFor({ state: 'visible', timeout })
+    .catch(() => { throw new CheckError(`Check failed: expected text "${text}"`); });
+}
+
+async function expectNoText(page, text) {
+  const n = await page.getByText(text, { exact: false }).count();
+  assertTrue(n === 0, `text "${text}" should be absent (found ${n})`);
+}
+
+const partRow = (page, text) => page.locator('tr.part-row', { hasText: text });
+const chip = (page, label) => page.locator('.build-chip', { hasText: label });
+const button = (page, name) => page.getByRole('button', { name, exact: true });
+
+/** The Designer's reads for HAR-2030. Earlier entries win, so put overrides in `extra`. */
+function designerApi({
+  builds = 'builds-two',
+  stories = 'stories-chain-HAR-2030',
+  buildParts = { 'HAR-2051': 'build-parts-HAR-2051', 'HAR-2052': 'build-parts-HAR-2052' },
+  extra = [],
+} = {}) {
+  return [
+    ...extra,
+    { method: 'GET', path: '/api/epics/HAR-2030', fixture: 'epic-HAR-2030' },
+    { method: 'GET', path: '/api/revisions/chain/HAR-2030', fixture: 'chain-HAR-2030' },
+    { method: 'GET', path: '/api/stories', query: { key: 'HAR-2030', chain: '1' }, fixture: stories },
+    typeof builds === 'function'
+      ? { method: 'GET', path: '/api/builds', query: { assemblyKey: 'HAR-2030' }, respond: builds }
+      : { method: 'GET', path: '/api/builds', query: { assemblyKey: 'HAR-2030' }, fixture: builds },
+    ...Object.entries(buildParts).map(([k, name]) => ({ method: 'GET', path: `/api/builds/${k}/parts`, fixture: name })),
+  ];
+}
+
+const previewRoute = { method: 'POST', path: '/api/parts/preview', fixture: 'preview-HAR-2030' };
+const cutRoute = (buildKey, name) => ({ method: 'POST', path: `/api/builds/${buildKey}/cut-version`, fixture: name });
+const statusRoute = (respond) => ({ method: 'GET', path: '/api/builds/status', respond });
+
+async function openCutDialog(page) {
+  await button(page, 'Cut Version').first().click();
+  await page.locator('dialog[open]').waitFor({ state: 'visible', timeout: 5000 });
+}
+
+async function confirmCut(page) {
+  await page.locator('dialog[open]').getByRole('button', { name: /^(Cut Version|Try again)$/ }).click();
+}
+
+/** @type {Scenario[]} */
+const INC6_SCENARIOS = [
+  {
+    inc: 'INC-6',
+    name: 'designer-no-builds',
+    url: DESIGN_URL,
+    bom: true,
+    api: designerApi({ builds: 'builds-none', stories: 'stories-chain-one', buildParts: {} }),
+    waitFor: 'text=No Builds yet',
+    async run(page) {
+      await expectText(page, 'Create Build 1 to add these Parts to it.');
+      const box = partRow(page, 'HAR-2031').locator('input[type=checkbox]');
+      assertTrue(await box.isDisabled(), 'Part checkbox is disabled before a Build exists');
+      await expectText(page, 'Name: Test Assembly Build 1');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-no-builds-cad-disabled',
+    url: DESIGN_URL,
+    bom: true,
+    api: designerApi({ builds: 'builds-none', stories: 'stories-chain-one', buildParts: {} }),
+    waitFor: 'text=No Builds yet',
+    async run(page, ctx) {
+      const cad = button(page, 'Update from CAD');
+      await assertAttr(cad, 'aria-disabled', 'true');
+      assertEqual((await page.locator('#cad-help').textContent()).trim(), 'Create Build 1 first.', 'CAD help text');
+      await cad.focus();
+      // Playwright treats aria-disabled as not clickable; force the click to
+      // prove the page ignores it too.
+      await cad.click({ force: true });
+      await page.waitForTimeout(200);
+      assertEqual(sent(ctx, 'POST', '/api/parts/preview').length, 0, 'preview requests from a disabled button');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-har2031-linked',
+    url: DESIGN_URL,
+    bom: true,
+    api: designerApi({
+      builds: 'builds-none',
+      stories: 'stories-chain-one',
+      buildParts: { 'HAR-2051': 'build-parts-empty' },
+      extra: [
+        { method: 'POST', path: '/api/builds', fixture: 'create-build-1' },
+        { method: 'POST', path: '/api/builds/HAR-2051/save', fixture: 'save-link-HAR-2031' },
+      ],
+    }),
+    waitFor: 'text=No Builds yet',
+    async run(page, ctx) {
+      await button(page, 'Create Build 1').click();
+      const [create] = await waitForSent(ctx, 'POST', '/api/builds');
+      assertEqual(create.body, { assemblyKey: 'HAR-2030', revisionChainKeys: ['HAR-2030'], name: 'Test Assembly' }, 'Create Build 1 body');
+      await chip(page, 'Build 1').waitFor({ state: 'visible' });
+      await assertAttr(chip(page, 'Build 1'), 'aria-pressed', 'true');
+      await expectNoText(page, 'No Builds yet');
+
+      await partRow(page, 'HAR-2031').getByRole('checkbox', { name: 'Add HAR-2031 to this Build' }).check();
+      await expectText(page, 'Unsaved: 0 new Parts · 0 changes · 1 added to Build 1');
+      await button(page, 'Save').click();
+      const [save] = await waitForSent(ctx, 'POST', '/api/builds/HAR-2051/save');
+      assertEqual(save.body, { creates: [], updates: [], links: [{ ref: 'HAR-2031', key: 'HAR-2031' }] }, 'links-only save body');
+      // The re-fetch of HAR-2051's Parts still answers [] (search lag).
+      await page.locator('tbody.parts-group-in tr.part-row', { hasText: 'HAR-2031' }).waitFor({ state: 'visible' });
+      await expectNoText(page, 'Not in any Build');
+      await expectText(page, 'Saved');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-with-builds',
+    url: DESIGN_URL,
+    bom: true,
+    api: designerApi(),
+    waitFor: 'tbody.parts-group-in',
+    async run(page) {
+      await assertAttr(chip(page, 'Build 1'), 'aria-pressed', 'true');
+      await expectText(page, 'Also in Build 2');
+      await expectText(page, 'Test Assembly Build 1');
+      await expectNoText(page, 'Need a different combination');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-new-build-form',
+    url: DESIGN_URL,
+    bom: true,
+    skipMainShot: true,
+    api: designerApi({
+      buildParts: { 'HAR-2051': 'build-parts-HAR-2051', 'HAR-2052': 'build-parts-HAR-2052', 'HAR-2053': 'build-parts-empty' },
+      extra: [{ method: 'POST', path: '/api/builds', fixture: 'create-build-3-desc' }],
+    }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page, ctx) {
+      await button(page, '+ New Build').click();
+      const focusedName = await page.evaluate(() => document.activeElement?.closest('.form-row')?.querySelector('label')?.textContent);
+      assertEqual(focusedName, 'Name', 'focus moves to the Name field');
+      await page.getByLabel("What's different? (optional)").fill('1in bash bar');
+      assertEqual((await page.getByTestId('new-build-preview').textContent()).trim(), '→ "Test Assembly Build 3 - 1in bash bar"', 'preview line');
+      await ctx.shot('designer-new-build-form');
+      await button(page, 'Create Build 3').click();
+      const [create] = await waitForSent(ctx, 'POST', '/api/builds');
+      assertEqual(create.body.description, '1in bash bar', 'POST /api/builds description');
+      await chip(page, 'Build 3').waitFor({ state: 'visible' });
+      await assertAttr(chip(page, 'Build 3'), 'aria-pressed', 'true');
+      await expectText(page, 'Test Assembly Build 3 - 1in bash bar');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-after-cad',
+    url: DESIGN_URL,
+    bom: true,
+    skipMainShot: true,
+    api: designerApi({
+      extra: [
+        previewRoute,
+        {
+          method: 'POST',
+          path: '/api/builds/HAR-2051/save',
+          respond: ({ calls }) => fixture(calls === 1 ? 'save-after-cad-partial' : 'save-link-HAR-2034'),
+        },
+      ],
+    }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page, ctx) {
+      await button(page, 'Update from CAD').click();
+      const [preview] = await waitForSent(ctx, 'POST', '/api/parts/preview');
+      assertEqual(preview.body.fresh, true, 'Update from CAD sends fresh: true');
+      await page.locator('tbody.parts-group-new').waitFor({ state: 'visible' });
+      await expectText(page, 'Changed in CAD: Qty 1→3');
+      await expectText(page, '1 BOM row was not');
+      const steel = partRow(page, 'VF27P-0006A').getByLabel('Material for VF27P-0006A');
+      await assertAttr(steel, 'aria-invalid', 'true');
+      await expectText(page, '"Steel" isn\'t on the material list. Pick one.');
+      await expectText(page, '1 row needs a fix before it can save.');
+      await ctx.shot('designer-after-cad');
+
+      await button(page, 'Save').click();
+      const [save] = await waitForSent(ctx, 'POST', '/api/builds/HAR-2051/save');
+      assertEqual(save.body.creates.map((c) => c.ref), ['VF27P-0004A'], 'creates hold the Spacer and not the held-back Steel row');
+      assertEqual(save.body.updates.map((u) => u.ref), ['HAR-2031'], 'updates hold the CAD-changed Part');
+      await expectText(page, "Created, but not added to Build 1: the team tracker didn't respond (503)");
+      await ctx.shot('designer-save-partial-failure');
+
+      await button(page, 'Retry VF27P-0004A').click();
+      const saves = await waitForSent(ctx, 'POST', '/api/builds/HAR-2051/save', 2);
+      assertEqual(saves[1].body, { creates: [], updates: [], links: [{ ref: 'HAR-2034', key: 'HAR-2034' }] }, 'Retry sends only a link');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-cut-version-confirm',
+    url: DESIGN_URL,
+    bom: true,
+    skipMainShot: true,
+    // The Builds re-fetch after the cut still says Draft (search lag).
+    api: designerApi({ extra: [cutRoute('HAR-2051', 'cut-ok')] }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page, ctx) {
+      await openCutDialog(page);
+      await expectText(page, 'This makes a version in OnShape named HAR-2051');
+      await expectText(page, 'marks Build 2 Superseded');
+      assertEqual(await page.evaluate(() => document.activeElement?.textContent), 'Cancel', 'focus starts on Cancel');
+      await ctx.shot('designer-cut-version-confirm');
+      await confirmCut(page);
+      const [cut] = await waitForSent(ctx, 'POST', '/api/builds/HAR-2051/cut-version');
+      assertEqual(cut.body, { assemblyKey: 'HAR-2030' }, 'cut body');
+      await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+      const cutButton = button(page, 'Cut Version');
+      await assertAttr(cutButton, 'aria-disabled', 'true');
+      await assertAttr(cutButton, 'title', 'Already cut');
+      assertTrue((await chip(page, 'Build 1').textContent()).includes('Active'), 'Build 1 shows Active after the cut');
+      assertTrue((await chip(page, 'Build 2').textContent()).includes('Superseded'), 'Build 2 shows Superseded after the cut');
+      await ctx.shot('designer-after-cut');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-glossary-open',
+    url: DESIGN_URL,
+    bom: true,
+    api: designerApi(),
+    waitFor: 'tbody.parts-group-in',
+    async run(page) {
+      await page.getByRole('button', { name: 'What is a Build?' }).click();
+      await expectText(page, 'One specific combination of Parts for an Assembly');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-tablet-1024',
+    url: DESIGN_URL,
+    viewport: 'tablet',
+    bom: true,
+    api: designerApi({ extra: [previewRoute] }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page) {
+      await button(page, 'Update from CAD').click();
+      await page.locator('tbody.parts-group-new').waitFor({ state: 'visible' });
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-tablet-768',
+    url: DESIGN_URL,
+    viewport: 'portrait',
+    bom: true,
+    api: designerApi({ extra: [previewRoute] }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page) {
+      await button(page, 'Update from CAD').click();
+      await page.locator('tbody.parts-group-new').waitFor({ state: 'visible' });
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-load-404',
+    url: '/a/HAR-9/design',
+    bom: true,
+    expectStatuses: [404],
+    api: [
+      { method: 'GET', path: '/api/epics/HAR-9', fixture: 'epic-HAR-9-404' },
+      { method: 'GET', path: '/api/revisions/chain/HAR-9', fixture: 'chain-HAR-9-404' },
+      { method: 'GET', path: '/api/stories', query: { key: 'HAR-9', chain: '1' }, fixture: 'stories-chain-HAR-9-404' },
+    ],
+    waitFor: "text=We couldn't find Assembly HAR-9.",
+    async run(page) {
+      await page.getByRole('link', { name: 'Back to all Assemblies' }).waitFor({ state: 'visible' });
+      await expectNoText(page, 'Retry');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-builds-load-error',
+    url: DESIGN_URL,
+    bom: true,
+    expectStatuses: [503],
+    api: designerApi({ builds: 'builds-503' }),
+    waitFor: "text=Couldn't load the Builds",
+    async run(page) {
+      await expectText(page, "Couldn't load the Builds: the team tracker didn't respond (503).");
+      await assertAttr(button(page, 'Update from CAD'), 'aria-disabled', 'true');
+      assertTrue(await button(page, '+ New Build').isDisabled(), '+ New Build is disabled after a failed load');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-cad-error',
+    url: DESIGN_URL,
+    bom: true,
+    skipMainShot: true,
+    expectStatuses: [502, 500],
+    api: designerApi({
+      extra: [{
+        method: 'POST',
+        path: '/api/parts/preview',
+        respond: ({ calls }) => fixture(calls === 1 ? 'preview-onshape-502' : 'preview-missing-columns'),
+      }],
+    }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page, ctx) {
+      await button(page, 'Update from CAD').click();
+      await expectText(page, "Couldn't read Parts from CAD: OnShape didn't respond (502).");
+      await page.locator('tbody.parts-group-in tr.part-row').first().waitFor({ state: 'visible' });
+      await ctx.shot('designer-cad-error');
+      await button(page, 'Update from CAD').click();
+      await expectText(page, "Couldn't read Parts from CAD: BOM table is missing required columns: name.");
+      await ctx.shot('designer-cad-error-columns');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-new-build-error',
+    url: DESIGN_URL,
+    bom: true,
+    expectStatuses: [503],
+    api: designerApi({ extra: [{ method: 'POST', path: '/api/builds', fixture: 'create-build-503' }] }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page) {
+      await button(page, '+ New Build').click();
+      await button(page, 'Create Build 3').click();
+      await expectText(page, "Couldn't create Build 3: the team tracker didn't respond (503).");
+      assertTrue(await button(page, 'Create Build 3').isEnabled(), 'Create button is re-enabled');
+      const described = await button(page, 'Create Build 3').getAttribute('aria-describedby');
+      assertTrue(!!described && (await page.locator(`[id="${described}"]`).count()) === 1, 'error is linked to the Create button');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-new-build-clone-partial',
+    url: DESIGN_URL,
+    bom: true,
+    api: designerApi({
+      buildParts: { 'HAR-2051': 'build-parts-HAR-2051', 'HAR-2052': 'build-parts-HAR-2052', 'HAR-2053': 'build-parts-empty' },
+      extra: [{ method: 'POST', path: '/api/builds', fixture: 'create-build-clone-partial' }],
+    }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page, ctx) {
+      await button(page, '+ New Build').click();
+      await page.getByRole('radio', { name: 'Copy Parts from' }).check();
+      await button(page, 'Create Build 3').click();
+      const [create] = await waitForSent(ctx, 'POST', '/api/builds');
+      assertEqual(create.body.cloneFromBuildKey, 'HAR-2051', 'copy source');
+      await expectText(page, "Build 3 was created, but 1 Part wasn't copied: HAR-2032. Add them from Other Parts in this Assembly.");
+      await page.locator('tbody.parts-group-in tr.part-row', { hasText: 'HAR-2031' }).waitFor({ state: 'visible' });
+      await page.locator('tbody.parts-group-other tr.part-row', { hasText: 'HAR-2032' }).waitFor({ state: 'visible' });
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-cut-version-error',
+    url: DESIGN_URL,
+    bom: true,
+    expectStatuses: [502],
+    api: designerApi({ extra: [cutRoute('HAR-2051', 'cut-onshape-502')] }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page) {
+      await openCutDialog(page);
+      await confirmCut(page);
+      await expectText(page, "Couldn't cut the version: OnShape didn't respond (502).");
+      await page.locator('dialog[open]').getByRole('button', { name: 'Try again' }).waitFor({ state: 'visible' });
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-save-error',
+    url: DESIGN_URL,
+    bom: true,
+    skipMainShot: true,
+    expectStatuses: [503],
+    api: designerApi({ extra: [{ method: 'POST', path: '/api/builds/HAR-2051/save', fixture: 'save-503' }] }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page, ctx) {
+      await page.getByLabel('Quantity for VF27P-0001A').fill('3');
+      await expectText(page, 'Unsaved: 0 new Parts · 1 change · 0 added to Build 1');
+      await button(page, 'Save').click();
+      await expectText(page, "Couldn't save: the team tracker didn't respond (503). Nothing was changed.");
+      assertEqual(await page.getByLabel('Quantity for VF27P-0001A').inputValue(), '3', 'the edit is kept');
+      assertTrue(await button(page, 'Save').isEnabled(), 'Save is re-enabled');
+      await ctx.shot('designer-save-error');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-cut-version-already-cut',
+    url: DESIGN_URL,
+    bom: true,
+    skipMainShot: true,
+    expectStatuses: [409],
+    api: designerApi({ extra: [cutRoute('HAR-2051', 'cut-409-superseded')] }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page, ctx) {
+      await openCutDialog(page);
+      await confirmCut(page);
+      await expectText(page, 'Build 1 has already been cut.');
+      await ctx.shot('designer-cut-version-already-cut');
+      await page.locator('dialog[open] .dialog-footer').getByRole('button', { name: 'Close', exact: true }).click();
+      const label = await chip(page, 'Build 1').textContent();
+      assertTrue(label.includes('Superseded'), `Build 1 chip reads Superseded (got "${label}")`);
+      await expectNoText(page, '409');
+      await assertAttr(button(page, 'Cut Version'), 'title', 'Already cut');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-cut-version-stage-link',
+    url: DESIGN_URL,
+    bom: true,
+    expectStatuses: [503],
+    api: designerApi({ extra: [cutRoute('HAR-2051', 'cut-stage-link')] }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page) {
+      await openCutDialog(page);
+      await confirmCut(page);
+      await expectText(page, "The OnShape version was made, but Build 1 couldn't be updated: the team tracker didn't respond (503). Try again.");
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-cut-version-stage-supersede',
+    url: DESIGN_URL,
+    bom: true,
+    expectStatuses: [503],
+    api: designerApi({
+      extra: [
+        cutRoute('HAR-2051', 'cut-stage-supersede'),
+        statusRoute(fx('status-both-active-this-doc')),
+      ],
+    }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page) {
+      await openCutDialog(page);
+      await confirmCut(page);
+      await expectText(page, 'Try again to finish');
+      await expectText(page, "Build 1 is now Active, but Build 2 couldn't be marked Superseded");
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-two-active-builds',
+    url: DESIGN_URL,
+    bom: true,
+    api: designerApi({ builds: 'builds-two-active', extra: [statusRoute(fx('status-both-active'))] }),
+    waitFor: '.two-active',
+    async run(page, ctx) {
+      await expectText(page, 'Build 1 and Build 2 are both Active. Only one should be.');
+      const repair = page.locator('.two-active').getByRole('button');
+      assertEqual(await repair.allTextContents(), ['Make Build 1 the Active one'], 'repair buttons');
+      assertEqual(sent(ctx, 'GET', '/api/builds/status').length >= 1, true, 'a by-key status check ran');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-two-active-confirm',
+    url: DESIGN_URL,
+    bom: true,
+    skipMainShot: true,
+    api: designerApi({
+      builds: 'builds-two-active',
+      extra: [statusRoute(fx('status-both-active')), cutRoute('HAR-2051', 'cut-repair-resumed')],
+    }),
+    waitFor: '.two-active',
+    async run(page, ctx) {
+      const make = button(page, 'Make Build 1 the Active one');
+      await make.click();
+      const dialog = page.locator('dialog[open]');
+      await dialog.waitFor({ state: 'visible' });
+      await expectText(page, "Build 2 will be marked Superseded. This can't be undone from ValorBOM.");
+      assertEqual(await page.evaluate(() => document.activeElement?.textContent), 'Cancel', 'focus starts on Cancel');
+      await ctx.shot('designer-two-active-confirm');
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await page.waitForTimeout(200);
+      assertEqual(sent(ctx, 'POST', /\/cut-version$/).length, 0, 'Cancel sends no cut request');
+      await make.click();
+      await page.locator('dialog[open]').getByRole('button', { name: 'Mark Build 2 Superseded' }).click();
+      const [cut] = await waitForSent(ctx, 'POST', '/api/builds/HAR-2051/cut-version');
+      assertEqual(cut.body, { assemblyKey: 'HAR-2030' }, 'repair body');
+      await page.locator('.two-active').waitFor({ state: 'detached', timeout: 5000 })
+        .catch(() => { throw new CheckError('Check failed: the two-Active warning is gone after the repair'); });
+      await ctx.shot('designer-two-active-resolved');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-two-active-stale',
+    url: DESIGN_URL,
+    bom: true,
+    api: designerApi({ builds: 'builds-two-active', extra: [statusRoute(fx('status-2052-superseded'))] }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page, ctx) {
+      await waitForSent(ctx, 'GET', '/api/builds/status');
+      await page.waitForTimeout(300);
+      assertEqual(await page.locator('.two-active').count(), 0, 'no two-Active warning after the by-key check');
+      // StrictMode runs the first effect twice; the second read is the same check.
+      assertTrue(sent(ctx, 'GET', '/api/builds/status').length <= 2, 'the status check does not loop');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-two-active-stale-error',
+    url: DESIGN_URL,
+    bom: true,
+    expectStatuses: [503],
+    api: designerApi({ builds: 'builds-two-active', extra: [statusRoute(fx('status-503'))] }),
+    waitFor: '.two-active',
+    async run(page) {
+      await expectText(page, "Couldn't check whether Build 1 and Build 2 are both Active.");
+      await button(page, 'Check again').waitFor({ state: 'visible' });
+      assertEqual(await page.getByRole('button', { name: /the Active one|Finish cutting/ }).count(), 0, 'no repair button');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-two-active-finish-cut',
+    url: DESIGN_URL,
+    bom: true,
+    expectStatuses: [503],
+    api: designerApi({
+      builds: 'builds-active-and-draft',
+      extra: [cutRoute('HAR-2052', 'cut-2052-stage-supersede'), statusRoute(fx('status-both-active-this-doc'))],
+    }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page) {
+      await assertAttr(chip(page, 'Build 2'), 'aria-pressed', 'true');
+      await openCutDialog(page);
+      await confirmCut(page);
+      await expectText(page, 'Try again to finish');
+      await page.locator('dialog[open]').getByRole('button', { name: 'Cancel' }).click();
+      await page.locator('.two-active[role=alert]').waitFor({ state: 'visible' });
+      const repair = page.locator('.two-active').getByRole('button');
+      assertEqual(await repair.allTextContents(), ['Finish cutting Build 2'], 'only the failed cut is offered');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-two-active-repair-409',
+    url: DESIGN_URL,
+    bom: true,
+    expectStatuses: [409],
+    api: designerApi({
+      builds: 'builds-two-active',
+      extra: [
+        statusRoute(({ requests }) => fixture(requests.some((r) => r.path.endsWith('/cut-version'))
+          ? 'status-2051-superseded' : 'status-both-active')),
+        cutRoute('HAR-2051', 'cut-repair-409'),
+      ],
+    }),
+    waitFor: '.two-active',
+    async run(page) {
+      await button(page, 'Make Build 1 the Active one').click();
+      await page.locator('dialog[open]').getByRole('button', { name: 'Mark Build 2 Superseded' }).click();
+      await expectText(page, 'Build 1 is no longer Active; nothing to fix.');
+      await expectNoText(page, 'has already been cut');
+      await page.locator('dialog[open] .dialog-footer').getByRole('button', { name: 'Close', exact: true }).waitFor({ state: 'visible' });
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-onboard-lagging-build',
+    url: `${DESIGN_URL}?build=HAR-2051&cad=1`,
+    bom: true,
+    // Home doesn't exist until INC-8, so the route state Home would pass is
+    // injected here (react-router keeps it under `usr`).
+    init: `history.replaceState({ usr: { onboard: { assemblySummary: 'VF27A-0000A Test Assembly', build: ${JSON.stringify({
+      key: 'HAR-2051', summary: 'Test Assembly Build 1', assemblyKey: 'HAR-2030', buildNumber: 1, status: 'Draft', onshapeVersionLink: null,
+    })} } }, key: 'pw', idx: 0 }, '');`,
+    api: designerApi({
+      builds: 'builds-none',
+      stories: 'stories-chain-one',
+      buildParts: { 'HAR-2051': 'build-parts-empty' },
+      extra: [previewRoute],
+    }),
+    waitFor: 'tbody.parts-group-new',
+    async run(page, ctx) {
+      await assertAttr(chip(page, 'Build 1'), 'aria-pressed', 'true');
+      await expectNoText(page, 'No Builds yet');
+      await page.waitForTimeout(500);
+      assertEqual(sent(ctx, 'POST', '/api/parts/preview').length, 1, 'cad=1 sends exactly one preview');
+      assertTrue(!page.url().includes('cad=1'), 'cad=1 is stripped from the URL');
+      assertTrue(page.url().includes('build=HAR-2051'), '?build is kept');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-redirect',
+    url: '/designer',
+    skipMainShot: true,
+    async run(page) {
+      await page.waitForURL(`${BASE}/`);
+    },
+  },
+];
 
 /** @type {Scenario[]} */
 const SCENARIOS = [
@@ -126,7 +753,7 @@ const SCENARIOS = [
     async run(page) {
       await expectVisible(page, 'a.skip-link', { attached: true });
       await expectVisible(page, 'main#main');
-      for (const label of ['Dashboard', 'Assembly BOM', 'Designer', 'Parts Order', 'Parts Check-in']) {
+      for (const label of ['Dashboard', 'Assembly BOM', 'Parts Order', 'Parts Check-in']) {
         await expectVisible(page, `nav >> role=link[name=/${label}/]`);
       }
     },
@@ -210,6 +837,7 @@ const SCENARIOS = [
       await ctx.shot('focus-ring-card', { fullPage: false });
     },
   },
+  ...INC6_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------------
@@ -331,7 +959,9 @@ async function installRoutes(context, scenario, state) {
     const key = `${method} ${url.pathname}`;
     state.requests.push({ method, path: url.pathname, query: Object.fromEntries(url.searchParams), body });
     const calls = state.requests.filter((r) => `${r.method} ${r.path}` === key).length;
-    const answer = match.respond ? match.respond({ url, body, calls }) : fixture(match.fixture);
+    const answer = match.respond
+      ? match.respond({ url, body, calls, requests: state.requests })
+      : fixture(match.fixture);
     await route.fulfill({
       status: answer.status,
       contentType: 'application/json',
@@ -368,6 +998,7 @@ async function runScenario(browser, scenario, report) {
   await installRoutes(context, scenario, state);
   const page = await context.newPage();
   await page.clock.setFixedTime(FIXED_TIME);
+  if (scenario.init) await page.addInitScript(scenario.init);
 
   const allowed = (scenario.expectStatuses ?? []).map(
     (status) => `Failed to load resource: the server responded with a status of ${status}`,
@@ -383,9 +1014,16 @@ async function runScenario(browser, scenario, report) {
   const shots = [];
   const ctx = {
     state,
-    async shot(name, { fullPage = true } = {}) {
+    async shot(name, { fullPage = true, scrollBottom = false } = {}) {
+      if (scrollBottom) await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       const file = path.join(SHOTS_DIR, `${name}.png`);
+      // A full-page capture paints sticky bars at the viewport line, over
+      // the content; let them sit at the end of the page for the capture.
+      const unstick = fullPage
+        ? await page.addStyleTag({ content: '.save-bar, .submit-bar { position: static !important; }' })
+        : null;
       await page.screenshot({ path: file, fullPage });
+      if (unstick) await unstick.evaluate((el) => el.remove());
       shots.push(name);
       await checkScreen(name);
     },
@@ -431,6 +1069,11 @@ async function runScenario(browser, scenario, report) {
     failures.push(err instanceof CheckError ? err.message : `error: ${err.message}`);
   }
 
+  for (const r of state.requests.filter((q) => q.method === 'POST' && q.path.endsWith('/cut-version'))) {
+    if (JSON.stringify(Object.keys(r.body ?? {})) !== '["assemblyKey"]') {
+      failures.push(`cut-version body carries more than assemblyKey: ${JSON.stringify(r.body)}`);
+    }
+  }
   if (state.unmatched.length) failures.push(`unmocked /api/ requests: ${state.unmatched.join(', ')}`);
   if (state.consoleErrors.length) failures.push(`console errors: ${state.consoleErrors.join(' | ')}`);
   await context.close();

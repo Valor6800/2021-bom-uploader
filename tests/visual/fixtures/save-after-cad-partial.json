@@ -1,0 +1,28 @@
+{
+  "status": 200,
+  "body": {
+    "results": [
+      {
+        "ref": "VF27P-0004A",
+        "op": "create",
+        "key": "HAR-2034",
+        "reused": false,
+        "updated": false,
+        "linked": false,
+        "alreadyLinked": false,
+        "ok": false,
+        "error": "Created, but not added to Build 1: the team tracker didn't respond (503)",
+        "status": 503,
+        "source": "tracker"
+      },
+      {
+        "ref": "HAR-2031",
+        "op": "update",
+        "key": "HAR-2031",
+        "linked": true,
+        "alreadyLinked": false,
+        "ok": true
+      }
+    ]
+  }
+}
