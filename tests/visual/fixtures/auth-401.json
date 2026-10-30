@@ -1,0 +1,8 @@
+{
+  "status": 401,
+  "body": {
+    "error": "Not signed in",
+    "status": 401,
+    "loginUrl": "/auth/login"
+  }
+}

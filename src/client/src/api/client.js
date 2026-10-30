@@ -69,6 +69,20 @@ export class AuthRequiredError extends Error {
   }
 }
 
+/**
+ * Thrown for every non-OK response other than 401/403. Carries the HTTP status
+ * and the parsed JSON body, so callers (and lib/friendlyError.js) can read the
+ * server's `source`, per-item details or `buildStatus` without parsing text.
+ */
+export class ApiError extends Error {
+  constructor(message, status, body) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
+  }
+}
+
 async function request(url, options = {}) {
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...options.headers },
@@ -87,7 +101,7 @@ async function request(url, options = {}) {
       );
     }
 
-    throw new Error(body.error || `Request failed: ${res.status}`);
+    throw new ApiError(body.error || `Request failed: ${res.status}`, res.status, body);
   }
 
   return res.json();
@@ -111,6 +125,38 @@ export function fetchEpicByKey(key) {
   return request(`/api/epics/${encodeURIComponent(key)}`);
 }
 
+/**
+ * Search Assemblies by key, name, number, season or year.
+ * @param {string} q
+ * @param {{ limit?: number, includeClosed?: boolean, signal?: AbortSignal }} [options]
+ * @returns {Promise<{ results: object[], total: number, groups: object[] }>}
+ */
+export function searchAssemblies(q, { limit, includeClosed = false, signal } = {}) {
+  const params = new URLSearchParams({ q: q ?? '' });
+  if (limit !== undefined) params.set('limit', String(limit));
+  if (includeClosed) params.set('includeClosed', '1');
+  return request(`/api/epics/search?${params}`, { signal });
+}
+
+/** Read-only check of a pasted OnShape link before onboarding it. */
+export function previewOnboarding(url) {
+  return request('/api/epics/onboard/preview', {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  });
+}
+
+/**
+ * Create the Assembly for an OnShape link, plus its Build 1.
+ * @param {{ url: string, expectedSummary: string }} payload
+ */
+export function onboardAssembly(payload) {
+  return request('/api/epics/onboard', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Revisions
 // ---------------------------------------------------------------------------
@@ -123,6 +169,11 @@ export function fetchRevisionChain(key) {
 // ---------------------------------------------------------------------------
 export function fetchStoriesByEpic(epicKey) {
   return request(`/api/stories?key=${encodeURIComponent(epicKey)}`);
+}
+
+/** Every Part under the Assembly's whole Revision chain. */
+export function fetchChainParts(key) {
+  return request(`/api/stories?key=${encodeURIComponent(key)}&chain=1`);
 }
 
 export function fetchStoriesByPartNumber(partNumber) {
@@ -175,7 +226,7 @@ export function fetchBuildsForAssembly(assemblyKey, revisionChainKeys) {
 }
 
 /**
- * @param {{ assemblyKey: string, revisionChainKeys?: string[], name: string, cloneFromBuildKey?: string }} payload
+ * @param {{ assemblyKey: string, revisionChainKeys?: string[], name: string, description?: string, cloneFromBuildKey?: string }} payload
  */
 export function createBuild(payload) {
   return request('/api/builds', {
@@ -195,6 +246,19 @@ export function linkPartToBuild(buildKey, partKey) {
   });
 }
 
+/**
+ * Save a Build's Part changes in one request; answers per-item results.
+ * @param {string} buildKey
+ * @param {{ creates?: object[], updates?: object[], links?: { ref: string, key: string }[] }} body
+ * @returns {Promise<{ results: object[] }>}
+ */
+export function saveBuildParts(buildKey, body) {
+  return request(`/api/builds/${encodeURIComponent(buildKey)}/save`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
 /** Every Build a Part is linked to, newest first — the current-build indicator. */
 export function fetchBuildsForPart(partKey) {
   return request(`/api/builds/for-part/${encodeURIComponent(partKey)}`);
@@ -208,8 +272,10 @@ export function recreatePartForBuild(targetBuildKey, partKey) {
 }
 
 /**
+ * The server reads the OnShape ids from the Assembly record, so only the
+ * Assembly key is sent.
  * @param {string} buildKey
- * @param {{ assemblyKey: string, documentId: string, workspaceId: string, elementId: string }} payload
+ * @param {{ assemblyKey: string }} payload
  */
 export function cutBuildVersion(buildKey, payload) {
   return request(`/api/builds/${encodeURIComponent(buildKey)}/cut-version`, {
@@ -233,6 +299,10 @@ export function fetchBOM(epicKey, documentId, workspaceId, elementId) {
 // ---------------------------------------------------------------------------
 // Parts preview / upload
 // ---------------------------------------------------------------------------
+/**
+ * @param {{ epicKey: string, documentId: string, workspaceId: string, elementId: string, fresh?: boolean }} params
+ *   `fresh: true` skips the server's short BOM cache (Update from CAD).
+ */
 export function previewParts(params) {
   return request('/api/parts/preview', {
     method: 'POST',

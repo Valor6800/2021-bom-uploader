@@ -5,7 +5,9 @@ WORKDIR /app
 # Copy package files first for better layer caching
 COPY package.json package-lock.json ./
 
-# Install all dependencies (dev deps needed for Vite build)
+# Install all dependencies (dev deps needed for Vite build). Playwright is a
+# devDependency for the visual tests; never fetch its browsers in an image.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm ci
 
 # Copy source. See .dockerignore — .env and keys.json are excluded so no

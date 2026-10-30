@@ -16,10 +16,10 @@ export const NAV_ITEMS = [
 
 export default function AppNav() {
   return (
-    <nav className="nav no-print">
+    <nav className="nav no-print" aria-label="Main">
       <div className="nav-inner">
         <div className="nav-brand">
-          <span className="nav-icon">⚙</span>
+          <span className="nav-icon" aria-hidden="true">⚙</span>
           <h1 className="nav-title">BOM Portal</h1>
         </div>
         <ul className="nav-links">
@@ -34,7 +34,7 @@ export default function AppNav() {
               >
                 {item.label}
                 {item.mentorsOnly && (
-                  <span className="nav-lock" title="Mentors only">🔒</span>
+                  <span className="nav-lock" title="Mentors only" role="img" aria-label="Mentors only">🔒</span>
                 )}
               </NavLink>
             </li>

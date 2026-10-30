@@ -3,6 +3,9 @@ import Badge from '../ui/Badge.jsx';
 import InlineSelect from '../ui/InlineSelect.jsx';
 import { isPowdercoatEnabled, isThicknessEnabled, isStepAutoExport } from './partRules.js';
 
+/** Row state names kept by the legacy tables, mapped to the chip words. */
+const BADGE_FOR_STATUS = { Changes: 'Changed', Updated: 'Saved' };
+
 /**
  * A single editable part row. Presentational: all edits flow up through
  * onFieldChange(field, value) and onToggleSelect().
@@ -85,7 +88,7 @@ export default function PartRow({
         />
       </td>
       <td className="whitespace-nowrap">
-        <Badge status={story._status || 'Exists'} />
+        <Badge status={BADGE_FOR_STATUS[story._status] ?? story._status ?? 'Exists'} />
         {membershipLabel && <span className="text-dim text-sm ml-2">{membershipLabel}</span>}
       </td>
     </tr>

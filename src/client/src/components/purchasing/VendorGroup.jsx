@@ -66,6 +66,7 @@ export default function VendorGroup({
               <th className="cell-check">
                 <input
                   type="checkbox"
+                  aria-label={`Select every submittable line from ${group.vendor}`}
                   checked={allSelected}
                   ref={(el) => {
                     if (el) el.indeterminate = someSelected && !allSelected;
