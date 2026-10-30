@@ -79,12 +79,13 @@ export default function AssemblySelection() {
     setUrlMsg(null);
     try {
       const result = await createEpicFromURL(urlValue.trim());
-      setUrlMsg({ type: 'success', text: `Epic ${result.key} created — reloading list...` });
+      const created = result.summary ? `${result.key} (${result.summary})` : result.key;
+      setUrlMsg({ type: 'success', text: `Epic ${created} created — reloading list...` });
       setUrlValue('');
       // Give Jira a moment to index, then reload the dropdown via the store.
       setTimeout(() => {
         markEpicCreated();
-        setUrlMsg({ type: 'success', text: `Epic ${result.key} created` });
+        setUrlMsg({ type: 'success', text: `Epic ${created} created` });
         setTimeout(() => setUrlMsg((prev) => (prev?.type === 'success' ? null : prev)), 3000);
       }, 1500);
     } catch (err) {

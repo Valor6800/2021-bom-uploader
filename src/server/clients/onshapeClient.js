@@ -173,6 +173,19 @@ export class OnshapeClient {
     return this._get(`/api/documents/d/${documentId}/versions`);
   }
 
+  /**
+   * Read the metadata (properties) of an element (tab), e.g. an assembly's
+   * native Name, Part number, Revision, and Project fields.
+   *
+   * Response shape: `{ elementId, elementType, properties: [{ name,
+   * propertyId, value, valueType, editable, ... }], ... }`.
+   *
+   * @see https://onshape-public.github.io/docs/api-adv/metadata/
+   */
+  async getElementMetadata(documentId, workspaceId, elementId) {
+    return this._get(`/api/metadata/d/${documentId}/w/${workspaceId}/e/${elementId}`);
+  }
+
   // -----------------------------------------------------------------------
   // Write operations
   // -----------------------------------------------------------------------
