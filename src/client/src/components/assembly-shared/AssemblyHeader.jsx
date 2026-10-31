@@ -38,9 +38,12 @@ export default function AssemblyHeader({ assembly, revisions, mode, buildKey, on
     <header className="assembly-header">
       <Link to="/" className="back-link">← All Assemblies</Link>
       <div className="assembly-header-top">
-        <h1 className="assembly-title">
+        <h1
+          className="assembly-title"
+          title={assembly.numbered ? `${assembly.fullPartNumber} ${assembly.name}` : assembly.name}
+        >
           {assembly.numbered && <span className="mono-key assembly-number">{assembly.fullPartNumber}</span>}
-          <span>{assembly.name}</span>
+          <span className="assembly-name">{assembly.name}</span>
         </h1>
         <ModeSwitch assemblyKey={assembly.key} mode={mode} buildKey={buildKey} />
       </div>

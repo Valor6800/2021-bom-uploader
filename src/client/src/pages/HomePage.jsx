@@ -63,6 +63,20 @@ export default function HomePage() {
     // Only our own state drives the URL; depending on params here would loop.
   }, [query, includeClosed]);
 
+  // A navigation that changes the URL (the brand or "Find an Assembly" link,
+  // Back, Forward) resets the search to match it. Our own writes above
+  // already match, so they change nothing here.
+  useEffect(() => {
+    const urlQuery = (params.get('q') ?? '').trim();
+    const urlClosed = params.get('closed') === '1';
+    if (urlQuery !== query) {
+      setText(params.get('q') ?? '');
+      setQuery(urlQuery);
+    }
+    if (urlClosed !== includeClosed) setIncludeClosed(urlClosed);
+    // Runs on URL changes only; reading the state here must not re-run it.
+  }, [params]);
+
   const clear = () => {
     setText('');
     setQuery('');

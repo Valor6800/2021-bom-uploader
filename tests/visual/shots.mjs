@@ -520,6 +520,78 @@ const INC6_SCENARIOS = [
   },
   {
     inc: 'INC-6',
+    name: 'designer-refresh-builds-error',
+    // The Builds re-read after a save fails: the Builds already shown stay.
+    url: DESIGN_URL,
+    bom: true,
+    expectStatuses: [503],
+    api: designerApi({
+      builds: ({ calls }) => fixture(calls === 1 ? 'builds-two' : 'builds-503'),
+      extra: [{
+        method: 'POST',
+        path: '/api/builds/HAR-2051/save',
+        respond: ({ body }) => ({
+          status: 200,
+          body: {
+            results: body.updates.map((u) => ({
+              ref: u.ref, op: 'update', key: u.key, linked: true, alreadyLinked: false, ok: true,
+            })),
+          },
+        }),
+      }],
+    }),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page, ctx) {
+      await page.getByLabel('Quantity for VF27P-0001A').fill('3');
+      await button(page, 'Save').click();
+      await waitForSent(ctx, 'GET', '/api/builds', 2);
+      await expectText(page, "Couldn't load the Builds: the team tracker didn't respond (503).");
+      assertEqual(await chip(page, 'Build 1').count(), 1, 'Build 1 is still listed');
+      assertEqual(await chip(page, 'Build 2').count(), 1, 'Build 2 is still listed');
+      await partRow(page, 'VF27P-0001A').waitFor({ state: 'visible' });
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-created-after-discard',
+    // A Part the save created stays after Discard: it exists in the tracker,
+    // even while the chain-Parts re-read doesn't list it yet.
+    url: DESIGN_URL,
+    bom: true,
+    skipMainShot: true,
+    api: designerApi({
+      extra: [previewRoute, { method: 'POST', path: '/api/builds/HAR-2051/save', fixture: 'save-after-cad-partial' }],
+    }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page, ctx) {
+      await button(page, 'Update from CAD').click();
+      await page.locator('tbody.parts-group-new').waitFor({ state: 'visible' });
+      await button(page, 'Save').click();
+      await waitForSent(ctx, 'POST', '/api/builds/HAR-2051/save');
+      await expectText(page, 'Created, but not added to Build 1');
+      await button(page, 'Discard').click();
+      await page.locator('tbody.parts-group-new').waitFor({ state: 'detached' });
+      await partRow(page, 'HAR-2034').waitFor({ state: 'visible' });
+      await ctx.shot('designer-created-after-discard');
+    },
+  },
+  {
+    inc: 'INC-6',
+    name: 'designer-wrong-build-clears',
+    url: `${DESIGN_URL}?build=HAR-9999`,
+    bom: true,
+    skipMainShot: true,
+    api: designerApi(),
+    waitFor: 'tbody.parts-group-in',
+    async run(page) {
+      await expectText(page, "That Build isn't part of this Assembly");
+      await chip(page, 'Build 2').click();
+      await page.waitForURL(/build=HAR-2052/);
+      await expectNoText(page, "isn't part of this Assembly");
+    },
+  },
+  {
+    inc: 'INC-6',
     name: 'designer-cut-version-already-cut',
     url: DESIGN_URL,
     bom: true,
@@ -863,7 +935,7 @@ const INC7_SCENARIOS = [
     api: assemblyApi({ extra: [{ method: 'POST', path: '/api/parts/HAR-2032/clone', fixture: 'clone-HAR-2032-ok' }] }),
     waitFor: 'tbody.parts-group-in tr.part-row',
     async run(page, ctx) {
-      await button(page, 'Clone a part').click();
+      await button(page, 'Clone a Part').click();
       const dialog = page.locator('dialog[open]');
       await dialog.waitFor({ state: 'visible' });
       await dialog.getByLabel('Copy from').selectOption('HAR-2032');
@@ -918,6 +990,11 @@ const INC7_SCENARIOS = [
       await button(page, 'Show archived (1)').waitFor();
       assertEqual(await page.getByRole('button', { name: 'More actions for Build 2' }).count(), 0, 'no Archive on an Archived Build');
       assertEqual(await page.locator('.parts-table input:enabled').count(), 0, 'an Archived Build is read-only');
+      const cloneButton = button(page, 'Clone a Part');
+      await assertAttr(cloneButton, 'aria-disabled', 'true');
+      await assertAttr(cloneButton, 'title', "This Build is archived and can't be changed.");
+      await cloneButton.click({ force: true });
+      assertEqual(await page.locator('dialog[open]').count(), 0, 'Clone does nothing on an Archived Build');
       await ctx.shot('assembly-after-archive');
     },
   },
@@ -986,6 +1063,44 @@ const INC7_SCENARIOS = [
     async run(page) {
       await page.waitForURL(`${BASE}${ASSEMBLE_URL}?build=HAR-2053`);
       await assertAttr(tab(page, 'Build 3'), 'aria-selected', 'true');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'compare-resets-after-switch',
+    // A pair picked in Compare doesn't follow the student to another Build.
+    url: `${ASSEMBLE_URL}?build=HAR-2052&view=compare`,
+    bom: true,
+    assemble: true,
+    skipMainShot: true,
+    api: assemblyApi(),
+    waitFor: '.compare-table',
+    async run(page) {
+      await page.getByLabel('Second Build').selectOption('HAR-2051');
+      assertEqual(await page.getByLabel('Second Build').inputValue(), 'HAR-2051', 'picked pair');
+      await page.getByRole('link', { name: /Back to BOM/ }).click();
+      await tab(page, 'Build 3').click();
+      await page.waitForURL(/build=HAR-2053/);
+      await page.getByRole('link', { name: /Compare/ }).click();
+      await page.locator('.compare-table').waitFor();
+      assertEqual(await page.getByLabel('First Build').inputValue(), 'HAR-2053', 'first Build is the selected one');
+      assertEqual(await page.getByLabel('Second Build').inputValue(), 'HAR-2052', 'second Build is the default again');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-wrong-build-clears',
+    url: `${ASSEMBLE_URL}?build=HAR-9999`,
+    bom: true,
+    assemble: true,
+    skipMainShot: true,
+    api: assemblyApi(),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page) {
+      await expectText(page, "That Build isn't part of this Assembly; showing Build 2.");
+      await tab(page, 'Build 3').click();
+      await page.waitForURL(/build=HAR-2053/);
+      await expectNoText(page, "isn't part of this Assembly");
     },
   },
   {
@@ -1446,6 +1561,29 @@ const INC8_SCENARIOS = [
       assertEqual(last.query, { q: 'HAR-1990' }, 'no includeClosed with the toggle off');
       const card = page.locator('.result-card', { has: resultCard(page, 'HAR-1990') });
       await card.locator('.chip', { hasText: 'Closed' }).waitFor({ state: 'visible' });
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'home-nav-resets-search',
+    url: '/?q=0000',
+    bom: true,
+    skipMainShot: true,
+    api: homeApi(),
+    waitFor: '.result-card',
+    async run(page) {
+      const box = page.getByRole('searchbox', { name: 'Find an Assembly' });
+      await waitForCount(page, '1 Assembly');
+      await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'ValorBOM' }).click();
+      await waitForCount(page, '7 Assemblies');
+      assertEqual(await box.inputValue(), '', 'the brand link clears the search box');
+      await page.goBack();
+      await waitForCount(page, '1 Assembly');
+      assertEqual(await box.inputValue(), '0000', 'Back brings the search back');
+      await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Find an Assembly' }).click();
+      await waitForCount(page, '7 Assemblies');
+      assertEqual(await box.inputValue(), '', '"Find an Assembly" clears the search box');
+      assertTrue(new URL(page.url()).search === '', `URL has no query (${page.url()})`);
     },
   },
   {

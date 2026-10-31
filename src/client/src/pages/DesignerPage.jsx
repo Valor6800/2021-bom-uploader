@@ -274,6 +274,7 @@ function DesignerPage({ assemblyKey: key }) {
 
   // ----- Builds: select, create -----
   const selectBuild = useCallback((buildKey) => {
+    setWrongBuild(false);
     const next = new URLSearchParams(searchParams);
     next.set('build', buildKey);
     next.delete('cad');

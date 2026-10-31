@@ -223,6 +223,8 @@ function AssemblyPage({ assemblyKey: key }) {
 
   const selectBuild = useCallback((buildKey) => {
     setActionMsg(null);
+    setWrongBuild(false);
+    setCompareKeys(null);
     setParams({ build: buildKey });
   }, [setParams]);
 
@@ -421,7 +423,11 @@ function AssemblyPage({ assemblyKey: key }) {
   if (!data.ready) {
     body = <p className="page-loading" role="status">Loading Builds and Parts…</p>;
   } else if (view === 'compare' && builds.length > 0) {
-    const [a, b] = compareKeys ?? [selectedKey, compareDefault(builds, selectedKey)];
+    // A picked pair holds only while both Builds are still listed here.
+    const shown = (k) => builds.some((x) => x.key === k);
+    const [a, b] = compareKeys && compareKeys.every(shown)
+      ? compareKeys
+      : [selectedKey, compareDefault(builds, selectedKey)];
     body = (
       <BuildCompare
         builds={builds}
@@ -491,9 +497,11 @@ function AssemblyPage({ assemblyKey: key }) {
                 <Button
                   variant="secondary"
                   onClick={() => { setCloneError(null); setCloneOpen(true); }}
+                  ariaDisabled={selectedBuild.status === 'Archived'}
                   disabled={loadFailed || cloneSources.length === 0}
+                  title={selectedBuild.status === 'Archived' ? "This Build is archived and can't be changed." : undefined}
                 >
-                  Clone a part
+                  Clone a Part
                 </Button>
                 {selectedBuild.status !== 'Archived' && (
                   <DisclosureMenu label={`More actions for ${buildName}`}>
@@ -673,6 +681,7 @@ function AssemblyPage({ assemblyKey: key }) {
       <Dialog
         open={archiveOpen}
         onClose={() => { if (!archiveBusy) setArchiveOpen(false); }}
+        closeDisabled={archiveBusy}
         title={`Archive ${buildName ?? 'this Build'}?`}
         initialFocusRef={archiveCancelRef}
         footer={(

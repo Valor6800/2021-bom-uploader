@@ -24,7 +24,7 @@ ValorBOM (Valor 6800, a FIRST Robotics team) is a Node/Express + React tool that
 | 4 OnShape metadata round-trip | **Not started** |
 | 5 Guidance (teaching empty states beyond the glossary toggletips), instructions authoring (steps + images), activity log | **Not started** |
 
-Verified: `NODE_OPTIONS=--experimental-vm-modules npx jest` -> 40 suites / 908 tests pass; `npx vite build --config src/client/vite.config.js` is clean; `npm run test:visual -- --all` passes against fixtures (screenshots, axe, vocabulary and console checks).
+Verified: `npm test` -> 42 suites / 937 tests pass; `npx vite build --config src/client/vite.config.js` is clean; `npm run test:visual -- --all` passes against fixtures (87 scenarios: screenshots, axe, vocabulary and console checks).
 **Not verified: a live end-to-end run against Jira and OnShape.** Every UI check runs against mocked `/api` responses. The test pass at the end of this file is the next step.
 
 ## Pages and routes (client)
@@ -141,11 +141,9 @@ Constants live in `src/server/utils/buildConstants.js`:
 6. `scripts/migrate-build-revision.mjs` (backfills Build 1 per existing Assembly, dry-run by default, `--execute` to write) has NOT been run against production.
 7. Print view omits instructions (they don't exist yet).
 8. Auth is not configured in dev (`OIDC_*` missing). See the Security section before any non-loopback bind.
-9. Small UI issues found in review and not yet fixed:
-   - Home reads `?q=`/`?closed=1` only on mount, so clicking the brand or "Find an Assembly" while a search is active changes the URL to `/` but keeps the filtered list.
-   - The header × in the onboarding confirm dialog looks enabled while "Creating..." but does nothing.
-   - Assembly page: the wrong-Build notice can stay visible after switching Builds; Clone is offered on Archived Builds; the Compare view can keep a stale Build pair after the Build list changes.
+9. ~~Small UI issues found in review.~~ **Closed** in the cleanup pass: Home re-syncs its search from the URL on every navigation (brand, "Find an Assembly", Back); the dialog × is disabled while onboarding's "Creating…" or an Archive runs; the wrong-Build notice clears when another Build is picked (both pages); Clone a Part is disabled on an Archived Build; Compare drops a picked pair when the Build changes or a Build in the pair is no longer listed; a Retry whose Parts read fails keeps the last good Parts; long Assembly names clamp to two lines with the full name in the title; Re-create past Revision Z is a 409 with a readable reason; `.env*` is gitignored; the client constructor tests no longer depend on exported env vars. Still open from review, by choice: COTS/hardware BOM rows without a Part number show in the unidentified warning (honoring `excludeFromBom` is a product decision).
 10. Update from CAD doesn't yet flag a BOM row whose full number already belongs to a Part of a different Assembly; Save would create a second Part with that number.
+11. From the live write check: Used In links 16601 and 16603 were made before the link-direction fix and still read "HAR-2031 uses …" (the app matches either direction; re-creating them is a tracker write that needs the user's OK). Cut Version, Supersede and Archive stay unverified live until the OnShape API key has Write scope.
 
 ## Manual follow-ups (tracker, by hand)
 

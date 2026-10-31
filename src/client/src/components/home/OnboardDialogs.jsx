@@ -15,6 +15,7 @@ export function ConfirmDialog({ open, proposed, drifted, busy, error, onCancel, 
       open={open}
       // Closing mid-request would hide whether the Assembly was made.
       onClose={busy ? () => {} : onCancel}
+      closeDisabled={busy}
       title="Create a new Assembly?"
       returnFocusRef={returnFocusRef}
       initialFocusRef={confirmRef}

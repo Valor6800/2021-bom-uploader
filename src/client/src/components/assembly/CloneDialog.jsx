@@ -47,7 +47,7 @@ export default function CloneDialog({ open, parts, defaultSourceKey, busy, error
     <Dialog
       open={open}
       onClose={() => { if (!busy) onClose(); }}
-      title="Clone a part"
+      title="Clone a Part"
       description="Makes a new Part with its own number and the same Material and Machinery. It isn't in any Build until you Move it here."
       initialFocusRef={firstRef}
       footer={(

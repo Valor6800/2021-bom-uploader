@@ -18,10 +18,13 @@ import { useEffect, useId, useRef } from 'react';
  * @param {import('react').RefObject<HTMLElement>} [props.returnFocusRef]  Where
  *   focus goes on close, when that isn't the control that opened the dialog.
  * @param {import('react').ReactNode} [props.footer]  Action buttons.
+ * @param {boolean} [props.closeDisabled]  Disables the × button, for while
+ *   the dialog's action is running and onClose does nothing.
  */
 export default function Dialog({
   open,
   onClose,
+  closeDisabled = false,
   title,
   description,
   initialFocusRef,
@@ -107,6 +110,7 @@ export default function Dialog({
             className="dialog-close"
             aria-label="Close"
             onClick={onClose}
+            disabled={closeDisabled}
           >
             ×
           </button>

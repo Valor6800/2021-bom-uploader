@@ -106,9 +106,10 @@ export function useAssemblyData(key, { extraBuilds = [] } = {}) {
 
     const keys = Array.isArray(chainKeys) && chainKeys.length ? chainKeys : [key];
     chainRef.current = keys;
-    chainPartsRef.current = chainParts ?? [];
+    // A failed Parts read on Retry keeps the last good list, like Builds do.
+    if (chainParts) chainPartsRef.current = chainParts;
     setChain(keys);
-    if (chainKeys) await loadBuildsAndLinks(myGen, keys, chainParts ?? [], errs);
+    if (chainKeys) await loadBuildsAndLinks(myGen, keys, chainPartsRef.current, errs);
     if (myGen !== gen.current) return;
     setErrors(errs);
     setReady(true);
@@ -142,6 +143,7 @@ export function useAssemblyData(key, { extraBuilds = [] } = {}) {
     setBuildParts(new Map());
     lastBuildsRef.current = [];
     lastBuildPartsRef.current = new Map();
+    chainPartsRef.current = [];
     loadAll();
   }, [key, loadAll]);
 
