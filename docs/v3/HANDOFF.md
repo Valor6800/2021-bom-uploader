@@ -25,7 +25,7 @@ ValorBOM (Valor 6800, a FIRST Robotics team) is a Node/Express + React tool that
 | 5 Guidance (teaching empty states beyond the glossary toggletips), instructions authoring (steps + images), activity log | **Not started** |
 
 Verified: `npm test` -> 43 suites / 961 tests pass; `npx vite build --config src/client/vite.config.js` is clean; `npm run test:visual -- --all` passes against fixtures (83 scenarios: screenshots, axe, vocabulary and console checks).
-**Not verified: a live end-to-end run against Jira and OnShape.** Every UI check runs against mocked `/api` responses. The test pass at the end of this file is the next step.
+**Partly verified live** (`.agents/tasks/live-write-check/report.md`): onboarding, Build create, save/link, field update, Re-create, Clone and the read paths ran against the real Jira. Cut Version, Supersede and Archive have not run live (the OnShape key lacked Write scope at the time), and the cut-Build lock and UI trims since then are covered only by mocked tests. The test pass at the end of this file is the next step.
 
 ## Pages and routes (client)
 
@@ -122,7 +122,7 @@ Constants live in `src/server/utils/buildConstants.js`:
 
 - Services are dependency-injected classes (`constructor({ jiraClient, ... })`); routes are thin `asyncHandler` wrappers that call one service method and use `badRequest()` / `conflict()` for validation. Wiring is in `src/server/index.js`. Keys go through `validateIssueKey`, and anything that reaches JQL goes through `sanitizeJQL`.
 - `BuildService` depends on `partService` and `revisionService` for the save, Re-create and chain reads, and on `onshapeClient` for Cut Version. `EpicService` depends on `buildService` to create Build 1 when onboarding.
-- Frontend: React 19, react-router 6, Vite, hand-written CSS in `index.css` with design tokens in `:root` (dark/gold theme). Shared UI primitives are in `components/ui/` (`Dialog`, `GlossaryTerm`, `EmptyState`, `StickySaveBar`, `DisclosureMenu`, `Badge`, `Button`, `Card`, `InlineSelect`). Page pieces are in `components/home/`, `components/assembly-shared/`, `components/builds/`, `components/designer/` and `components/assembly/`.
+- Frontend: React 19, react-router 6, Vite, hand-written CSS in `index.css` with design tokens in `:root` (dark/gold theme). Shared UI primitives are in `components/ui/` (`Dialog`, `EmptyState`, `StickySaveBar`, `DisclosureMenu`, `Badge`, `Button`, `Card`, `InlineSelect`). Page pieces are in `components/home/`, `components/assembly-shared/`, `components/builds/`, `components/designer/` and `components/assembly/`.
 - The Designer and Assembly pages keep their own local state (`useState`/`useReducer`) rather than sharing Zustand slices, on purpose, to avoid cross-page interference. Zustand (`store/index.js`) now holds only purchasing and receiving.
 - Pure client logic lives in `lib/` (`buildNames`, `designerRows`, `designerSave`, `partValidation`, `friendlyError`) and has Jest tests in `__tests__/utils/`, including a parity test between client and server Part validation.
 - UI copy uses only the words Assembly, Build, Part and Revision. It never says "epic", "story", "issue" or "Jira"; the tracker is "the team tracker". The visual harness enforces this.
@@ -163,6 +163,27 @@ Constants live in `src/server/utils/buildConstants.js`:
 
 - **HAR-2031 Revision:** set its Revision field (`customfield_10500`) to `A`. HAR-2031 was created by the removed Build-less path; ValorBOM never writes it back.
 - **Part screen fields:** a tracker admin should remove Build Number (`customfield_10501`), Onshape Version Link (`customfield_10502`) and Instructions Data (`customfield_10503`) from the Part screen. Until then they show, empty, on every Part. The "In Build" labels in ValorBOM are the source of truth.
+
+## Where the agent notes live
+
+Every investigation, design, review and verification from this work is checked in under `.agents/tasks/` (screenshots are gitignored; regenerate them with the visual harness):
+
+- `epic-part-number-parsing/`: why Assembly names ignored OnShape properties (fixed, `1f840c9`).
+- `update-from-cad-no-parts/`: BOM rows identified from Part number + Revision properties (fixed, `c1cd9a5`).
+- `har2031-part-fields/`: empty Revision / Build fields on Parts; Build fields are Build-only (B6).
+- `ux-refactor/`: the approved design (`design.md`, draft 8, with the user's answers in section 15), `plan.md`, `progress.json`, review history and `final-report.md` for INC-1 to INC-9.
+- `live-write-check/`: the live run against Jira/OnShape, its write log, bugs found (link direction, `linkIssues`, error mapping) and the re-runnable `live-check.mjs` (writes to the live tracker; scope-checked to a named test Assembly, so edit its scope before reuse).
+- `.kiro/specs/valorbom-modernization/`: the earlier v2 modernization spec.
+
+The test Assembly HAR-2030 and its tickets (HAR-2031 to HAR-2035) were deleted after the live check, so the manual follow-ups and gap 11 that name them no longer apply.
+
+## Before deploying (open as of 2026-10-31)
+
+1. **Gate BOM writes.** Production (docker2 via Portainer, `HOST=0.0.0.0` in the image) is reachable from other machines, so the Security section applies: put the listed write and export endpoints behind the Authentik gate, or accept the risk explicitly.
+2. **OnShape key in production.** The container's own env (set in Portainer, not `.env`) needs an OnShape key with Write scope, or Cut Version answers "OnShape refused the change (403)". `OnshapeClient` reads `ONSHAPE_ACCESS`/`ONSHAPE_SECRET` first, then `API_KEY`/`SECRET_KEY`. Check scopes with `GET /api/users/sessioninfo` (`oauth2Scopes` bit 2 = write). The local key was pasted into a chat on 2026-10-31 and must be rotated.
+3. **No new env vars** compared with `master`; the Jira schema is already live, so no migration is needed.
+4. **Removed APIs** (`POST /api/stories`, `POST /api/parts/upload`) break any outside script that used them.
+5. **Open product question:** Re-create leaves the old revision linked to the target Draft (no "remove from Build"); the user hasn't decided whether Re-create should unlink it.
 
 ## Running it
 

@@ -1,0 +1,15 @@
+{
+  "createdBuilds": [
+    "HAR-2033"
+  ],
+  "createdParts": [
+    "HAR-2034",
+    "HAR-2035"
+  ],
+  "used": {
+    "builds": 1,
+    "recreate": 1,
+    "clone": 1
+  },
+  "onshapeVersions": []
+}
