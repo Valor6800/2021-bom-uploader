@@ -1,4 +1,3 @@
-import GlossaryTerm from '../ui/GlossaryTerm.jsx';
 import Button from '../ui/Button.jsx';
 import Badge from '../ui/Badge.jsx';
 import { buildLabel } from '../../lib/buildNames.js';
@@ -23,9 +22,7 @@ export default function BuildPicker({
   return (
     <section className="build-picker" aria-labelledby="build-picker-label">
       <div className="build-picker-row">
-        <h2 id="build-picker-label" className="build-picker-label">
-          Build <GlossaryTerm term="Build" />
-        </h2>
+        <h2 id="build-picker-label" className="build-picker-label">Build</h2>
         <div className="build-chips" role="group" aria-label="Builds">
           {builds.map((b) => (
             <button

@@ -20,7 +20,6 @@ import Button from '../components/ui/Button.jsx';
 import Dialog from '../components/ui/Dialog.jsx';
 import DisclosureMenu from '../components/ui/DisclosureMenu.jsx';
 import EmptyState from '../components/ui/EmptyState.jsx';
-import GlossaryTerm from '../components/ui/GlossaryTerm.jsx';
 import StickySaveBar from '../components/ui/StickySaveBar.jsx';
 import { friendlyClause, friendlyError } from '../lib/friendlyError.js';
 import {
@@ -424,7 +423,7 @@ function AssemblyPage({ assemblyKey: key }) {
       <>
         {builds.length > 0 && (
           <div className="build-tabs-row no-print">
-            <h2 className="build-picker-label">Builds <GlossaryTerm term="Build" /></h2>
+            <h2 className="build-picker-label">Builds</h2>
             <BuildTabs
               builds={tabBuilds}
               selectedKey={selectedKey}
@@ -436,19 +435,12 @@ function AssemblyPage({ assemblyKey: key }) {
             />
           </div>
         )}
-        {builds.some((b) => b.status === 'Active') && (
-          <p className="teaching-hint">
-            <span aria-hidden="true">● </span>Active = the one to build. There&apos;s always one per Revision.
-          </p>
-        )}
 
         {!selectedBuild && !loadFailed ? (
           <EmptyState
             title="No Builds yet"
             action={<Link to={`/a/${encodeURIComponent(key)}/design`} className="btn btn-primary">Open Designer</Link>}
-          >
-            <p>Builds are made by the designer from CAD. Parts can be changed here once a Build exists.</p>
-          </EmptyState>
+          />
         ) : selectedBuild && (
           <section
             className="build-panel"
@@ -532,7 +524,7 @@ function AssemblyPage({ assemblyKey: key }) {
                 <caption className="visually-hidden">Parts for {buildName}</caption>
                 <thead>
                   <tr>
-                    <th scope="col" className="cell-part">Part <GlossaryTerm term="Part" /></th>
+                    <th scope="col" className="cell-part">Part</th>
                     <th scope="col">Qty</th>
                     <th scope="col">Material</th>
                     <th scope="col">Machinery</th>

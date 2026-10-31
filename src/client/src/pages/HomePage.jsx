@@ -93,16 +93,11 @@ export default function HomePage() {
     body = <p className="page-loading">Loading Assemblies…</p>;
   } else if (total === 0 && !data.query) {
     body = (
-      <EmptyState title="No Assemblies yet.">
-        An Assembly is one mechanism, like the intake. Paste its OnShape assembly link above to
-        add the first one.
-      </EmptyState>
+      <EmptyState title="No Assemblies yet." />
     );
   } else if (total === 0) {
     body = (
-      <EmptyState title={`No Assembly matches "${data.query}".`}>
-        Check the spelling, or paste its OnShape link above to add it.
-      </EmptyState>
+      <EmptyState title={`No Assembly matches "${data.query}".`} />
     );
   } else {
     body = (

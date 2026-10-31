@@ -366,18 +366,6 @@ const INC6_SCENARIOS = [
   },
   {
     inc: 'INC-6',
-    name: 'designer-glossary-open',
-    url: DESIGN_URL,
-    bom: true,
-    api: designerApi(),
-    waitFor: 'tbody.parts-group-in',
-    async run(page) {
-      await page.getByRole('button', { name: 'What is a Build?' }).click();
-      await expectText(page, 'One specific combination of Parts for an Assembly');
-    },
-  },
-  {
-    inc: 'INC-6',
     name: 'designer-tablet-1024',
     url: DESIGN_URL,
     viewport: 'tablet',
@@ -829,7 +817,6 @@ const INC7_SCENARIOS = [
     api: assemblyApi({ builds: 'builds-none', stories: 'stories-chain-one', buildParts: {} }),
     waitFor: 'text=No Builds yet',
     async run(page) {
-      await expectText(page, 'Builds are made by the designer from CAD.');
       const open = page.getByRole('link', { name: 'Open Designer' });
       assertTrue((await open.getAttribute('href')).endsWith('/a/HAR-2030/design'), 'Open Designer link');
       assertEqual(await page.locator('table input').count(), 0, 'no editable Parts without a Build');
@@ -1359,7 +1346,6 @@ const INC8_SCENARIOS = [
     waitFor: 'text=No Assembly matches',
     async run(page) {
       await expectText(page, 'No Assembly matches "bash".');
-      await expectText(page, 'Check the spelling, or paste its OnShape link above to add it.');
       await waitForCount(page, '0 Assemblies');
     },
   },
@@ -1371,7 +1357,7 @@ const INC8_SCENARIOS = [
     api: homeApi([searchRoute('', 'search-none')]),
     waitFor: 'text=No Assemblies yet.',
     async run(page) {
-      await expectText(page, 'Paste its OnShape assembly link above to add the first one.');
+      await expectNoText(page, 'An Assembly is one mechanism');
     },
   },
   {
@@ -1495,7 +1481,7 @@ const INC8_SCENARIOS = [
       const [preview] = sent(ctx, 'POST', '/api/epics/onboard/preview');
       assertEqual(preview.body, { url: ONBOARD_URL }, 'preview body');
       await expectText(page, 'Create a new Assembly?');
-      await expectText(page, 'start its first Build');
+      await expectText(page, 'Creates this Assembly and its Build 1 (Draft), then opens the Designer.');
       const focus = await activeDescription(page);
       assertEqual(focus.text, 'Create Assembly and Build 1', 'focus on the create button');
       assertEqual(sent(ctx, 'POST', '/api/epics/onboard').length, 0, 'nothing is created before confirming');

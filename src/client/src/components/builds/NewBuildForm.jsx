@@ -62,10 +62,9 @@ export default function NewBuildForm({
           className="text-input"
           value={description}
           maxLength={60}
-          aria-describedby={`${ids}-desc-help ${ids}-preview`}
+          aria-describedby={`${ids}-preview`}
           onChange={(e) => setDescription(e.target.value)}
         />
-        <p id={`${ids}-desc-help`} className="form-help">A few words, like 1in bash bar.</p>
       </div>
       <p id={`${ids}-preview`} className="new-build-preview" data-testid="new-build-preview">
         <span aria-hidden="true">→ </span>&quot;{buildSummaryPreview(trimmed || defaultName, nextNumber, description)}&quot;
@@ -99,7 +98,6 @@ export default function NewBuildForm({
           ))}
         </select>
       </fieldset>
-      <p className="form-help">A Build is one combination of Parts, like a 1&quot; vs 2&quot; bash bar.</p>
       {error && <p id={errorId} className="form-error" role="alert">{error}</p>}
       <div className="form-actions">
         <Button variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>

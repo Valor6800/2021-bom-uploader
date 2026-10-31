@@ -1,4 +1,3 @@
-import GlossaryTerm from '../ui/GlossaryTerm.jsx';
 import DesignerPartRow, { COLUMN_COUNT } from './DesignerPartRow.jsx';
 
 /**
@@ -40,7 +39,7 @@ export default function DesignerPartsTable({
         <thead>
           <tr>
             <th scope="col" className="cell-check"><span className="visually-hidden">Select</span></th>
-            <th scope="col" className="cell-part">Part <GlossaryTerm term="Part" /></th>
+            <th scope="col" className="cell-part">Part</th>
             <th scope="col">Qty</th>
             <th scope="col">Material</th>
             <th scope="col">Machinery</th>

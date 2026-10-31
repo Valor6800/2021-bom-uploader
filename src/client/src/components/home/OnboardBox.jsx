@@ -157,14 +157,13 @@ export default function OnboardBox() {
           maxLength={2000}
           value={url}
           aria-invalid={inline ? 'true' : undefined}
-          aria-describedby={inline ? 'onboard-hint onboard-error' : 'onboard-hint'}
+          aria-describedby={inline ? 'onboard-error' : undefined}
           onChange={(e) => { setUrl(e.target.value); if (inline?.local) setInline(null); }}
         />
         <Button type="submit" variant="primary" disabled={checking}>
           {checking ? 'Checking…' : 'Continue'}
         </Button>
       </form>
-      <p id="onboard-hint" className="form-help">Open the assembly tab in OnShape and copy the address bar.</p>
       {inline && (
         <Alert
           variant="error"

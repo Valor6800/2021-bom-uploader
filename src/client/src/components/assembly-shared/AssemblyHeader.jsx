@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import GlossaryTerm from '../ui/GlossaryTerm.jsx';
 import ModeSwitch from './ModeSwitch.jsx';
 
 export const TRACKER_BASE_URL = 'https://jira.valor6800.com';
@@ -46,7 +45,6 @@ export default function AssemblyHeader({ assembly, revisions, mode, buildKey, on
         <ModeSwitch assemblyKey={assembly.key} mode={mode} buildKey={buildKey} />
       </div>
       <div className="assembly-meta">
-        <span className="meta-item">Assembly <GlossaryTerm term="Assembly" /></span>
         {assembly.seasonLabel && <span className="meta-item">{assembly.seasonLabel}</span>}
         {!assembly.numbered && (
           <span className="chip chip-neutral" title="This Assembly's name doesn't follow the VF27A-0000A pattern.">
@@ -55,7 +53,7 @@ export default function AssemblyHeader({ assembly, revisions, mode, buildKey, on
           </span>
         )}
         <span className="meta-item">
-          Revision <GlossaryTerm term="Revision" />{' '}
+          Revision{' '}
           {showSelect ? (
             <select
               className="select-inline revision-select"

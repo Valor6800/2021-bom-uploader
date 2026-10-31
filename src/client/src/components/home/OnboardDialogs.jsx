@@ -1,7 +1,6 @@
 import { useRef } from 'react';
 import Dialog from '../ui/Dialog.jsx';
 import Button from '../ui/Button.jsx';
-import GlossaryTerm from '../ui/GlossaryTerm.jsx';
 
 /**
  * Dialogs A to D of the onboarding flow (design 3.3). Each is a ui/Dialog;
@@ -43,16 +42,7 @@ export function ConfirmDialog({ open, proposed, drifted, busy, error, onCancel, 
             <span className="mono-key">{proposed.fullPartNumber}</span> {proposed.name}
           </p>
           <p className="text-muted">{[proposed.seasonLabel, `Revision ${proposed.revision}`].filter(Boolean).join(' · ')}</p>
-          <p>This will:</p>
-          <ul className="onboard-steps">
-            <li>add this Assembly to the team tracker</li>
-            <li>start its first Build <GlossaryTerm term="Build" />: Build 1, Draft</li>
-            <li>open the Designer and read Parts from CAD</li>
-          </ul>
-          <p className="text-muted">
-            Nothing changes in OnShape. Check the number and name: they come from the
-            assembly&apos;s Properties in OnShape.
-          </p>
+          <p>Creates this Assembly and its Build 1 (Draft), then opens the Designer.</p>
           {error && <p id="onboard-create-error" className="form-error" role="alert">{error}</p>}
         </div>
       )}

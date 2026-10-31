@@ -127,6 +127,7 @@ Constants live in `src/server/utils/buildConstants.js`:
 - Cut Version is on the Designer only.
 - No auth on BOM writes in this refactor (see the Security section).
 - Instructions authoring was moved from Phase 3 to Phase 5.
+- No glossary `?` buttons or teaching/helper text in the UI. Terms will be explained on a team Confluence page (URL TBD; no link in the app yet).
 
 ## Known gaps / open items
 

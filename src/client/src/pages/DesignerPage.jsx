@@ -474,11 +474,6 @@ function DesignerPage({ assemblyKey: key }) {
         />
       )}
 
-      {data.ready && builds.length === 1 && !newOpen && (
-        <p className="teaching-hint">
-          Need a different combination of Parts, like a 1&quot; vs 2&quot; bash bar? Make a + New Build.
-        </p>
-      )}
 
       {data.ready && !selectedBuild && !loadFailed && (
         onboard?.buildError ? (
