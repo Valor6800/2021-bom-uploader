@@ -46,3 +46,20 @@ export const LinkType = Object.freeze({
   USED_IN: 'Used In',   // Part <-> Build, many-to-many
   REVISES: 'Revises',   // chains a revision ticket back to the one it replaces
 });
+
+/**
+ * JQL's `linkedIssues(issue, "...")` takes a link *description* (the inward
+ * or outward wording), not the link type's name: `"Used In"` is rejected with
+ * a 400 ("Issue link type 'Used In' could not be found"). Matching both
+ * descriptions keeps the query limited to Used In links in either direction.
+ */
+export const UsedInDescription = Object.freeze({
+  INWARD: 'is used in',
+  OUTWARD: 'uses',
+});
+
+/** JQL clause matching every issue joined to `safeKey` by a Used In link. */
+export function usedInLinkedClause(safeKey) {
+  return `(issue in linkedIssues(${safeKey}, "${UsedInDescription.INWARD}") OR ` +
+    `issue in linkedIssues(${safeKey}, "${UsedInDescription.OUTWARD}"))`;
+}

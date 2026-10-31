@@ -8,7 +8,9 @@
 import {
   sanitizeJQL, validateMaterial, validateMachinery, validatePowdercoat, validateThickness, validateQuantity,
 } from '../utils/validators.js';
-import { BuildField, BuildStatus, BuildTransition, LinkType, RevisionField } from '../utils/buildConstants.js';
+import {
+  BuildField, BuildStatus, BuildTransition, LinkType, RevisionField, usedInLinkedClause,
+} from '../utils/buildConstants.js';
 import { applyPartMask, formatPartNumber } from '../utils/partMask.js';
 import { Powdercoat, Thickness } from '../utils/bomConstants.js';
 import { nextRevisionLetter } from './revisionService.js';
@@ -475,7 +477,7 @@ export class BuildService {
    */
   async getLinkedParts(buildKey) {
     const safe = sanitizeJQL(buildKey);
-    const jql = `issue in linkedIssues(${safe}, "${LinkType.USED_IN}")`;
+    const jql = usedInLinkedClause(safe);
     const issues = await this.jiraClient.searchIssues(jql, {
       paginate: true,
       fields: ['summary'],
@@ -528,7 +530,7 @@ export class BuildService {
    */
   async getBuildsForPart(partKey) {
     const safe = sanitizeJQL(partKey);
-    const jql = `issue in linkedIssues(${safe}, "${LinkType.USED_IN}") ORDER BY "Build Number" DESC`;
+    const jql = `${usedInLinkedClause(safe)} ORDER BY "Build Number" DESC`;
     const issues = await this.jiraClient.searchIssues(jql, { paginate: true });
     return this._parseBuilds(issues);
   }

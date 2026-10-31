@@ -233,7 +233,10 @@ describe('BuildService.getLinkedParts', () => {
 
     await expect(service.getLinkedParts('VAL-11')).resolves.toEqual(['VAL-50', 'VAL-51']);
     const [jql] = jiraClient.searchIssues.mock.calls[0];
-    expect(jql).toContain(`linkedIssues(VAL-11, "${LinkType.USED_IN}")`);
+    // Jira's linkedIssues() takes link descriptions, not the type name "Used In".
+    expect(jql).toContain('linkedIssues(VAL-11, "is used in")');
+    expect(jql).toContain('linkedIssues(VAL-11, "uses")');
+    expect(jql).not.toContain(`"${LinkType.USED_IN}"`);
   });
 });
 
@@ -290,7 +293,10 @@ describe('BuildService.getBuildsForPart', () => {
       expect.objectContaining({ key: 'VAL-10', buildNumber: 1, status: 'Superseded' }),
     ]);
     const [jql] = jiraClient.searchIssues.mock.calls[0];
-    expect(jql).toContain(`linkedIssues(VAL-50, "${LinkType.USED_IN}")`);
+    expect(jql).toContain('linkedIssues(VAL-50, "is used in")');
+    expect(jql).toContain('linkedIssues(VAL-50, "uses")');
+    expect(jql).not.toContain(`"${LinkType.USED_IN}"`);
+    expect(jql).toMatch(/ORDER BY "Build Number" DESC$/);
   });
 });
 
