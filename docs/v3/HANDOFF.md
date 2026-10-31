@@ -128,6 +128,8 @@ Constants live in `src/server/utils/buildConstants.js`:
 - No auth on BOM writes in this refactor (see the Security section).
 - Instructions authoring was moved from Phase 3 to Phase 5.
 - No glossary `?` buttons or teaching/helper text in the UI. Terms will be explained on a team Confluence page (URL TBD; no link in the app yet).
+- The Assembly page hides Draft Builds (tabs, Compare, Print, labels). A `?build=` pointing at a Draft falls back to the Active Build. The Designer still shows Drafts.
+- Material and Machinery are read-only on the Assembly page (UI-only). Its saves send the stored values; the server still accepts any value.
 
 ## Known gaps / open items
 

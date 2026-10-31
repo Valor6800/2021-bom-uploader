@@ -35,6 +35,8 @@ import {
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const NO_SELECTION = new Set();
+/** Fields only the Designer changes; this page shows them as text. */
+const LOCKED_FIELDS = ['material', 'machinery'];
 
 const emptyWork = () => ({
   edits: {},
@@ -110,10 +112,14 @@ function AssemblyPage({ assemblyKey: key }) {
     () => overlayBuildStatus(data.fetchedBuilds, statusThisSession),
     [data.fetchedBuilds, statusThisSession],
   );
-  const builds = useMemo(
+  const allBuilds = useMemo(
     () => visibleBuilds(chainBuilds, key).sort((a, b) => (a.buildNumber ?? 0) - (b.buildNumber ?? 0)),
     [chainBuilds, key],
   );
+  // Drafts belong to the designer. Everything on this page (tabs, Compare,
+  // Print, the two-Active check, current-Build labels, Move and Re-create
+  // targets) sees only the Builds that are ready.
+  const builds = useMemo(() => allBuilds.filter((b) => b.status !== 'Draft'), [allBuilds]);
   const requested = searchParams.get('build');
   const view = searchParams.get('view');
   const selectedKey = defaultAssembleBuildKey(builds, requested);
@@ -152,11 +158,12 @@ function AssemblyPage({ assemblyKey: key }) {
   // change never moves the student to another Build.
   useEffect(() => {
     if (!data.ready || !selectedKey || requested === selectedKey) return;
-    if (requested) setWrongBuild(true);
+    // A Draft is hidden here, not wrong: fall back quietly.
+    if (requested && !allBuilds.some((b) => b.key === requested)) setWrongBuild(true);
     const next = new URLSearchParams(searchParams);
     next.set('build', selectedKey);
     setSearchParams(next, { replace: true, state: location.state });
-  }, [data.ready, selectedKey, requested, searchParams, setSearchParams, location.state]);
+  }, [data.ready, selectedKey, requested, allBuilds, searchParams, setSearchParams, location.state]);
 
   // ----- Rows -----
   const allParts = useMemo(() => mergeParts(data.parts, createdParts), [data.parts, createdParts]);
@@ -176,7 +183,15 @@ function AssemblyPage({ assemblyKey: key }) {
     rowResults: work.rowResults,
   }), [data.parts, createdParts, data.chain, data.linkedByPart, work, selectedKey, builds]);
 
-  const saveGroups = useMemo(() => ({ newFromCad: [], inBuild: groups.inBuild, other: [] }), [groups.inBuild]);
+  // Saves always carry the stored Material and Machinery, never an edit.
+  const saveGroups = useMemo(() => ({
+    newFromCad: [],
+    inBuild: groups.inBuild.map((r) => ({
+      ...r,
+      values: { ...r.values, ...Object.fromEntries(LOCKED_FIELDS.map((f) => [f, r.stored[f]])) },
+    })),
+    other: [],
+  }), [groups.inBuild]);
   const plan = useMemo(
     () => (locked ? { body: { creates: [], updates: [], links: [] }, heldBack: [] } : planSave(saveGroups, NO_SELECTION)),
     [locked, saveGroups],
@@ -257,10 +272,13 @@ function AssemblyPage({ assemblyKey: key }) {
     setSaveError(null);
   }, []);
 
-  const onEdit = (rowId, field, value) => setWork((w) => ({
-    ...w,
-    edits: { ...w.edits, [rowId]: { ...(w.edits[rowId] ?? {}), [field]: value } },
-  }));
+  const onEdit = (rowId, field, value) => {
+    if (LOCKED_FIELDS.includes(field)) return;
+    setWork((w) => ({
+      ...w,
+      edits: { ...w.edits, [rowId]: { ...(w.edits[rowId] ?? {}), [field]: value } },
+    }));
+  };
 
   // ----- Move and Re-create -----
   const linkInSession = (buildKey, partKey) => setWork((w) => ({
@@ -396,7 +414,6 @@ function AssemblyPage({ assemblyKey: key }) {
     return <p className="page-loading" role="status">Loading the Assembly…</p>;
   }
 
-  const designerUrl = `/a/${encodeURIComponent(key)}/design${selectedKey ? `?build=${encodeURIComponent(selectedKey)}` : ''}`;
   const inBuildParts = groups.inBuild.map((r) => ({ key: r.key, summary: r.summary, ...r.stored }));
   const actionsLocked = !!actionBusy || loadFailed || !selectedBuild || selectedBuild.status === 'Archived';
 
@@ -438,7 +455,7 @@ function AssemblyPage({ assemblyKey: key }) {
 
         {!selectedBuild && !loadFailed ? (
           <EmptyState
-            title="No Builds yet"
+            title={allBuilds.length === 0 ? 'No Builds yet' : 'No Build is ready yet'}
             action={<Link to={`/a/${encodeURIComponent(key)}/design`} className="btn btn-primary">Open Designer</Link>}
           />
         ) : selectedBuild && (
@@ -494,12 +511,6 @@ function AssemblyPage({ assemblyKey: key }) {
               </div>
             </div>
 
-            {selectedBuild.status === 'Draft' && (
-              <p className="draft-line">
-                Draft: not ready to build yet. The designer cuts a version when it is.{' '}
-                <Link to={designerUrl} className="link-plain">Open Designer</Link>
-              </p>
-            )}
             {selectedBuild.status === 'Archived' && (
               <p className="draft-line">Archived: this Build is a dead end and can&apos;t be changed.</p>
             )}

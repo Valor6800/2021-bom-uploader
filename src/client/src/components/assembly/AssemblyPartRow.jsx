@@ -1,4 +1,4 @@
-import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS } from '../../api/client.js';
+import { POWDERCOAT, THICKNESS } from '../../api/client.js';
 import Badge from '../ui/Badge.jsx';
 import Button from '../ui/Button.jsx';
 import InlineSelect from '../ui/InlineSelect.jsx';
@@ -7,9 +7,10 @@ import { isPowdercoatEnabled, isThicknessEnabled } from '../parts/partRules.js';
 
 export const COLUMN_COUNT = 7;
 
+/** Shown as text: only the Designer changes these. */
+const TEXT_FIELDS = ['material', 'machinery'];
+
 const SELECTS = [
-  ['material', 'Material', MATERIALS],
-  ['machinery', 'Machinery', MACHINERY],
   ['powdercoat', 'Powdercoat', POWDERCOAT],
   ['thickness', 'Thickness', THICKNESS],
 ];
@@ -27,8 +28,8 @@ function PartCell({ row }) {
 /**
  * One Part row on the Assembly page (design 3.5).
  *
- * In the selected Build: editable Qty, Material, Machinery, Powdercoat and
- * Thickness, and whether this Build is the Part's current one. In another
+ * In the selected Build: editable Qty, Powdercoat and Thickness, Material
+ * and Machinery as text, and whether this Build is the Part's current one. In another
  * Build (or none): where it is, with Move here and Re-create here.
  *
  * @param {object} props
@@ -118,6 +119,11 @@ export default function AssemblyPartRow({
             }}
           />
         </td>
+        {TEXT_FIELDS.map((field) => (
+          <td key={field} className="cell-text" data-field={field}>
+            {row.values[field] || '—'}
+          </td>
+        ))}
         {SELECTS.map(([field, fieldLabel, options]) => {
           const value = row.values[field] ?? 'None';
           const unlisted = !options.includes(value);

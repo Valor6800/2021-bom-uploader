@@ -738,9 +738,18 @@ const INC6_SCENARIOS = [
 
 const ASSEMBLE_URL = '/a/HAR-2030/assemble';
 
+/**
+ * builds-three with Build 3 Superseded instead of Draft: the Assembly page
+ * hides Drafts, and these scenarios need three visible tabs.
+ */
+function buildsThreeNoDraft() {
+  const fx3 = fixture('builds-three');
+  return { ...fx3, body: fx3.body.map((b) => (b.status === 'Draft' ? { ...b, status: 'Superseded' } : b)) };
+}
+
 /** The Assembly page's reads for HAR-2030: three Builds, four Parts. */
 function assemblyApi({
-  builds = 'builds-three',
+  builds = buildsThreeNoDraft,
   stories = 'stories-chain-four',
   buildParts = {
     'HAR-2051': 'build-parts-a-HAR-2051',
@@ -799,9 +808,6 @@ const INC7_SCENARIOS = [
       await page.waitForURL(/build=HAR-2053/);
       await assertAttr(tab(page, 'Build 3'), 'aria-selected', 'true');
       assertEqual(await page.evaluate(() => document.activeElement?.id), 'build-tab-HAR-2053', 'focus follows the arrow key');
-      await expectText(page, 'Draft: not ready to build yet. The designer cuts a version when it is.');
-      const open = page.getByRole('link', { name: 'Open Designer' });
-      assertTrue((await open.getAttribute('href')).endsWith('/a/HAR-2030/design?build=HAR-2053'), 'Open Designer keeps the Build');
       await page.keyboard.press('ArrowRight');
       await page.waitForURL(/build=HAR-2051/);
       await page.keyboard.press('End');
@@ -820,6 +826,31 @@ const INC7_SCENARIOS = [
       const open = page.getByRole('link', { name: 'Open Designer' });
       assertTrue((await open.getAttribute('href')).endsWith('/a/HAR-2030/design'), 'Open Designer link');
       assertEqual(await page.locator('table input').count(), 0, 'no editable Parts without a Build');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-hides-draft',
+    // Build 1 is a Draft and ?build asks for it: the page falls back to the
+    // Active Build 2 without a "not part of this Assembly" notice.
+    url: `${ASSEMBLE_URL}?build=HAR-2051`,
+    bom: true,
+    assemble: true,
+    api: designerApi({ builds: 'builds-two' }),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page) {
+      await page.waitForURL(/build=HAR-2052/);
+      assertEqual(await page.getByRole('tab').count(), 1, 'one Build tab');
+      await assertAttr(tab(page, 'Build 2'), 'aria-selected', 'true');
+      assertEqual(await tab(page, 'Build 1').count(), 0, 'no tab for the Draft Build 1');
+      await expectNoText(page, "isn't part of this Assembly");
+      await expectNoText(page, 'Draft');
+      const row = inBuildRow(page, 'HAR-2033');
+      assertEqual((await row.locator('td[data-field="material"]').textContent()).trim(), 'AL 6061', 'Material is text');
+      assertEqual((await row.locator('td[data-field="machinery"]').textContent()).trim(), 'CNC Router', 'Machinery is text');
+      assertEqual(await page.getByLabel(/^(Material|Machinery) for /).count(), 0, 'no Material or Machinery controls');
+      assertTrue(await page.getByLabel('Quantity for VF27P-0003A').isEnabled(), 'Quantity stays editable');
+      assertTrue(await page.getByLabel('Powdercoat for VF27P-0003A').isEnabled(), 'Powdercoat stays editable');
     },
   },
   {
