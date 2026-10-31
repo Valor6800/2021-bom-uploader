@@ -1,0 +1,31 @@
+{
+  "status": 200,
+  "body": {
+    "query": "HAR-1990",
+    "total": 1,
+    "results": [
+      {
+        "key": "HAR-1990",
+        "summary": "VF27A-0900A Old Intake",
+        "name": "Old Intake",
+        "numbered": true,
+        "fullPartNumber": "VF27A-0900A",
+        "partNumber": "0900",
+        "revision": "A",
+        "seasonType": "F",
+        "year": "27",
+        "seasonCode": "VF27",
+        "seasonLabel": "Facility 2027",
+        "status": "Closed",
+        "closed": true,
+        "created": "2026-03-01T15:00:00.000+0000",
+        "documentId": null,
+        "workspaceId": null,
+        "elementId": null,
+        "onshapeUrl": null,
+        "score": 100
+      }
+    ],
+    "groups": null
+  }
+}

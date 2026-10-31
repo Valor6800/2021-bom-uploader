@@ -1,0 +1,39 @@
+{
+  "status": 409,
+  "body": {
+    "assembly": {
+      "key": "HAR-2040",
+      "summary": "VF27A-0000A Old Test",
+      "name": "Old Test",
+      "numbered": true,
+      "fullPartNumber": "VF27A-0000A",
+      "partNumber": "0000",
+      "revision": "A",
+      "seasonType": "F",
+      "year": "27",
+      "seasonCode": "VF27",
+      "seasonLabel": "Facility 2027",
+      "status": "New",
+      "closed": false,
+      "created": "2026-09-01T15:00:00.000+0000",
+      "documentId": "0a1b2c3d4e5f60718293a4b5",
+      "workspaceId": "1b2c3d4e5f60718293a4b5c6",
+      "elementId": "1234567890abcdef12345678",
+      "onshapeUrl": "https://cad.onshape.com/documents/0a1b2c3d4e5f60718293a4b5/w/1b2c3d4e5f60718293a4b5c6/e/1234567890abcdef12345678"
+    },
+    "proposed": {
+      "summary": "VF27A-0000A Test Assembly",
+      "fullPartNumber": "VF27A-0000A",
+      "name": "Test Assembly",
+      "project": "VF27",
+      "partNumber": "0000",
+      "revision": "A",
+      "seasonLabel": "Facility 2027",
+      "documentId": "8c64dfdcb66184646a7a3f17",
+      "workspaceId": "82f00d3cbea6901ac26040bd",
+      "elementId": "faea62821490977c33bc8d7c"
+    },
+    "error": "VF27A-0000A is already used by HAR-2040.",
+    "status": 409
+  }
+}

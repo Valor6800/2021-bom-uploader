@@ -1,0 +1,20 @@
+{
+  "status": 400,
+  "body": {
+    "problems": [
+      {
+        "property": "Project",
+        "issue": "missing",
+        "hint": "V, then R or F, then a 2-digit year, e.g. VF27"
+      },
+      {
+        "property": "Part number",
+        "issue": "invalid",
+        "value": "12",
+        "hint": "4 digits, e.g. 0001"
+      }
+    ],
+    "error": "OnShape assembly properties are incomplete: missing Project. invalid Part number \"12\" (expected 4 digits, e.g. 0001). Set them in the assembly's Properties dialog in OnShape and try again.",
+    "status": 400
+  }
+}

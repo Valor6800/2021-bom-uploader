@@ -15,6 +15,8 @@ import { useEffect, useId, useRef } from 'react';
  * @param {import('react').ReactNode} props.title
  * @param {import('react').ReactNode} [props.description]
  * @param {import('react').RefObject<HTMLElement>} [props.initialFocusRef]
+ * @param {import('react').RefObject<HTMLElement>} [props.returnFocusRef]  Where
+ *   focus goes on close, when that isn't the control that opened the dialog.
  * @param {import('react').ReactNode} [props.footer]  Action buttons.
  */
 export default function Dialog({
@@ -23,6 +25,7 @@ export default function Dialog({
   title,
   description,
   initialFocusRef,
+  returnFocusRef: returnFocusTargetRef,
   footer,
   children,
   className = '',
@@ -50,8 +53,11 @@ export default function Dialog({
     const dialog = ref.current;
     if (!dialog) return undefined;
     const restore = () => {
-      const target = returnFocusRef.current;
+      const opener = returnFocusRef.current;
       returnFocusRef.current = null;
+      // Only a dialog that was opened gives focus back.
+      if (!opener) return;
+      const target = returnFocusTargetRef?.current ?? opener;
       if (target && typeof target.focus === 'function' && document.contains(target)) {
         target.focus();
       }

@@ -735,6 +735,8 @@ const INC6_SCENARIOS = [
     name: 'designer-redirect',
     url: '/designer',
     skipMainShot: true,
+    // Lands on Home (INC-8), which lists Assemblies.
+    api: [{ method: 'GET', path: '/api/epics/search', fixture: 'search-empty' }],
     async run(page) {
       await page.waitForURL(`${BASE}/`);
     },
@@ -1230,6 +1232,515 @@ const INC7_SCENARIOS = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// INC-8: Home, chooser and onboarding
+// ---------------------------------------------------------------------------
+
+const ONBOARD_URL = 'https://cad.onshape.com/documents/8c64dfdcb66184646a7a3f17/w/82f00d3cbea6901ac26040bd/e/faea62821490977c33bc8d7c';
+
+const searchRoute = (q, name, query = {}) => ({ method: 'GET', path: '/api/epics/search', query: { q, ...query }, fixture: name });
+
+/** Home's search reads. Earlier entries win, so put overrides in `extra`. */
+function homeApi(extra = []) {
+  return [
+    ...extra,
+    searchRoute('', 'search-empty-closed', { includeClosed: '1' }),
+    searchRoute('', 'search-empty'),
+    searchRoute('0000', 'search-0000'),
+    searchRoute('facility 2027', 'search-facility-2027'),
+    searchRoute('bash', 'search-bash'),
+    searchRoute('HAR-1990', 'search-HAR-1990'),
+  ];
+}
+
+const searches = (ctx) => sent(ctx, 'GET', '/api/epics/search');
+const resultCard = (page, key) => page.locator(`button.result-main[data-key="${key}"]`);
+const openDialog = (page) => page.locator('dialog[open]');
+
+async function countText(page) {
+  return (await page.getByTestId('search-count').textContent()).trim();
+}
+
+async function waitForCount(page, expected) {
+  const deadline = Date.now() + 5000;
+  let last = '';
+  while (Date.now() < deadline) {
+    last = await countText(page);
+    if (last === expected) return;
+    await page.waitForTimeout(50);
+  }
+  throw new CheckError(`Check failed: search count: expected "${expected}", got "${last}"`);
+}
+
+async function activeDescription(page) {
+  return page.evaluate(() => {
+    const el = document.activeElement;
+    return { tag: el?.tagName, text: el?.textContent?.trim(), id: el?.id, key: el?.dataset?.key ?? null };
+  });
+}
+
+/** Paste the OnShape link on Home and press Continue. */
+async function pasteLink(page, url = ONBOARD_URL) {
+  await page.getByLabel('OnShape assembly link').fill(url);
+  await button(page, 'Continue').click();
+}
+
+/** Designer reads for the Assembly that onboarding just made. */
+const onboardDesignerApi = (extra = []) => designerApi({
+  builds: 'builds-none',
+  stories: 'stories-chain-one',
+  buildParts: { 'HAR-2051': 'build-parts-empty' },
+  extra: [previewRoute, ...extra],
+});
+
+const previewOnboardRoute = (name) => ({ method: 'POST', path: '/api/epics/onboard/preview', fixture: name });
+const commitRoute = (name) => ({ method: 'POST', path: '/api/epics/onboard', fixture: name });
+
+let releaseCreate = null;
+
+/** @type {Scenario[]} */
+const INC8_SCENARIOS = [
+  {
+    inc: 'INC-8',
+    name: 'home-empty',
+    url: '/',
+    bom: true,
+    api: homeApi(),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      const headings = await page.locator('.result-group-heading > span:first-child').allTextContents();
+      assertEqual(headings, ['Robot 2027', 'Facility 2027', 'Robot 2026', 'Other'], 'season groups, newest first, Robot before Facility');
+      assertTrue(!(await page.getByLabel('Include closed').isChecked()), 'Include closed is off by default');
+      await waitForCount(page, '7 Assemblies');
+      assertEqual(searches(ctx).map((r) => r.query), [{ q: '' }], 'one search, no includeClosed');
+      const focus = await activeDescription(page);
+      assertEqual(focus.id, 'assembly-search', 'search box has focus on load');
+      await expectText(page, '(No number)');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'home-results-0000',
+    url: '/',
+    bom: true,
+    api: homeApi(),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await waitForCount(page, '7 Assemblies');
+      await page.getByRole('searchbox', { name: 'Find an Assembly' }).pressSequentially('0000', { delay: 40 });
+      await waitForCount(page, '1 Assembly');
+      const qs = searches(ctx).map((r) => r.query.q);
+      assertEqual(qs, ['', '0000'], 'typing is debounced into one request');
+      assertTrue(page.url().endsWith('/?q=0000'), `URL mirrors the query (${page.url()})`);
+      await resultCard(page, 'HAR-2030').waitFor({ state: 'visible' });
+      assertEqual(await page.locator('.result-card').count(), 1, 'one result');
+      await expectText(page, 'Facility 2027');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'home-results-facility-2027',
+    url: '/?q=facility%202027',
+    bom: true,
+    api: homeApi(),
+    waitFor: '.result-card',
+    async run(page) {
+      await waitForCount(page, '3 Assemblies');
+      assertEqual(await page.locator('.result-group').count(), 0, 'no season groups while searching');
+      assertEqual(await page.getByRole('searchbox', { name: 'Find an Assembly' }).inputValue(), 'facility 2027', 'query read from the URL');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'home-no-results',
+    url: '/?q=bash',
+    bom: true,
+    api: homeApi(),
+    waitFor: 'text=No Assembly matches',
+    async run(page) {
+      await expectText(page, 'No Assembly matches "bash".');
+      await expectText(page, 'Check the spelling, or paste its OnShape link above to add it.');
+      await waitForCount(page, '0 Assemblies');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'home-no-assemblies',
+    url: '/',
+    bom: true,
+    api: homeApi([searchRoute('', 'search-none')]),
+    waitFor: 'text=No Assemblies yet.',
+    async run(page) {
+      await expectText(page, 'Paste its OnShape assembly link above to add the first one.');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'home-search-error',
+    url: '/',
+    bom: true,
+    skipMainShot: true,
+    expectStatuses: [503],
+    api: homeApi([{
+      method: 'GET', path: '/api/epics/search', query: { q: '' },
+      respond: ({ calls }) => fixture(calls === 1 ? 'search-503' : 'search-empty'),
+    }]),
+    waitFor: '[role=alert]',
+    async run(page, ctx) {
+      await expectText(page, "Couldn't load Assemblies:");
+      await expectText(page, "The team tracker didn't respond (503).");
+      await ctx.shot('home-search-error');
+      await button(page, 'Retry').click();
+      await page.locator('.result-group').first().waitFor({ state: 'visible' });
+      assertEqual(searches(ctx).length, 2, 'Retry re-runs the search once');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'home-include-closed',
+    url: '/',
+    bom: true,
+    api: homeApi(),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await waitForCount(page, '7 Assemblies');
+      await page.getByLabel('Include closed').check();
+      const list = await waitForSent(ctx, 'GET', '/api/epics/search', 2);
+      assertEqual(list[1].query, { q: '', includeClosed: '1' }, 'search sends includeClosed=1');
+      await waitForCount(page, '8 Assemblies');
+      assertTrue(page.url().endsWith('/?closed=1'), `URL has closed=1 (${page.url()})`);
+      const closed = page.locator('.result-card', { has: resultCard(page, 'HAR-1990') });
+      await closed.locator('.chip', { hasText: 'Closed' }).waitFor({ state: 'visible' });
+      await expectText(page, 'This Assembly is closed.');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'home-closed-by-key',
+    url: '/',
+    bom: true,
+    api: homeApi(),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await waitForCount(page, '7 Assemblies');
+      await page.getByRole('searchbox', { name: 'Find an Assembly' }).fill('HAR-1990');
+      await waitForCount(page, '1 Assembly');
+      const last = searches(ctx).at(-1);
+      assertEqual(last.query, { q: 'HAR-1990' }, 'no includeClosed with the toggle off');
+      const card = page.locator('.result-card', { has: resultCard(page, 'HAR-1990') });
+      await card.locator('.chip', { hasText: 'Closed' }).waitFor({ state: 'visible' });
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'chooser-dialog',
+    url: '/',
+    bom: true,
+    skipMainShot: true,
+    api: homeApi(),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await resultCard(page, 'HAR-2030').focus();
+      await page.keyboard.press('Enter');
+      await openDialog(page).waitFor({ state: 'visible' });
+      await expectText(page, 'What are you doing?');
+      const focus = await activeDescription(page);
+      assertTrue(focus.tag === 'A' && focus.text.includes('Designer'), `focus starts on Designer (${JSON.stringify(focus)})`);
+      const hrefs = await openDialog(page).locator('a.chooser-tile').evaluateAll((els) => els.map((e) => e.getAttribute('href')));
+      assertEqual(hrefs, ['/a/HAR-2030/design', '/a/HAR-2030/assemble'], 'chooser links');
+      await ctx.shot('chooser-dialog');
+      await page.keyboard.press('Escape');
+      await openDialog(page).waitFor({ state: 'detached' });
+      await page.waitForTimeout(100);
+      assertEqual((await activeDescription(page)).key, 'HAR-2030', 'Esc returns focus to the card');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'chooser-page',
+    url: '/a/HAR-2030',
+    bom: true,
+    api: [{ method: 'GET', path: '/api/epics/HAR-2030', fixture: 'epic-HAR-2030' }],
+    waitFor: 'text=What are you doing?',
+    async run(page) {
+      await expectText(page, 'VF27A-0000A Test Assembly');
+      await expectText(page, 'Facility 2027 · Revision A · HAR-2030');
+      assertEqual(await page.locator('dialog').count(), 0, 'the page is not a dialog');
+      await page.getByRole('link', { name: /Assembly I build it/ }).waitFor();
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'chooser-load-404',
+    url: '/a/HAR-9',
+    bom: true,
+    expectStatuses: [404],
+    api: [{ method: 'GET', path: '/api/epics/HAR-9', fixture: 'epic-HAR-9-404' }],
+    waitFor: "text=We couldn't find Assembly HAR-9.",
+    async run(page) {
+      await page.getByRole('link', { name: 'Back to all Assemblies' }).waitFor();
+      assertEqual(await button(page, 'Retry').count(), 0, 'no Retry for a 404');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'onboard-confirm',
+    url: '/',
+    bom: true,
+    api: homeApi([previewOnboardRoute('onboard-preview-new')]),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await pasteLink(page);
+      await openDialog(page).waitFor({ state: 'visible' });
+      const [preview] = sent(ctx, 'POST', '/api/epics/onboard/preview');
+      assertEqual(preview.body, { url: ONBOARD_URL }, 'preview body');
+      await expectText(page, 'Create a new Assembly?');
+      await expectText(page, 'start its first Build');
+      const focus = await activeDescription(page);
+      assertEqual(focus.text, 'Create Assembly and Build 1', 'focus on the create button');
+      assertEqual(sent(ctx, 'POST', '/api/epics/onboard').length, 0, 'nothing is created before confirming');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'onboard-duplicate',
+    url: '/',
+    bom: true,
+    skipMainShot: true,
+    api: homeApi([previewOnboardRoute('onboard-preview-exists'), ...designerApi()]),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await pasteLink(page);
+      await openDialog(page).waitFor({ state: 'visible' });
+      await expectText(page, 'This Assembly is already here');
+      await expectText(page, 'so nothing new will be created');
+      assertEqual((await activeDescription(page)).text, 'Open in Designer', 'focus on Open in Designer');
+      await ctx.shot('onboard-duplicate');
+      await page.keyboard.press('Escape');
+      await openDialog(page).waitFor({ state: 'detached' });
+      await page.waitForTimeout(100);
+      assertEqual((await activeDescription(page)).id, 'onboard-url', 'Esc returns focus to the link box');
+      await button(page, 'Continue').click();
+      await openDialog(page).waitFor({ state: 'visible' });
+      await openDialog(page).getByRole('button', { name: 'Open in Designer' }).click();
+      await page.waitForURL(`${BASE}${DESIGN_URL}`);
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'onboard-properties-error',
+    url: '/',
+    bom: true,
+    expectStatuses: [400],
+    api: homeApi([previewOnboardRoute('onboard-preview-problems')]),
+    waitFor: '.result-group',
+    async run(page) {
+      await pasteLink(page);
+      await openDialog(page).waitFor({ state: 'visible' });
+      await expectText(page, "Can't add this assembly yet");
+      const items = await openDialog(page).locator('.onboard-problems li').allTextContents();
+      assertEqual(items, [
+        'Project: missing (V, then R or F, then a 2-digit year, e.g. VF27)',
+        'Part number "12": needs 4 digits, e.g. 0001',
+      ], 'problems list');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'onboard-conflict',
+    url: '/',
+    bom: true,
+    expectStatuses: [409],
+    api: homeApi([previewOnboardRoute('onboard-preview-conflict')]),
+    waitFor: '.result-group',
+    async run(page) {
+      await pasteLink(page);
+      await openDialog(page).waitFor({ state: 'visible' });
+      await expectText(page, 'VF27A-0000A is already used');
+      await expectText(page, 'has this number but a different OnShape assembly');
+      await openDialog(page).getByRole('button', { name: 'Open HAR-2040' }).waitFor();
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'onboard-error',
+    url: '/',
+    bom: true,
+    skipMainShot: true,
+    expectStatuses: [502],
+    api: homeApi([previewOnboardRoute('onboard-preview-onshape-502')]),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await pasteLink(page, 'not a link');
+      await expectText(page, "That doesn't look like an OnShape assembly link.");
+      assertEqual(sent(ctx, 'POST', '/api/epics/onboard/preview').length, 0, 'a bad link sends no request');
+      await ctx.shot('onboard-local-check');
+      await pasteLink(page);
+      await expectText(page, "Couldn't check that link: OnShape didn't respond (502).");
+      await button(page, 'Try again').waitFor();
+      await ctx.shot('onboard-error');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'onboard-drift',
+    url: '/',
+    bom: true,
+    expectStatuses: [409],
+    api: homeApi([previewOnboardRoute('onboard-preview-new'), commitRoute('onboard-drift-409')]),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await pasteLink(page);
+      await openDialog(page).waitFor({ state: 'visible' });
+      await button(page, 'Create Assembly and Build 1').click();
+      await expectText(page, 'The name in OnShape changed since you checked.');
+      await expectText(page, 'Test Assembly v2');
+      const [commit] = sent(ctx, 'POST', '/api/epics/onboard');
+      assertEqual(commit.body, { url: ONBOARD_URL, expectedSummary: 'VF27A-0000A Test Assembly' }, 'commit body');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'onboard-creating',
+    url: '/',
+    bom: true,
+    skipMainShot: true,
+    api: homeApi([
+      previewOnboardRoute('onboard-preview-new'),
+      {
+        method: 'POST',
+        path: '/api/epics/onboard',
+        respond: () => new Promise((resolve) => { releaseCreate = () => resolve(fixture('onboard-created')); }),
+      },
+      ...onboardDesignerApi(),
+    ]),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await pasteLink(page);
+      await openDialog(page).waitFor({ state: 'visible' });
+      await button(page, 'Create Assembly and Build 1').click();
+      await expectText(page, 'Creating…');
+      await waitForSent(ctx, 'POST', '/api/epics/onboard');
+      assertTrue(await openDialog(page).getByRole('button', { name: 'Cancel' }).isDisabled(), 'Cancel is disabled while creating');
+      assertTrue(await openDialog(page).getByRole('button', { name: /Creating/ }).isDisabled(), 'Create is disabled while creating');
+      await ctx.shot('onboard-creating');
+      releaseCreate();
+      await page.waitForURL(/\/a\/HAR-2030\/design\?build=HAR-2051/);
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'designer-onboard-build-failed',
+    url: '/',
+    bom: true,
+    skipMainShot: true,
+    api: homeApi([
+      previewOnboardRoute('onboard-preview-new'),
+      commitRoute('onboard-created-build-failed'),
+      ...designerApi({ builds: 'builds-none', stories: 'stories-chain-one', buildParts: {} }),
+    ]),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await pasteLink(page);
+      await openDialog(page).waitFor({ state: 'visible' });
+      await button(page, 'Create Assembly and Build 1').click();
+      await page.waitForURL(`${BASE}${DESIGN_URL}`);
+      await expectText(page, "was created, but Build 1 couldn't be created: the team tracker didn't respond (503). Your Assembly is saved.");
+      await button(page, 'Try again: Create Build 1').waitFor();
+      await expectNoText(page, 'No Builds yet');
+      assertEqual(sent(ctx, 'POST', '/api/parts/preview').length, 0, 'no Update from CAD without a Build');
+      await ctx.shot('designer-onboard-build-failed');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'designer-onboard-lagging-build',
+    url: '/',
+    bom: true,
+    skipMainShot: true,
+    api: homeApi([
+      previewOnboardRoute('onboard-preview-new'),
+      commitRoute('onboard-created'),
+      ...onboardDesignerApi(),
+    ]),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await pasteLink(page);
+      await openDialog(page).waitFor({ state: 'visible' });
+      await button(page, 'Create Assembly and Build 1').click();
+      await page.waitForURL(/\/a\/HAR-2030\/design\?build=HAR-2051/);
+      await page.locator('tbody.parts-group-new').waitFor({ state: 'visible', timeout: 10000 });
+      await assertAttr(chip(page, 'Build 1'), 'aria-pressed', 'true');
+      await expectNoText(page, 'No Builds yet');
+      await page.waitForTimeout(500);
+      assertEqual(sent(ctx, 'POST', '/api/parts/preview').length, 1, 'cad=1 sends exactly one preview');
+      assertTrue(!page.url().includes('cad=1'), 'cad=1 is stripped from the URL');
+      await ctx.shot('designer-onboard-lagging-build');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'designer-onboard-already-added',
+    url: '/',
+    bom: true,
+    skipMainShot: true,
+    api: homeApi([
+      previewOnboardRoute('onboard-preview-new'),
+      commitRoute('onboard-exists-commit'),
+      ...onboardDesignerApi(),
+    ]),
+    waitFor: '.result-group',
+    async run(page, ctx) {
+      await pasteLink(page);
+      await openDialog(page).waitFor({ state: 'visible' });
+      await button(page, 'Create Assembly and Build 1').click();
+      await page.waitForURL(`${BASE}${DESIGN_URL}?build=HAR-2051`);
+      await expectText(page, 'Already added; opened it.');
+      await assertAttr(chip(page, 'Build 1'), 'aria-pressed', 'true');
+      await page.waitForTimeout(500);
+      assertEqual(sent(ctx, 'POST', '/api/parts/preview').length, 0, 'no Update from CAD for the losing call');
+      assertTrue(!page.url().includes('cad=1'), 'no cad=1');
+      await ctx.shot('designer-onboard-already-added');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'nav-final',
+    url: '/',
+    bom: true,
+    api: homeApi(),
+    waitFor: '.result-group',
+    async run(page) {
+      const nav = page.locator('nav[aria-label="Main"]');
+      // Icons are decorative; compare the words.
+      const links = (await nav.getByRole('link').allTextContents()).map((t) => t.replace(/[^\w\s-]/gu, '').trim());
+      assertEqual(links, ['ValorBOM', 'Find an Assembly', 'Parts Order', 'Parts Check-in'], 'nav links');
+      assertEqual(await nav.getByRole('link', { name: 'ValorBOM' }).getAttribute('href'), '/', 'brand links Home');
+      await assertAttr(nav.getByRole('link', { name: 'Find an Assembly' }), 'aria-current', 'page');
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'redirect-assembly',
+    url: '/assembly',
+    bom: true,
+    api: homeApi(),
+    waitFor: '.result-group',
+    async run(page) {
+      await page.waitForURL(`${BASE}/`);
+    },
+  },
+  {
+    inc: 'INC-8',
+    name: 'home-tablet-768',
+    url: '/',
+    viewport: 'portrait',
+    bom: true,
+    api: homeApi(),
+    waitFor: '.result-group',
+  },
+];
+
 /** @type {Scenario[]} */
 const SCENARIOS = [
   // ----- INC-5: tokens, primitives and the existing pages -----
@@ -1237,13 +1748,13 @@ const SCENARIOS = [
     inc: 'INC-5',
     name: 'nav-laptop',
     url: '/',
-    // The old Dashboard keeps its dim text and gold inline links until INC-9.
-    axeKnown: LEGACY_COLOURS,
+    // INC-8 replaced the Dashboard with Home and the nav items with the new set.
+    api: [{ method: 'GET', path: '/api/epics/search', fixture: 'search-empty' }],
     waitFor: 'nav[aria-label="Main"]',
     async run(page) {
       await expectVisible(page, 'a.skip-link', { attached: true });
       await expectVisible(page, 'main#main');
-      for (const label of ['Dashboard', 'Assembly BOM', 'Parts Order', 'Parts Check-in']) {
+      for (const label of ['ValorBOM', 'Find an Assembly', 'Parts Order', 'Parts Check-in']) {
         await expectVisible(page, `nav >> role=link[name=/${label}/]`);
       }
     },
@@ -1329,6 +1840,7 @@ const SCENARIOS = [
   },
   ...INC6_SCENARIOS,
   ...INC7_SCENARIOS,
+  ...INC8_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------------
@@ -1450,8 +1962,9 @@ async function installRoutes(context, scenario, state) {
     const key = `${method} ${url.pathname}`;
     state.requests.push({ method, path: url.pathname, query: Object.fromEntries(url.searchParams), body });
     const calls = state.requests.filter((r) => `${r.method} ${r.path}` === key).length;
+    // `respond` may return a promise, to hold a request open for a shot.
     const answer = match.respond
-      ? match.respond({ url, body, calls, requests: state.requests })
+      ? await match.respond({ url, body, calls, requests: state.requests })
       : fixture(match.fixture);
     await route.fulfill({
       status: answer.status,

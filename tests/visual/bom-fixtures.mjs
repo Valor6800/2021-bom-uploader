@@ -88,9 +88,14 @@ class FakeJira {
   }
 }
 
-function fakeOnshape({ bom, fail = {} } = {}) {
+function fakeOnshape({ bom, metadata, fail = {} } = {}) {
   return {
     baseUrl: ONSHAPE,
+    async getElementMetadata() {
+      const err = fail.metadata?.();
+      if (err) throw err;
+      return clone(metadata);
+    },
     async getAssemblyBOM() {
       const err = fail.bom?.();
       if (err) throw err;
@@ -524,7 +529,189 @@ export async function makeBomFixtures() {
     }));
   }
 
+  Object.assign(f, await makeHomeFixtures());
   return f;
+}
+
+// ---------------------------------------------------------------------------
+// Home: search and onboarding (INC-8)
+// ---------------------------------------------------------------------------
+
+function assemblyListIssue(key, summary, created, { status = 'New', ids = null } = {}) {
+  return {
+    key,
+    fields: {
+      summary,
+      issuetype: { name: 'Assembly' },
+      status: { name: status },
+      created,
+      customfield_10500: /^V[RF]\d{2}A-\d{4}([A-Z])\s/.exec(summary)?.[1] ?? null,
+      ...(ids ? { customfield_10300: ids.doc, customfield_10301: ids.ws, customfield_10302: ids.el } : {}),
+    },
+  };
+}
+
+const OPEN_ASSEMBLIES = [
+  { ...assemblyIssue, fields: { ...assemblyIssue.fields, issuetype: { name: 'Assembly' } } },
+  assemblyListIssue('HAR-1984', 'VF27-0200 Tooling', '2026-10-20T15:00:00.000+0000'),
+  assemblyListIssue('HAR-1983', 'VF27A-0101A Pit Cart', '2026-10-18T15:00:00.000+0000'),
+  assemblyListIssue('HAR-1981', 'VR27A-0300A Intake', '2026-10-15T15:00:00.000+0000'),
+  assemblyListIssue('HAR-1979', 'VR26-1200A End Effector', '2026-02-10T15:00:00.000+0000'),
+  assemblyListIssue('HAR-1974', 'Bumper mounts', '2026-01-20T15:00:00.000+0000'),
+  assemblyListIssue('HAR-1972', 'Second end effector', '2026-01-12T15:00:00.000+0000'),
+];
+const CLOSED_ASSEMBLY = assemblyListIssue('HAR-1990', 'VF27A-0900A Old Intake', '2026-03-01T15:00:00.000+0000', { status: 'Closed' });
+
+function searchJira({ open = OPEN_ASSEMBLIES, closed = [CLOSED_ASSEMBLY], fail } = {}) {
+  const issues = Object.fromEntries([...open, ...closed].map((i) => [i.key, i]));
+  return new FakeJira({
+    issues,
+    fail: fail ?? {},
+    search: [
+      { match: (jql) => /issuetype = Assembly AND status not in/.test(jql), issues: () => open },
+      { match: (jql) => /issuetype = Assembly ORDER BY/.test(jql), issues: () => [...open, ...closed] },
+    ],
+  });
+}
+
+const PROPERTY_IDS = {
+  Name: '57f3fb8efa3416c06701d60d',
+  'Part number': '57f3fb8efa3416c06701d60f',
+  Revision: '57f3fb8efa3416c06701d610',
+  Project: '57f3fb8efa3416c06701d613',
+};
+
+function assemblyMetadata(values) {
+  return {
+    mimeType: 'onshape/assembly',
+    elementType: 1,
+    properties: Object.entries(values).map(([name, value]) => ({ propertyId: PROPERTY_IDS[name], name, value })),
+  };
+}
+
+const TEST_ASSEMBLY_PROPS = { Project: 'VF27', 'Part number': '0000', Revision: 'A', Name: 'Test Assembly' };
+export const ONBOARD_URL = `${ONSHAPE}/documents/${DOC}/w/${WS}/e/${EL}`;
+
+/** A tracker with no Assembly for this element yet, ready to onboard. */
+function onboardJira({ elementHits = [], numberHits = [], fail = {} } = {}) {
+  return new FakeJira({
+    fail,
+    nextKeys: ['HAR-2030', 'HAR-2051'],
+    search: [
+      { match: (jql) => jql.includes('cf[10302] ~'), issues: () => elementHits },
+      { match: (jql) => jql.includes('summary ~ "\\"'), issues: () => numberHits },
+      { match: isBuildList, issues: () => [] },
+    ],
+  });
+}
+
+async function makeHomeFixtures() {
+  const f = {};
+
+  // ----- Search -----
+  {
+    const s = services(searchJira());
+    f['search-empty'] = await capture(() => s.epicService.searchAssemblies('', {}));
+    f['search-0000'] = await capture(() => s.epicService.searchAssemblies('0000', {}));
+    f['search-facility-2027'] = await capture(() => s.epicService.searchAssemblies('facility 2027', {}));
+    f['search-bash'] = await capture(() => s.epicService.searchAssemblies('bash', {}));
+    f['search-empty-closed'] = await capture(() => s.epicService.searchAssemblies('', { includeClosed: true }));
+    f['search-HAR-1990'] = await capture(() => s.epicService.searchAssemblies('HAR-1990', {}));
+  }
+  {
+    const s = services(searchJira({ open: [], closed: [] }));
+    f['search-none'] = await capture(() => s.epicService.searchAssemblies('', {}));
+  }
+  {
+    const s = services(searchJira({ fail: { search: () => tracker503() } }));
+    f['search-503'] = await capture(() => s.epicService.searchAssemblies('', {}));
+  }
+
+  // ----- Onboarding preview -----
+  const props = assemblyMetadata(TEST_ASSEMBLY_PROPS);
+  {
+    const s = services(onboardJira(), fakeOnshape({ metadata: props }));
+    f['onboard-preview-new'] = await capture(() => s.epicService.previewOnboarding(ONBOARD_URL));
+  }
+  {
+    const s = services(onboardJira({ elementHits: [assemblyIssue] }), fakeOnshape({ metadata: props }));
+    f['onboard-preview-exists'] = await capture(() => s.epicService.previewOnboarding(ONBOARD_URL));
+  }
+  {
+    const other = assemblyListIssue('HAR-2040', 'VF27A-0000A Old Test', '2026-09-01T15:00:00.000+0000', {
+      ids: { doc: '0a1b2c3d4e5f60718293a4b5', ws: '1b2c3d4e5f60718293a4b5c6', el: '1234567890abcdef12345678' },
+    });
+    const s = services(onboardJira({ numberHits: [other] }), fakeOnshape({ metadata: props }));
+    f['onboard-preview-conflict'] = await capture(() => s.epicService.previewOnboarding(ONBOARD_URL));
+  }
+  {
+    const s = services(onboardJira(), fakeOnshape({ metadata: assemblyMetadata({ ...TEST_ASSEMBLY_PROPS, Project: '', 'Part number': '12' }) }));
+    f['onboard-preview-problems'] = await capture(() => s.epicService.previewOnboarding(ONBOARD_URL));
+  }
+  {
+    const s = services(onboardJira(), fakeOnshape({ fail: { metadata: () => new OnshapeApiError('Bad Gateway', 502, '/metadata') } }));
+    f['onboard-preview-onshape-502'] = await capture(() => s.epicService.previewOnboarding(ONBOARD_URL));
+  }
+
+  // ----- Onboarding commit -----
+  const expectedSummary = 'VF27A-0000A Test Assembly';
+  {
+    const s = services(onboardJira(), fakeOnshape({ metadata: props }));
+    f['onboard-created'] = await capture(() => s.epicService.onboardAssembly({ url: ONBOARD_URL, expectedSummary }));
+  }
+  {
+    const s = services(onboardJira({
+      fail: { createIssue: (fields) => (fields.issuetype?.name === 'Build' ? tracker503('/rest/api/2/issue') : null) },
+    }), fakeOnshape({ metadata: props }));
+    f['onboard-created-build-failed'] = await capture(() => s.epicService.onboardAssembly({ url: ONBOARD_URL, expectedSummary }));
+  }
+  {
+    // A double submit: the second call waits for the first and answers "exists".
+    const s = services(onboardJira(), fakeOnshape({ metadata: props }));
+    const args = { url: ONBOARD_URL, expectedSummary };
+    const [, second] = await Promise.all([
+      capture(() => s.epicService.onboardAssembly(args)),
+      capture(() => s.epicService.onboardAssembly(args)),
+    ]);
+    f['onboard-exists-commit'] = second;
+  }
+  {
+    const s = services(onboardJira(), fakeOnshape({ metadata: assemblyMetadata({ ...TEST_ASSEMBLY_PROPS, Name: 'Test Assembly v2' }) }));
+    f['onboard-drift-409'] = await capture(() => s.epicService.onboardAssembly({ url: ONBOARD_URL, expectedSummary }));
+  }
+  // The service stamps "now" on a just-created Assembly; pin it so the
+  // fixtures don't change on every regeneration.
+  for (const name of ['onboard-created', 'onboard-created-build-failed', 'onboard-exists-commit']) {
+    if (f[name].body.assembly) f[name].body.assembly.created = '2026-10-30T15:00:00.000Z';
+  }
+
+  return f;
+}
+
+export function checkHomeFixtures(f, assert) {
+  const empty = f['search-empty'].body;
+  assert(empty.groups?.length >= 3 && empty.groups.at(-1).label === 'Other', `search-empty groups: ${JSON.stringify(empty.groups)}`);
+  assert(empty.groups[0].label === 'Robot 2027' && empty.groups[1].label === 'Facility 2027', 'search-empty group order');
+  assert(f['search-0000'].body.results.map((a) => a.key).join() === 'HAR-2030', 'search 0000');
+  assert(f['search-facility-2027'].body.total === 3, 'search facility 2027');
+  assert(f['search-bash'].body.total === 0, 'search bash');
+  assert(f['search-none'].body.total === 0, 'search none');
+  assert(f['search-empty-closed'].body.results.some((a) => a.key === 'HAR-1990' && a.closed), 'search closed');
+  const byKey = f['search-HAR-1990'].body;
+  assert(byKey.total === 1 && byKey.results[0].closed === true, `search by key: ${JSON.stringify(byKey)}`);
+  assert(f['search-503'].status === 503 && f['search-503'].body.source === 'tracker', 'search 503');
+  assert(f['onboard-preview-new'].body.status === 'new' && f['onboard-preview-new'].body.proposed.summary === 'VF27A-0000A Test Assembly', 'preview new');
+  assert(f['onboard-preview-exists'].body.status === 'exists' && f['onboard-preview-exists'].body.assembly.key === 'HAR-2030', 'preview exists');
+  assert(f['onboard-preview-conflict'].status === 409 && f['onboard-preview-conflict'].body.assembly.key === 'HAR-2040', 'preview conflict');
+  assert(f['onboard-preview-problems'].status === 400 && f['onboard-preview-problems'].body.problems.length === 2, 'preview problems');
+  assert(f['onboard-preview-onshape-502'].body.source === 'onshape', 'preview 502');
+  const created = f['onboard-created'].body;
+  assert(created.status === 'created' && created.assembly.key === 'HAR-2030' && created.build?.key === 'HAR-2051', `onboard created: ${JSON.stringify(created)}`);
+  const failed = f['onboard-created-build-failed'].body;
+  assert(failed.status === 'created' && failed.build === null && failed.buildError, 'onboard build failed');
+  const exists = f['onboard-exists-commit'].body;
+  assert(exists.status === 'exists' && exists.build?.key === 'HAR-2051', `onboard exists: ${JSON.stringify(exists)}`);
+  assert(f['onboard-drift-409'].status === 409 && f['onboard-drift-409'].body.proposed?.summary === 'VF27A-0000A Test Assembly v2', 'onboard drift');
 }
 
 /** Shape checks that make-fixtures runs before writing. */
@@ -569,4 +756,5 @@ export function checkBomFixtures(f, assert) {
   assert(re409.status === 409 && re409.body.recreatedAs === 'HAR-2045', `recreate 409: ${JSON.stringify(re409)}`);
   assert(f['clone-HAR-2032-ok'].body.key === 'HAR-2040' && f['clone-HAR-2032-ok'].body.part?.key === 'HAR-2040', 'clone ok');
   assert(f['archive-ok'].body.success === true, 'archive ok');
+  checkHomeFixtures(f, assert);
 }

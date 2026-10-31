@@ -1,0 +1,19 @@
+{
+  "status": 409,
+  "body": {
+    "proposed": {
+      "summary": "VF27A-0000A Test Assembly v2",
+      "fullPartNumber": "VF27A-0000A",
+      "name": "Test Assembly v2",
+      "project": "VF27",
+      "partNumber": "0000",
+      "revision": "A",
+      "seasonLabel": "Facility 2027",
+      "documentId": "8c64dfdcb66184646a7a3f17",
+      "workspaceId": "82f00d3cbea6901ac26040bd",
+      "elementId": "faea62821490977c33bc8d7c"
+    },
+    "error": "The OnShape properties changed since you checked. Review the new name.",
+    "status": 409
+  }
+}

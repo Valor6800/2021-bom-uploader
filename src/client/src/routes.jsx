@@ -1,7 +1,7 @@
 import { Navigate, useLocation, useParams } from 'react-router-dom';
 import AppLayout from './layout/AppLayout.jsx';
-import DashboardPage from './pages/DashboardPage.jsx';
-import AssemblyBomPage from './pages/AssemblyBomPage.jsx';
+import HomePage from './pages/HomePage.jsx';
+import ChooserPage from './pages/ChooserPage.jsx';
 import AssemblyPage from './pages/AssemblyPage.jsx';
 import DesignerPage from './pages/DesignerPage.jsx';
 import PurchasingQueuePage from './pages/PurchasingQueuePage.jsx';
@@ -26,10 +26,12 @@ export const routes = [
     path: '/',
     element: <AppLayout />,
     children: [
-      { index: true, element: <DashboardPage /> },
-      { path: 'assembly', element: <AssemblyBomPage /> },
+      { index: true, element: <HomePage /> },
+      // The old Build-less Assembly BOM page is replaced by Home.
+      { path: 'assembly', element: <Navigate to="/" replace /> },
       // The old Assembly hub lives on as the new Assembly page.
       { path: 'assembly/:key', element: <RedirectToAssemble /> },
+      { path: 'a/:key', element: <ChooserPage /> },
       { path: 'a/:key/design', element: <DesignerPage /> },
       { path: 'a/:key/assemble', element: <AssemblyPage /> },
       // The old Designer page never worked (design section 1); the new one
