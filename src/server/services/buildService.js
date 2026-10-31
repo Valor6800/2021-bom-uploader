@@ -19,6 +19,9 @@ import { badRequest, conflict, HttpError } from '../middleware/httpError.js';
 import { describeUpstreamError, jiraErrorsForLog, upstreamSource } from '../utils/upstreamError.js';
 import { preferNewestRevision } from '../utils/partChain.js';
 import { withKeyedLock } from '../utils/keyedLock.js';
+import {
+  buildLabelOf, cutBuildConflict, cutBuildsAmong, isCutStatus, sharedPartConflict, usedInKeys,
+} from '../utils/cutBuilds.js';
 
 const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL';
 
@@ -288,9 +291,42 @@ export class BuildService {
    * @returns {Promise<void>}
    */
   async linkPartToBuild(partKey, buildKey) {
+    await this._requireDraftBuild(buildKey);
+    await this._link(partKey, buildKey);
+  }
+
+  /**
+   * The Used In write itself, for callers that already checked the Build
+   * is a Draft in this request.
+   * @private
+   */
+  async _link(partKey, buildKey) {
     // "Build uses Part": the Build's page reads "uses" the Part and the
     // Part's page reads "is used in" the Build.
     await this.jiraClient.createIssueLink(LinkType.USED_IN, buildKey, partKey);
+  }
+
+  /**
+   * Read a Build by key and refuse anything but a Draft: 400 when the key
+   * isn't a Build, 409 when the Build has been cut. Statuses come from the
+   * tracker at write time, never from the client.
+   *
+   * @param {string} buildKey
+   * @param {string[]} [fields]  Extra fields to read
+   * @returns {Promise<object>} The Build issue
+   * @private
+   */
+  async _requireDraftBuild(buildKey, fields = []) {
+    const build = await getIssueOrNull(this.jiraClient, buildKey,
+      [...new Set(['issuetype', 'status', BuildField.BUILD_NUMBER, ...fields])]);
+    if (build?.fields?.issuetype?.name !== 'Build') {
+      throw badRequest(`"${buildKey}" is not a Build`);
+    }
+    const status = build.fields.status?.name ?? null;
+    if (isCutStatus(status)) {
+      throw cutBuildConflict(buildLabelOf(build.fields[BuildField.BUILD_NUMBER], buildKey), status);
+    }
+    return build;
   }
 
   /**
@@ -500,12 +536,13 @@ export class BuildService {
    *   status: number|null, source: string|null }[] }>}
    */
   async cloneBuildParts(fromBuildKey, toBuildKey) {
+    await this._requireDraftBuild(toBuildKey);
     const partKeys = await this.getLinkedParts(fromBuildKey);
     const linked = [];
     const failed = [];
     for (const partKey of partKeys) {
       try {
-        await this.linkPartToBuild(partKey, toBuildKey);
+        await this._link(partKey, toBuildKey);
         linked.push(partKey);
       } catch (err) {
         console.warn('[clone]', partKey, 'into', toBuildKey, 'failed:', err?.status, err?.message);
@@ -579,11 +616,19 @@ export class BuildService {
           'issuelinks',
         ],
       }),
-      getIssueOrNull(this.jiraClient, targetBuildKey, ['issuetype', BuildField.ASSEMBLY_LINK]),
+      getIssueOrNull(this.jiraClient, targetBuildKey,
+        ['issuetype', 'status', BuildField.ASSEMBLY_LINK, BuildField.BUILD_NUMBER]),
     ]);
 
     if (target?.fields?.issuetype?.name !== 'Build') {
       throw badRequest(`"${targetBuildKey}" is not a Build`);
+    }
+    // A Re-create only writes to the target; the source's cut Builds keep it as it is.
+    const targetStatus = target.fields.status?.name ?? null;
+    if (isCutStatus(targetStatus)) {
+      throw cutBuildConflict(
+        buildLabelOf(target.fields[BuildField.BUILD_NUMBER], targetBuildKey), targetStatus,
+      );
     }
     // The target Build's chain: a Revision B Build admits a Revision A Part.
     const chain = await this.revisionService.getRevisionChain(target.fields[BuildField.ASSEMBLY_LINK]);
@@ -653,7 +698,7 @@ export class BuildService {
     });
 
     try {
-      await this.linkPartToBuild(result.key, targetBuildKey);
+      await this._link(result.key, targetBuildKey);
     } catch (err) {
       throw withDetails(err, { key: result.key, part, stage: 'used-in-link' });
     }
@@ -699,12 +744,9 @@ export class BuildService {
       throw new HttpError(500, 'save needs partService and revisionService');
     }
 
-    // 1. The Build, by key. Its Epic Link is the Assembly every create joins.
-    const build = await getIssueOrNull(this.jiraClient, buildKey,
-      ['issuetype', BuildField.ASSEMBLY_LINK, BuildField.BUILD_NUMBER]);
-    if (build?.fields?.issuetype?.name !== 'Build') {
-      throw badRequest(`"${buildKey}" is not a Build`);
-    }
+    // 1. The Build, by key: a Draft, or the whole save is refused before
+    // any write. Its Epic Link is the Assembly every create joins.
+    const build = await this._requireDraftBuild(buildKey, [BuildField.ASSEMBLY_LINK]);
     const assemblyKey = build.fields[BuildField.ASSEMBLY_LINK];
     const number = build.fields[BuildField.BUILD_NUMBER];
     const buildLabel = number != null ? `Build ${number}` : buildKey;
@@ -789,12 +831,31 @@ export class BuildService {
         }
       }
       try {
-        await this.linkPartToBuild(key, buildKey);
+        await this._link(key, buildKey);
       } catch (err) {
         return { linkError: err };
       }
       linked.add(key);
       return { alreadyLinked: false };
+    };
+
+    // A Part a cut Build uses keeps its fields: `lockedBy` answers that
+    // Part's cut Builds (empty when none), reading its links by key.
+    const buildStates = new Map();
+    const lockedBy = async (key) => {
+      let entries = issuelinks.get(key);
+      if (entries === undefined) {
+        const issue = await this.jiraClient.getIssue(key, { fields: ['issuelinks'] });
+        entries = issue?.fields?.issuelinks ?? [];
+        issuelinks.set(key, entries);
+      }
+      return cutBuildsAmong(this.jiraClient, usedInKeys(entries).filter((k) => k !== buildKey), buildStates);
+    };
+    const lockedResult = (base, label, cut) => {
+      const err = sharedPartConflict(label, cut);
+      return {
+        ...base, ok: false, error: err.message, status: 409, source: null, locked: true, cutBuilds: err.details.cutBuilds,
+      };
     };
 
     // 3. Creates.
@@ -828,8 +889,20 @@ export class BuildService {
         const differs = ['quantity', 'material', 'machinery', 'powdercoat', 'thickness']
           .some((f) => existing[f] !== values[f]);
         if (differs) {
+          let cut;
           try {
-            await this.partService.updateStory(existing.key, { ...values, summary: existing.summary });
+            cut = await lockedBy(existing.key);
+          } catch (err) {
+            results.push(fail(base, err));
+            continue;
+          }
+          if (cut.length) {
+            results.push(lockedResult(base, parsed.fullPartNumber, cut));
+            continue;
+          }
+          try {
+            await this.partService.updateStory(existing.key, { ...values, summary: existing.summary },
+              { cutBuildsChecked: true });
             byNumber.set(parsed.fullPartNumber, { ...existing, ...values });
             base.updated = true;
           } catch (err) {
@@ -891,9 +964,21 @@ export class BuildService {
         results.push({ ...base, ok: false, ...problem });
         continue;
       }
+      let cut;
+      try {
+        cut = await lockedBy(item.key);
+      } catch (err) {
+        results.push(fail(base, err));
+        continue;
+      }
+      if (cut.length) {
+        results.push(lockedResult(base, applyPartMask(entry.summary ?? '')?.fullPartNumber ?? item.key, cut));
+        continue;
+      }
       try {
         // The stored summary, never the client's: a Save can't renumber a Part.
-        await this.partService.updateStory(item.key, { ...bomValues(item), summary: entry.summary });
+        await this.partService.updateStory(item.key, { ...bomValues(item), summary: entry.summary },
+          { cutBuildsChecked: true });
       } catch (err) {
         results.push(fail(base, err));
         continue;

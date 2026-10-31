@@ -39,6 +39,7 @@ const jiraClient = new JiraClient({ host: 'https://jira.test', bearerToken: 'tok
 
 describe('issue link direction (Jira labelling model)', () => {
   it('a Part linked into a Build reads "Build uses Part" / "Part is used in Build"', async () => {
+    fields.set('HAR-2032', { issuetype: { name: 'Build' }, status: { name: 'Draft' } });
     const service = new BuildService({ jiraClient });
     await service.linkPartToBuild('HAR-2031', 'HAR-2032');
 

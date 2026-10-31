@@ -10,6 +10,7 @@ import { Powdercoat, Thickness, Material, Machinery } from '../utils/bomConstant
 import { RevisionField } from '../utils/buildConstants.js';
 import { preferNewestRevision } from '../utils/partChain.js';
 import { withKeyedLock } from '../utils/keyedLock.js';
+import { cutBuildsAmong, sharedPartConflict, usedInKeys } from '../utils/cutBuilds.js';
 
 const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL';
 
@@ -362,14 +363,18 @@ export class PartService {
   }
 
   /**
-   * Update an existing Jira story.
+   * Update an existing Jira story. A Part used in a cut Build is refused
+   * with a 409 before any write; its fields change only through Re-create.
    *
    * @param {string} key      Jira issue key
    * @param {object} payload  Fields to update
+   * @param {{ cutBuildsChecked?: boolean }} [options]  The caller already
+   *   ran the cut-Build check for this Part in this request
    * @returns {Promise<void>}
    */
-  async updateStory(key, payload) {
+  async updateStory(key, payload, { cutBuildsChecked = false } = {}) {
     this._validatePayload(payload);
+    if (!cutBuildsChecked) await this._refuseIfInCutBuild(key);
 
     const fields = {
       summary: payload.summary,
@@ -392,6 +397,20 @@ export class PartService {
     }
 
     await this.jiraClient.updateIssue(key, fields);
+  }
+
+  /**
+   * Throw a 409 when a cut Build uses this Part. The Part's links and each
+   * linked Build's status are read by key.
+   * @private
+   */
+  async _refuseIfInCutBuild(key) {
+    const issue = await this.jiraClient.getIssue(key, { fields: ['summary', 'issuelinks'] });
+    const cut = await cutBuildsAmong(this.jiraClient, usedInKeys(issue?.fields?.issuelinks));
+    if (cut.length) {
+      const label = applyPartMask(issue?.fields?.summary ?? '')?.fullPartNumber ?? key;
+      throw sharedPartConflict(label, cut);
+    }
   }
 
   /**

@@ -9,6 +9,8 @@ function makeJiraClient(overrides = {}) {
     updateIssue: jest.fn().mockResolvedValue(undefined),
     transitionIssue: jest.fn().mockResolvedValue(undefined),
     createIssueLink: jest.fn().mockResolvedValue(undefined),
+    // Any key reads as a Draft Build unless a test says otherwise.
+    getIssue: jest.fn().mockResolvedValue({ fields: { issuetype: { name: 'Build' }, status: { name: 'Draft' } } }),
     ...overrides,
   };
 }
@@ -320,7 +322,7 @@ describe('BuildService.recreateForBuild', () => {
   function setup(previous = makePreviousPartIssue()) {
     const jiraClient = makeJiraClient({
       getIssue: jest.fn().mockImplementation((key) => Promise.resolve(key === 'VAL-11'
-        ? { key, fields: { issuetype: { name: 'Build' }, customfield_10110: 'VAL-1' } }
+        ? { key, fields: { issuetype: { name: 'Build' }, status: { name: 'Draft' }, customfield_10110: 'VAL-1' } }
         : previous)),
     });
     const revisionService = makeRevisionService({ getRevisionChain: jest.fn().mockResolvedValue(['VAL-1']) });
@@ -551,7 +553,7 @@ function quietWarn() {
 }
 
 describe('BuildService.saveBuildParts', () => {
-  const BUILD = { fields: { issuetype: { name: 'Build' }, customfield_10110: 'HAR-2030', customfield_10501: 1 } };
+  const BUILD = { fields: { issuetype: { name: 'Build' }, status: { name: 'Draft' }, customfield_10110: 'HAR-2030', customfield_10501: 1 } };
   const VALUES = { quantity: 4, material: 'PETG-CF', machinery: '3D Printer', powdercoat: 'None', thickness: 'None' };
 
   function story(key, fullPartNumber, epic = 'HAR-2030', extra = {}) {
@@ -701,7 +703,7 @@ describe('BuildService.saveBuildParts', () => {
         chainParts: [story('HAR-2031', 'VF27P-0001A', 'HAR-2030', { quantity: 2, summary: 'VF27P-0001A Old Name' })],
       });
       const { results } = await service.saveBuildParts({ buildKey: 'HAR-2051', creates: [create('VF27P-0001A')] });
-      expect(partService.updateStory).toHaveBeenCalledWith('HAR-2031', { ...VALUES, summary: 'VF27P-0001A Old Name' });
+      expect(partService.updateStory).toHaveBeenCalledWith('HAR-2031', { ...VALUES, summary: 'VF27P-0001A Old Name' }, { cutBuildsChecked: true });
       expect(results[0]).toMatchObject({ ok: true, reused: true, updated: true });
     });
 
@@ -793,7 +795,7 @@ describe('BuildService.saveBuildParts', () => {
         buildKey: 'HAR-2051',
         updates: [{ ref: 'HAR-2031', key: 'HAR-2031', summary: 'VF27P-0099A Renamed', ...VALUES, link: true }],
       });
-      expect(partService.updateStory).toHaveBeenCalledWith('HAR-2031', { ...VALUES, summary: 'VF27P-0001A Spacer' });
+      expect(partService.updateStory).toHaveBeenCalledWith('HAR-2031', { ...VALUES, summary: 'VF27P-0001A Spacer' }, { cutBuildsChecked: true });
       expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2051', 'HAR-2031');
       expect(results[0]).toMatchObject({ op: 'update', ok: true, linked: true });
     });
@@ -959,7 +961,7 @@ describe('BuildService.getBuildStatuses', () => {
 });
 
 describe('BuildService.recreateForBuild guards (INC-4)', () => {
-  const TARGET = { fields: { issuetype: { name: 'Build' }, customfield_10110: 'HAR-2030B' } };
+  const TARGET = { fields: { issuetype: { name: 'Build' }, status: { name: 'Draft' }, customfield_10110: 'HAR-2030B' } };
   function oldPart(summary = 'VF27P-0003A Bracket', extra = {}) {
     return {
       fields: {

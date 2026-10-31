@@ -4,6 +4,8 @@ import { PartService } from '../../src/server/services/partService.js';
 function makeJiraClient(overrides = {}) {
   return {
     searchIssues: jest.fn().mockResolvedValue([]),
+    // A Part with no Build links, so updateStory's cut-Build check passes.
+    getIssue: jest.fn().mockResolvedValue({ fields: { summary: 'VF27P-0001A Plate', issuelinks: [] } }),
     ...overrides,
   };
 }

@@ -70,7 +70,10 @@ describe('GET /api/parts/by-keys', () => {
 const { PartService } = await import('../../src/server/services/partService.js');
 describe('PUT /api/stories/:key validation (B1)', () => {
   function appWithRealService() {
-    const jiraClient = { updateIssue: jest.fn().mockResolvedValue(undefined) };
+    const jiraClient = {
+      updateIssue: jest.fn().mockResolvedValue(undefined),
+      getIssue: jest.fn().mockResolvedValue({ fields: { summary: 'VF27P-0001A Plate', issuelinks: [] } }),
+    };
     return { jiraClient, app: buildApp(new PartService({ jiraClient })) };
   }
   const body = {

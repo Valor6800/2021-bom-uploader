@@ -388,7 +388,7 @@ describe('POST /api/builds/:key/save validation through the real services (B1)',
     const jiraClient = {
       getIssue: jest.fn().mockImplementation(async (key) => {
         if (key === 'VAL-51') {
-          return { key, fields: { issuetype: { name: 'Build' }, customfield_10110: 'VAL-30', customfield_10501: 1 } };
+          return { key, fields: { issuetype: { name: 'Build' }, status: { name: 'Draft' }, customfield_10110: 'VAL-30', customfield_10501: 1 } };
         }
         throw new JiraApiError('Issue does not exist', 404, 'getIssue');
       }),
