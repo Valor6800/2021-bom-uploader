@@ -290,6 +290,7 @@ export default function buildRoutes({ buildService }) {
    * POST /api/builds/:key/archive
    */
   router.post('/:key/archive', asyncHandler(async (req, res) => {
+    requireKey('key', req.params.key);
     await buildService.archiveBuild(req.params.key);
     res.json({ success: true });
   }));

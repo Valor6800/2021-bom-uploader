@@ -1,0 +1,26 @@
+{
+  "status": 200,
+  "body": {
+    "key": "HAR-2040",
+    "fullPartNumber": "VF27P-0004A Plate spare",
+    "part": {
+      "summary": "VF27P-0004A Plate spare",
+      "name": "Plate spare",
+      "version": "A",
+      "year": "27",
+      "seasonType": "F",
+      "partNumber": "0004",
+      "fullPartNumber": "VF27P-0004A",
+      "isEpic": false,
+      "key": "HAR-2040",
+      "epic": "HAR-2030",
+      "material": "AL 6061",
+      "machinery": "CNC Router",
+      "powdercoat": "None",
+      "quantity": 1,
+      "thickness": "None",
+      "project": "HAR",
+      "revision": "A"
+    }
+  }
+}

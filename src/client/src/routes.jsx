@@ -1,12 +1,19 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation, useParams } from 'react-router-dom';
 import AppLayout from './layout/AppLayout.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import AssemblyBomPage from './pages/AssemblyBomPage.jsx';
-import AssemblyHubPage from './pages/AssemblyHubPage.jsx';
+import AssemblyPage from './pages/AssemblyPage.jsx';
 import DesignerPage from './pages/DesignerPage.jsx';
 import PurchasingQueuePage from './pages/PurchasingQueuePage.jsx';
 import ReceivingPage from './pages/ReceivingPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
+
+/** `/assembly/:key` moved to `/a/:key/assemble`; keep the search string. */
+function RedirectToAssemble() {
+  const { key } = useParams();
+  const { search } = useLocation();
+  return <Navigate to={`/a/${encodeURIComponent(key)}/assemble${search}`} replace />;
+}
 
 /**
  * Central route tree for the portal. Add new pages here (and a matching entry
@@ -21,11 +28,10 @@ export const routes = [
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'assembly', element: <AssemblyBomPage /> },
-      { path: 'assembly/:key', element: <AssemblyHubPage /> },
+      // The old Assembly hub lives on as the new Assembly page.
+      { path: 'assembly/:key', element: <RedirectToAssemble /> },
       { path: 'a/:key/design', element: <DesignerPage /> },
-      // The Designer's mode switch links here. Until the new Assembly page
-      // lands (INC-7) it shows the existing Assembly hub.
-      { path: 'a/:key/assemble', element: <AssemblyHubPage /> },
+      { path: 'a/:key/assemble', element: <AssemblyPage /> },
       // The old Designer page never worked (design section 1); the new one
       // lives under /a/:key/design.
       { path: 'designer', element: <Navigate to="/" replace /> },

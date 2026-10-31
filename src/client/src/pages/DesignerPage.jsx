@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Link, useBlocker, useLocation, useNavigate, useParams, useSearchParams,
+  useBlocker, useLocation, useNavigate, useParams, useSearchParams,
 } from 'react-router-dom';
 import { createBuild, cutBuildVersion, previewParts, saveBuildParts } from '../api/client.js';
 import { useAssemblyData } from '../components/assembly-shared/useAssemblyData.js';
 import AssemblyHeader from '../components/assembly-shared/AssemblyHeader.jsx';
+import AssemblyLoadError from '../components/assembly-shared/AssemblyLoadError.jsx';
 import BuildPicker from '../components/builds/BuildPicker.jsx';
 import NewBuildForm from '../components/builds/NewBuildForm.jsx';
 import CutVersionDialog from '../components/builds/CutVersionDialog.jsx';
@@ -22,12 +23,35 @@ import {
   buildLabel, cutErrorEntries, cutResultEntries, defaultBuildKey, dropAgreedStatus, listLabels,
   mergeBuilds, nextBuildNumber, overlayBuildStatus, pickerBuilds, visibleBuilds,
 } from '../lib/buildNames.js';
-import { addSessionLinks, deriveDesignerRows, dropAgreedLinks } from '../lib/designerRows.js';
+import {
+  PART_FIELDS, addSessionLinks, deriveDesignerRows, dropAgreedLinks, dropAgreedParts,
+} from '../lib/designerRows.js';
 import {
   SAVE_BATCH, applySaveResults, batchBody, bodySize, planSave, saveCounts,
 } from '../lib/designerSave.js';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * Part objects for the creates a save made, built from the CAD row and the
+ * values sent, so a created Part keeps its row after Discard clears the
+ * preview and before search lists it.
+ */
+function addCreatedParts(prev, results, batch, preview, assemblyKey) {
+  const made = (results ?? []).filter((r) => r.op === 'create' && r.key);
+  if (!made.length) return prev;
+  const next = new Map(prev);
+  for (const r of made) {
+    const item = (preview?.newParts ?? []).find((p) => p.fullPartNumber === r.ref);
+    if (!item) continue;
+    const sentItem = batch.creates.find((c) => c.ref === r.ref);
+    const written = r.ok || !r.reused || r.updated;
+    const values = {};
+    if (sentItem && written) for (const f of PART_FIELDS) values[f] = sentItem[f];
+    next.set(r.key, { ...item, ...values, key: r.key, epic: assemblyKey });
+  }
+  return next;
+}
 
 const emptyWork = () => ({
   edits: {},
@@ -61,6 +85,8 @@ function DesignerPage({ assemblyKey: key }) {
   const [statusThisSession, setStatusThisSession] = useState(() => new Map());
   const [cutFailedKey, setCutFailedKey] = useState(null);
   const [work, setWork] = useState(emptyWork);
+  // Parts this session created, so their rows outlive the preview (Discard).
+  const [createdParts, setCreatedParts] = useState(() => new Map());
   const [preview, setPreview] = useState(null);
   const [cadBusy, setCadBusy] = useState(false);
   const [cadError, setCadError] = useState(null);
@@ -103,6 +129,9 @@ function DesignerPage({ assemblyKey: key }) {
     setStatusThisSession((prev) => dropAgreedStatus(prev, data.fetchedBuilds));
   }, [data.fetchedBuilds]);
   useEffect(() => {
+    setCreatedParts((prev) => dropAgreedParts(prev, data.parts));
+  }, [data.parts]);
+  useEffect(() => {
     setWork((w) => {
       const next = dropAgreedLinks(w.linkedThisSession, data.buildParts);
       return next === w.linkedThisSession ? w : { ...w, linkedThisSession: next };
@@ -121,6 +150,7 @@ function DesignerPage({ assemblyKey: key }) {
   // ----- Rows and the pending save -----
   const { groups } = useMemo(() => deriveDesignerRows({
     parts: data.parts,
+    createdParts,
     chainKeys: data.chain,
     linkedByPart: data.linkedByPart,
     linkedThisSession: work.linkedThisSession,
@@ -130,7 +160,7 @@ function DesignerPage({ assemblyKey: key }) {
     edits: work.edits,
     createdKeys: work.createdKeys,
     rowResults: work.rowResults,
-  }), [data.parts, data.chain, data.linkedByPart, work, selectedKey, builds, preview]);
+  }), [data.parts, createdParts, data.chain, data.linkedByPart, work, selectedKey, builds, preview]);
 
   const plan = useMemo(
     () => (locked ? { body: { creates: [], updates: [], links: [] }, heldBack: [] } : planSave(groups, work.selection)),
@@ -222,6 +252,7 @@ function DesignerPage({ assemblyKey: key }) {
         // eslint-disable-next-line no-await-in-loop
         const res = await saveBuildParts(selectedKey, batch);
         setWork((w) => applySaveResults(w, res.results, selectedKey, { body: batch, buildName }));
+        setCreatedParts((prev) => addCreatedParts(prev, res.results, batch, preview, key));
         done += bodySize(batch);
       } catch (err) {
         setSaveError(done === 0
@@ -233,7 +264,7 @@ function DesignerPage({ assemblyKey: key }) {
     setSaving(false);
     setSaveProgress(null);
     await data.refresh();
-  }, [selectedKey, groups, work.selection, plan, buildName, data]);
+  }, [selectedKey, groups, work.selection, plan, buildName, data, preview, key]);
 
   const discard = useCallback(() => {
     setWork((w) => ({ ...w, edits: {}, selection: new Set(), rowResults: {} }));
@@ -360,29 +391,7 @@ function DesignerPage({ assemblyKey: key }) {
 
   // ----- Render: whole-page states -----
   if (data.assemblyError) {
-    const err = data.assemblyError;
-    const status = err?.status;
-    if (status === 404 || status === 400) {
-      return (
-        <EmptyState
-          headingLevel="h1"
-          title={status === 404 ? `We couldn't find Assembly ${key}.` : err.message}
-          action={<Link to="/" className="btn btn-secondary">Back to all Assemblies</Link>}
-        />
-      );
-    }
-    return (
-      <EmptyState
-        headingLevel="h1"
-        title={`Couldn't open this Assembly: ${friendlyClause(err)}`}
-        action={(
-          <>
-            <Button variant="primary" onClick={data.reloadAll}>Retry</Button>
-            <Link to="/" className="btn btn-secondary">Back to all Assemblies</Link>
-          </>
-        )}
-      />
-    );
+    return <AssemblyLoadError assemblyKey={key} error={data.assemblyError} onRetry={data.reloadAll} />;
   }
   if (!assembly) {
     return <p className="page-loading" role="status">Loading the Assembly…</p>;

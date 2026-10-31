@@ -96,6 +96,7 @@ function matchRoute(route, method, url) {
  * @property {keyof VIEWPORTS} [viewport]
  * @property {ApiRoute[]} [api]
  * @property {boolean} [bom]         Apply the vocabulary check.
+ * @property {boolean} [assemble]    An Assembly-page screen: no "Cut Version" anywhere.
  * @property {number[]} [expectStatuses]  HTTP statuses the fixtures answer on
  *   purpose; Chromium's matching "Failed to load resource" line is allowed.
  * @property {string} [waitFor]      Selector that means the page is ready.
@@ -740,6 +741,495 @@ const INC6_SCENARIOS = [
   },
 ];
 
+
+// ---------------------------------------------------------------------------
+// INC-7: Assembly page helpers and scenarios
+// ---------------------------------------------------------------------------
+
+const ASSEMBLE_URL = '/a/HAR-2030/assemble';
+
+/** The Assembly page's reads for HAR-2030: three Builds, four Parts. */
+function assemblyApi({
+  builds = 'builds-three',
+  stories = 'stories-chain-four',
+  buildParts = {
+    'HAR-2051': 'build-parts-a-HAR-2051',
+    'HAR-2052': 'build-parts-a-HAR-2052',
+    'HAR-2053': 'build-parts-a-HAR-2053',
+  },
+  extra = [],
+} = {}) {
+  return designerApi({ builds, stories, buildParts, extra });
+}
+
+const tab = (page, label) => page.getByRole('tab', { name: new RegExp(`^${label}\\b`) });
+const inBuildRow = (page, text) => page.locator('tbody.parts-group-in tr.part-row', { hasText: text });
+const otherRow = (page, text) => page.locator('tbody.parts-group-other tr.part-row', { hasText: text });
+
+/** @type {Scenario[]} */
+const INC7_SCENARIOS = [
+  {
+    inc: 'INC-7',
+    name: 'assembly-page',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    api: assemblyApi(),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page) {
+      await assertAttr(tab(page, 'Build 2'), 'aria-selected', 'true');
+      await assertAttr(tab(page, 'Build 2'), 'tabindex', '0');
+      await assertAttr(tab(page, 'Build 1'), 'tabindex', '-1');
+      assertTrue(page.url().includes('build=HAR-2052'), 'the Active Build is the default tab');
+      const panel = page.getByRole('tabpanel');
+      assertEqual(await panel.getAttribute('aria-labelledby'), 'build-tab-HAR-2052', 'tabpanel names its tab');
+      await inBuildRow(page, 'HAR-2031').waitFor();
+      await inBuildRow(page, 'HAR-2033').waitFor();
+      await expectText(page, 'Build 3 is newer');
+      await expectText(page, 'Parts in other Builds, not in Build 2');
+      assertEqual((await otherRow(page, 'HAR-2032').locator('.cell-where').textContent()).trim(), 'in Build 1', 'HAR-2032 location');
+      assertEqual((await otherRow(page, 'HAR-2035').locator('.cell-where').textContent()).trim(), 'in Build 3', 'HAR-2035 location');
+      await button(page, 'Move here: HAR-2035 to Build 2').waitFor();
+      await button(page, 'Re-create here: HAR-2035 for Build 2').waitFor();
+      await page.getByRole('link', { name: /OnShape version/ }).waitFor();
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-tabs-keyboard',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    skipMainShot: true,
+    api: assemblyApi(),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page) {
+      await tab(page, 'Build 2').focus();
+      await page.keyboard.press('ArrowRight');
+      await page.waitForURL(/build=HAR-2053/);
+      await assertAttr(tab(page, 'Build 3'), 'aria-selected', 'true');
+      assertEqual(await page.evaluate(() => document.activeElement?.id), 'build-tab-HAR-2053', 'focus follows the arrow key');
+      await expectText(page, 'Draft: not ready to build yet. The designer cuts a version when it is.');
+      const open = page.getByRole('link', { name: 'Open Designer' });
+      assertTrue((await open.getAttribute('href')).endsWith('/a/HAR-2030/design?build=HAR-2053'), 'Open Designer keeps the Build');
+      await page.keyboard.press('ArrowRight');
+      await page.waitForURL(/build=HAR-2051/);
+      await page.keyboard.press('End');
+      await page.waitForURL(/build=HAR-2053/);
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-no-builds',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    api: assemblyApi({ builds: 'builds-none', stories: 'stories-chain-one', buildParts: {} }),
+    waitFor: 'text=No Builds yet',
+    async run(page) {
+      await expectText(page, 'Builds are made by the designer from CAD.');
+      const open = page.getByRole('link', { name: 'Open Designer' });
+      assertTrue((await open.getAttribute('href')).endsWith('/a/HAR-2030/design'), 'Open Designer link');
+      assertEqual(await page.locator('table input').count(), 0, 'no editable Parts without a Build');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-clone-dialog',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    skipMainShot: true,
+    api: assemblyApi({ extra: [{ method: 'POST', path: '/api/parts/HAR-2032/clone', fixture: 'clone-HAR-2032-ok' }] }),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page, ctx) {
+      await button(page, 'Clone a part').click();
+      const dialog = page.locator('dialog[open]');
+      await dialog.waitFor({ state: 'visible' });
+      await dialog.getByLabel('Copy from').selectOption('HAR-2032');
+      await dialog.getByLabel('New Part name (optional)').fill('Plate spare');
+      await dialog.getByLabel('Quantity (optional)').fill('1');
+      await ctx.shot('assembly-clone-dialog');
+      await dialog.getByRole('button', { name: 'Clone', exact: true }).click();
+      const [req] = await waitForSent(ctx, 'POST', '/api/parts/HAR-2032/clone');
+      assertEqual(req.body, { epicKey: 'HAR-2030', name: 'Plate spare', quantity: 1 }, 'clone body');
+      await expectText(page, "Cloned as HAR-2040 (VF27P-0004A). It's listed under Parts in other Builds; Move it here to add it.");
+      // The chain-Parts re-fetch is unchanged (search lag), yet the row shows.
+      await otherRow(page, 'HAR-2040').waitFor({ state: 'visible' });
+      assertEqual((await otherRow(page, 'HAR-2040').locator('.cell-where').textContent()).trim(), 'Not in any Build', 'clone location');
+      assertEqual(sent(ctx, 'POST', '/api/parts/HAR-2032/clone').length, 1, 'one clone request');
+      await ctx.shot('assembly-after-clone');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-menu-open',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    skipMainShot: true,
+    api: assemblyApi({
+      extra: [{ method: 'POST', path: '/api/builds/HAR-2052/archive', fixture: 'archive-ok' }],
+    }),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page, ctx) {
+      const toggle = button(page, 'More actions for Build 2');
+      await toggle.click();
+      await assertAttr(toggle, 'aria-expanded', 'true');
+      const panelId = await toggle.getAttribute('aria-controls');
+      const actions = page.locator(`[id="${panelId}"] button`);
+      assertEqual(await actions.allTextContents(), ['Archive Build'], 'the disclosure holds only Archive Build');
+      await ctx.shot('assembly-menu-open');
+      await actions.first().click();
+      const dialog = page.locator('dialog[open]');
+      await dialog.waitFor({ state: 'visible' });
+      await expectText(page, "It will be hidden from the Build list and marked as a dead end. This can't be undone from ValorBOM.");
+      assertEqual(await page.evaluate(() => document.activeElement?.textContent), 'Cancel', 'focus starts on Cancel');
+      await ctx.shot('assembly-archive-confirm');
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await page.waitForTimeout(200);
+      assertEqual(sent(ctx, 'POST', /\/archive$/).length, 0, 'Cancel sends no archive request');
+      await toggle.click();
+      await page.locator(`[id="${panelId}"] button`).first().click();
+      await page.locator('dialog[open]').getByRole('button', { name: 'Archive Build' }).click();
+      await waitForSent(ctx, 'POST', '/api/builds/HAR-2052/archive');
+      await expectText(page, 'Build 2 is archived.');
+      assertTrue((await tab(page, 'Build 2').textContent()).includes('Archived'), 'the tab reads Archived');
+      await button(page, 'Show archived (1)').waitFor();
+      assertEqual(await page.getByRole('button', { name: 'More actions for Build 2' }).count(), 0, 'no Archive on an Archived Build');
+      assertEqual(await page.locator('.parts-table input:enabled').count(), 0, 'an Archived Build is read-only');
+      await ctx.shot('assembly-after-archive');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'compare',
+    url: `${ASSEMBLE_URL}?build=HAR-2052&view=compare`,
+    bom: true,
+    assemble: true,
+    api: assemblyApi(),
+    waitFor: '.compare-table',
+    async run(page) {
+      assertEqual(await page.getByLabel('First Build').inputValue(), 'HAR-2052', 'first Build');
+      assertEqual(await page.getByLabel('Second Build').inputValue(), 'HAR-2053', 'second Build is the next one up');
+      const rows = page.locator('.compare-table tbody tr');
+      assertEqual(await rows.count(), 3, 'compare rows');
+      assertTrue((await rows.nth(0).textContent()).includes('HAR-2031') && (await rows.nth(0).textContent()).includes('Same'), 'shared Part first');
+      await expectText(page, 'Only in Build 2');
+      await expectText(page, 'Only in Build 3');
+      assertTrue((await rows.nth(1).locator('.visually-hidden').allTextContents()).includes('not in Build 3'), 'hidden text for —');
+      await page.getByRole('link', { name: /Back to BOM/ }).waitFor();
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'print-preview',
+    url: `${ASSEMBLE_URL}?build=HAR-2052&view=print`,
+    bom: true,
+    assemble: true,
+    skipMainShot: true,
+    api: assemblyApi(),
+    waitFor: '.print-sheet',
+    async run(page, ctx) {
+      await expectText(page, 'VF27A-0000A Test Assembly — Build 2 (Active)');
+      await expectText(page, 'Printed 2026-10-30');
+      await expectText(page, 'OnShape version: https://cad.onshape.com/documents/');
+      assertEqual(await page.locator('.print-table tbody tr').count(), 2, 'two Parts in Build 2');
+      assertEqual(await page.locator('.print-table input').count(), 0, 'the tick column is not interactive');
+      await ctx.shot('print-preview');
+      await page.emulateMedia({ media: 'print' });
+      assertTrue(!(await page.locator('nav[aria-label="Main"]').isVisible()), 'the nav is hidden in print');
+      assertTrue(!(await button(page, 'Print').isVisible()), 'the Print button is hidden in print');
+      assertTrue(!(await page.locator('.mode-switch').isVisible()), 'the header actions are hidden in print');
+      assertTrue(await page.locator('.print-table td').nth(1).isVisible(), 'the Qty column prints');
+      await ctx.shot('print-media');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-tablet-1024',
+    url: ASSEMBLE_URL,
+    viewport: 'tablet',
+    bom: true,
+    assemble: true,
+    api: assemblyApi(),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+  },
+  {
+    inc: 'INC-7',
+    name: 'redirect-assembly-key',
+    url: '/assembly/HAR-2030?build=HAR-2053',
+    bom: true,
+    assemble: true,
+    api: assemblyApi(),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page) {
+      await page.waitForURL(`${BASE}${ASSEMBLE_URL}?build=HAR-2053`);
+      await assertAttr(tab(page, 'Build 3'), 'aria-selected', 'true');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-load-error',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    expectStatuses: [503],
+    api: assemblyApi({ extra: [{ method: 'GET', path: '/api/epics/HAR-2030', fixture: 'epic-HAR-2030-503' }] }),
+    waitFor: "text=Couldn't open this Assembly",
+    async run(page) {
+      await expectText(page, "Couldn't open this Assembly: the team tracker didn't respond (503).");
+      await button(page, 'Retry').waitFor();
+      await page.getByRole('link', { name: 'Back to all Assemblies' }).waitFor();
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-action-error',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    expectStatuses: [503],
+    api: assemblyApi({ extra: [{ method: 'POST', path: '/api/builds/HAR-2052/save', fixture: 'move-503' }] }),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page) {
+      await button(page, 'Move here: HAR-2035 to Build 2').click();
+      await expectText(page, "Couldn't move HAR-2035 to Build 2: the team tracker didn't respond (503).");
+      assertTrue(await button(page, 'Move here: HAR-2035 to Build 2').isEnabled(), 'Move is enabled again');
+      assertTrue(await button(page, 'Re-create here: HAR-2035 for Build 2').isEnabled(), 'Re-create is enabled again');
+      await otherRow(page, 'HAR-2035').waitFor();
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-recreate-409',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    expectStatuses: [409],
+    api: assemblyApi({ extra: [{ method: 'POST', path: '/api/builds/HAR-2052/parts/HAR-2032/recreate', fixture: 'recreate-HAR-2032-409' }] }),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page) {
+      await button(page, 'Re-create here: HAR-2032 for Build 2').click();
+      await expectText(page, 'HAR-2032 was already re-created as HAR-2045. Re-create HAR-2045 instead.');
+      const re = button(page, 'Re-create here: HAR-2032 for Build 2');
+      await assertAttr(re, 'aria-disabled', 'true');
+      await assertAttr(re, 'title', 'Already re-created as HAR-2045');
+      await expectNoText(page, '409');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-after-move',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    // The Build's Parts re-fetch still lacks HAR-2035 (search lag).
+    api: assemblyApi({ extra: [{ method: 'POST', path: '/api/builds/HAR-2052/save', fixture: 'move-HAR-2035-ok' }] }),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page, ctx) {
+      await button(page, 'Move here: HAR-2035 to Build 2').click();
+      const [save] = await waitForSent(ctx, 'POST', '/api/builds/HAR-2052/save');
+      assertEqual(save.body, { links: [{ ref: 'HAR-2035', key: 'HAR-2035' }] }, 'Move sends the save body');
+      await inBuildRow(page, 'HAR-2035').waitFor({ state: 'visible' });
+      assertEqual(await otherRow(page, 'HAR-2035').count(), 0, 'HAR-2035 left the other-Builds section');
+      await expectText(page, 'Moved HAR-2035 to Build 2.');
+      assertEqual(sent(ctx, 'POST', /^\/api\/builds\/[^/]+\/parts$/).length, 0, 'nothing went to POST /api/builds/:k/parts');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-save',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    skipMainShot: true,
+    api: assemblyApi({ extra: [{ method: 'POST', path: '/api/builds/HAR-2052/save', fixture: 'save-update-HAR-2033' }] }),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page, ctx) {
+      await page.getByLabel('Quantity for VF27P-0003A').fill('2');
+      await expectText(page, 'Unsaved: 1 change');
+      await ctx.shot('assembly-save-bar');
+      await button(page, 'Save').click();
+      const [save] = await waitForSent(ctx, 'POST', '/api/builds/HAR-2052/save');
+      assertEqual(save.body, {
+        creates: [],
+        updates: [{ ref: 'HAR-2033', key: 'HAR-2033', quantity: 2, material: 'AL 6061', machinery: 'CNC Router', powdercoat: 'Black', thickness: '0.250', link: false }],
+        links: [],
+      }, 'Assembly-page save body');
+      await inBuildRow(page, 'HAR-2033').getByText('Saved').waitFor();
+      assertEqual(await page.getByLabel('Quantity for VF27P-0003A').inputValue(), '2', 'the saved value stays while search lags');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-after-recreate',
+    url: `${ASSEMBLE_URL}?build=HAR-2053`,
+    bom: true,
+    assemble: true,
+    skipMainShot: true,
+    api: assemblyApi({
+      stories: 'stories-chain-HAR-2030',
+      buildParts: { 'HAR-2051': 'build-parts-a-HAR-2051', 'HAR-2052': 'build-parts-a-HAR-2052', 'HAR-2053': 'build-parts-b3-one' },
+      extra: [{ method: 'POST', path: '/api/builds/HAR-2053/parts/HAR-2033/recreate', fixture: 'recreate-HAR-2033-ok' }],
+    }),
+    waitFor: 'tbody.parts-group-other tr.part-row',
+    async run(page, ctx) {
+      await button(page, 'Re-create here: HAR-2033 for Build 3').click();
+      await waitForSent(ctx, 'POST', '/api/builds/HAR-2053/parts/HAR-2033/recreate');
+      await inBuildRow(page, 'VF27P-0003B').waitFor({ state: 'visible' });
+      const re = button(page, 'Re-create here: HAR-2033 for Build 3');
+      await assertAttr(re, 'aria-disabled', 'true');
+      assertTrue((await re.getAttribute('title')).includes('HAR-2041'), 'the tooltip names HAR-2041');
+      await expectText(page, 'Re-created HAR-2033 as HAR-2041 (Revision B) in Build 3.');
+      await ctx.shot('assembly-after-recreate');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-recreate-link-failed',
+    url: `${ASSEMBLE_URL}?build=HAR-2053`,
+    bom: true,
+    assemble: true,
+    expectStatuses: [503],
+    api: assemblyApi({
+      stories: 'stories-chain-HAR-2030',
+      buildParts: { 'HAR-2051': 'build-parts-a-HAR-2051', 'HAR-2052': 'build-parts-a-HAR-2052', 'HAR-2053': 'build-parts-b3-one' },
+      extra: [{ method: 'POST', path: '/api/builds/HAR-2053/parts/HAR-2033/recreate', fixture: 'recreate-HAR-2033-revises-503' }],
+    }),
+    waitFor: 'tbody.parts-group-other tr.part-row',
+    async run(page) {
+      await button(page, 'Re-create here: HAR-2033 for Build 3').click();
+      await expectText(page, "Created HAR-2041, but couldn't record it as the next Revision of HAR-2033: the team tracker didn't respond (503).");
+      await otherRow(page, 'VF27P-0003B').waitFor({ state: 'visible' });
+      await button(page, 'Move here: HAR-2041 to Build 3').waitFor();
+      await assertAttr(button(page, 'Re-create here: HAR-2033 for Build 3'), 'aria-disabled', 'true');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-recreate-already-revised',
+    url: `${ASSEMBLE_URL}?build=HAR-2053`,
+    bom: true,
+    assemble: true,
+    api: assemblyApi(),
+    waitFor: 'tbody.parts-group-other tr.part-row',
+    async run(page, ctx) {
+      const re = button(page, 'Re-create here: HAR-2033 for Build 3');
+      await assertAttr(re, 'aria-disabled', 'true');
+      assertEqual(await re.getAttribute('title'), 'Already re-created as HAR-2035. Re-create HAR-2035 instead.', 'tooltip names VF27P-0003B');
+      await re.click({ force: true });
+      await page.waitForTimeout(200);
+      assertEqual(sent(ctx, 'POST', /\/recreate$/).length, 0, 'a disabled Re-create sends nothing');
+      assertTrue(await button(page, 'Re-create here: HAR-2032 for Build 3').isEnabled(), 'other Parts can still be re-created');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-two-active-builds',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    api: designerApi({ builds: 'builds-two-active', extra: [statusRoute(fx('status-both-active'))] }),
+    waitFor: '.two-active',
+    async run(page, ctx) {
+      await expectText(page, 'Build 1 and Build 2 are both Active. Only one should be.');
+      const repair = page.locator('.two-active').getByRole('button');
+      assertEqual(await repair.allTextContents(), ['Make Build 1 the Active one'], 'repair buttons');
+      assertEqual(await page.getByRole('button', { name: /Finish cutting/ }).count(), 0, 'no Finish cutting button');
+      assertTrue(sent(ctx, 'GET', '/api/builds/status').length >= 1, 'a by-key status check ran');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-two-active-confirm',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    skipMainShot: true,
+    api: designerApi({
+      builds: 'builds-two-active',
+      extra: [statusRoute(fx('status-both-active')), cutRoute('HAR-2051', 'cut-repair-resumed')],
+    }),
+    waitFor: '.two-active',
+    async run(page, ctx) {
+      const make = button(page, 'Make Build 1 the Active one');
+      await make.click();
+      const dialog = page.locator('dialog[open]');
+      await dialog.waitFor({ state: 'visible' });
+      await expectText(page, "Build 2 will be marked Superseded. This can't be undone from ValorBOM.");
+      assertEqual(await page.evaluate(() => document.activeElement?.textContent), 'Cancel', 'focus starts on Cancel');
+      await ctx.shot('assembly-two-active-confirm');
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await page.waitForTimeout(200);
+      assertEqual(sent(ctx, 'POST', /\/cut-version$/).length, 0, 'Cancel sends no cut request');
+      await make.click();
+      await page.locator('dialog[open]').getByRole('button', { name: 'Mark Build 2 Superseded' }).click();
+      const cuts = await waitForSent(ctx, 'POST', '/api/builds/HAR-2051/cut-version');
+      assertEqual(cuts.length, 1, 'exactly one cut request');
+      assertEqual(cuts[0].body, { assemblyKey: 'HAR-2030' }, 'repair body');
+      await page.locator('.two-active').waitFor({ state: 'detached', timeout: 5000 })
+        .catch(() => { throw new CheckError('Check failed: the two-Active warning is gone after the repair'); });
+      await ctx.shot('assembly-two-active-resolved');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-two-active-stale',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    api: designerApi({ builds: 'builds-two-active', extra: [statusRoute(fx('status-2052-superseded'))] }),
+    waitFor: 'tbody.parts-group-in',
+    async run(page, ctx) {
+      await waitForSent(ctx, 'GET', '/api/builds/status');
+      await page.waitForTimeout(300);
+      assertEqual(await page.locator('.two-active').count(), 0, 'no two-Active warning after the by-key check');
+      assertTrue(sent(ctx, 'GET', '/api/builds/status').length <= 2, 'the status check does not loop');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-two-active-stale-error',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    expectStatuses: [503],
+    api: designerApi({ builds: 'builds-two-active', extra: [statusRoute(fx('status-503'))] }),
+    waitFor: '.two-active',
+    async run(page) {
+      await expectText(page, "Couldn't check whether Build 1 and Build 2 are both Active.");
+      assertEqual(await page.locator('.two-active').getAttribute('role'), 'status', 'the check failure is a status line');
+      await button(page, 'Check again').waitFor({ state: 'visible' });
+      assertEqual(await page.getByRole('button', { name: /the Active one|Finish cutting/ }).count(), 0, 'no repair button');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-two-active-repair-409',
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    expectStatuses: [409],
+    api: designerApi({
+      builds: 'builds-two-active',
+      extra: [
+        statusRoute(({ requests }) => fixture(requests.some((r) => r.path.endsWith('/cut-version'))
+          ? 'status-2051-superseded' : 'status-both-active')),
+        cutRoute('HAR-2051', 'cut-repair-409'),
+      ],
+    }),
+    waitFor: '.two-active',
+    async run(page) {
+      await button(page, 'Make Build 1 the Active one').click();
+      await page.locator('dialog[open]').getByRole('button', { name: 'Mark Build 2 Superseded' }).click();
+      await expectText(page, 'Build 1 is no longer Active; nothing to fix.');
+      await expectNoText(page, 'has already been cut');
+      await page.locator('dialog[open] .dialog-footer').getByRole('button', { name: 'Close', exact: true }).waitFor({ state: 'visible' });
+    },
+  },
+];
+
 /** @type {Scenario[]} */
 const SCENARIOS = [
   // ----- INC-5: tokens, primitives and the existing pages -----
@@ -838,6 +1328,7 @@ const SCENARIOS = [
     },
   },
   ...INC6_SCENARIOS,
+  ...INC7_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------------
@@ -1048,6 +1539,12 @@ async function runScenario(browser, scenario, report) {
     };
     for (const v of serious) {
       failures.push(`axe ${v.impact} "${v.id}" (${v.help}) on ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
+    }
+    if (scenario.assemble) {
+      // Q3: cutting a version is a CAD decision, so it is never offered here.
+      const cut = await page.getByRole('button', { name: /Cut Version/ }).count()
+        + await page.getByRole('link', { name: /Cut Version/ }).count();
+      if (cut) failures.push(`an element named "Cut Version" on the Assembly page (${name})`);
     }
     if (scenario.bom) {
       const text = await visibleText(page);

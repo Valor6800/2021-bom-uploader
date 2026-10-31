@@ -53,7 +53,7 @@ class FakeJira {
     if (err) throw err;
     const hit = this.search.find(({ match }) => match(jql));
     if (!hit) return [];
-    return clone(typeof hit.issues === 'function' ? hit.issues() : hit.issues);
+    return clone(typeof hit.issues === 'function' ? hit.issues(jql) : hit.issues);
   }
 
   async getIssue(key, opts) {
@@ -179,6 +179,8 @@ function partIssue(key, summary, { qty = 1, material = 'PLA', machinery = '3D Pr
 const P2031 = partIssue('HAR-2031', 'VF27P-0001A Test Part');
 const P2032 = partIssue('HAR-2032', 'VF27P-0002A Plate', { qty: 2, material: 'AL 6061', machinery: 'CNC Router' });
 const P2033 = partIssue('HAR-2033', 'VF27P-0003A Bash bar 2"', { material: 'AL 6061', machinery: 'CNC Router', powdercoat: 'Black', thickness: '0.250' });
+// The 1" bash bar: the next Revision of HAR-2033, used in Build 3.
+const P2035 = partIssue('HAR-2035', 'VF27P-0003B Bash bar 1"', { material: 'AL 6061', machinery: 'CNC Router', powdercoat: 'Black', thickness: '0.250' });
 
 function buildIssue(key, number, status, { link = null, epic = 'HAR-2030', description } = {}) {
   return {
@@ -198,6 +200,7 @@ function buildIssue(key, number, status, { link = null, epic = 'HAR-2030', descr
 const isBuildList = (jql) => /issuetype = Build AND "Epic Link" in/.test(jql);
 const isPartList = (jql) => /issuetype = Part AND "Epic Link" in/.test(jql);
 const linkedTo = (key) => (jql) => jql.includes(`linkedIssues(${key},`);
+const isSeasonList = (jql) => /issuetype = Part AND summary ~ "V[RF]\d{2}P-\*"/.test(jql);
 const isKeyList = (jql) => /issuetype = Part AND key in/.test(jql) || /key in \(/.test(jql);
 
 function jiraFor({ parts = [P2031, P2032, P2033], builds = [], links = {}, extraIssues = {}, fail = {}, nextKeys = [] } = {}) {
@@ -215,7 +218,16 @@ function jiraFor({ parts = [P2031, P2032, P2033], builds = [], links = {}, extra
         match: linkedTo(buildKey),
         issues: () => keys.map((k) => ({ key: k, fields: { summary: issues[k]?.fields?.summary } })),
       })),
-      { match: isKeyList, issues: () => parts },
+      // A key list answers only the Parts it names.
+      {
+        match: isKeyList,
+        issues: (jql) => {
+          const named = new Set((/key in \(([^)]*)\)/.exec(jql)?.[1] ?? '').split(',').map((k) => k.trim().replace(/"/g, '')));
+          return parts.filter((p) => named.has(p.key));
+        },
+      },
+      // getNextPartNumber (Clone): every Part of the season.
+      { match: isSeasonList, issues: () => parts },
     ],
   });
 }
@@ -441,6 +453,77 @@ export async function makeBomFixtures() {
   f['cut-repair-resumed'] = await cut(jiraFor({ builds: [b2ActiveOtherDoc, b1ActiveThisDoc] }));
   f['cut-repair-409'] = await cut(jiraFor({ builds: [b2ActiveOtherDoc, buildIssue('HAR-2051', 1, 'Superseded', { link: LINK_THIS_DOC })] }));
 
+  // ----- Assembly page (INC-7) -----
+  const b1Superseded = buildIssue('HAR-2051', 1, 'Superseded', { link: LINK_THIS_DOC });
+  const b3Draft = buildIssue('HAR-2053', 3, 'Draft');
+  const threeBuilds = [b1Superseded, b2Active, b3Draft];
+  const fourParts = [P2031, P2032, P2033, P2035];
+  const threeLinks = { 'HAR-2051': ['HAR-2031', 'HAR-2032'], 'HAR-2052': ['HAR-2031', 'HAR-2033'], 'HAR-2053': ['HAR-2031', 'HAR-2035'] };
+  {
+    const s = services(jiraFor({ parts: fourParts, builds: threeBuilds, links: threeLinks }));
+    f['builds-three'] = await capture(() => s.buildService.getBuildsForAssemblies(['HAR-2030']));
+    f['stories-chain-four'] = await capture(async () => (await s.partService.getStoriesForChain('HAR-2030')).stories);
+    for (const k of Object.keys(threeLinks)) {
+      f[`build-parts-a-${k}`] = await capture(() => s.buildService.getLinkedParts(k));
+    }
+    f['move-HAR-2035-ok'] = await capture(() => s.buildService.saveBuildParts({
+      buildKey: 'HAR-2052', links: [{ ref: 'HAR-2035', key: 'HAR-2035' }],
+    }));
+    f['save-update-HAR-2033'] = await capture(() => s.buildService.saveBuildParts({
+      buildKey: 'HAR-2052',
+      updates: [{ ref: 'HAR-2033', key: 'HAR-2033', quantity: 2, material: 'AL 6061', machinery: 'CNC Router', powdercoat: 'Black', thickness: '0.250', link: false }],
+    }));
+    f['archive-ok'] = await capture(async () => {
+      await s.buildService.archiveBuild('HAR-2053');
+      return { success: true };
+    });
+  }
+  {
+    const s = services(jiraFor({
+      parts: fourParts,
+      builds: threeBuilds,
+      links: threeLinks,
+      fail: { getIssue: (key) => (key === 'HAR-2052' ? tracker503('/rest/api/2/issue/HAR-2052') : null) },
+    }));
+    f['move-503'] = await capture(() => s.buildService.saveBuildParts({
+      buildKey: 'HAR-2052', links: [{ ref: 'HAR-2035', key: 'HAR-2035' }],
+    }));
+  }
+  {
+    // Before the 1" bash bar existed: Build 3 holds only the Test Part.
+    const s = services(jiraFor({ builds: threeBuilds, links: { ...threeLinks, 'HAR-2053': ['HAR-2031'] } }));
+    f['build-parts-b3-one'] = await capture(() => s.buildService.getLinkedParts('HAR-2053'));
+  }
+  {
+    const s = services(jiraFor({ builds: threeBuilds, links: threeLinks, nextKeys: ['HAR-2041'] }));
+    f['recreate-HAR-2033-ok'] = await capture(() => s.buildService.recreateForBuild({ partKey: 'HAR-2033', targetBuildKey: 'HAR-2053' }));
+  }
+  {
+    const s = services(jiraFor({
+      builds: threeBuilds,
+      links: threeLinks,
+      nextKeys: ['HAR-2041'],
+      fail: { createIssueLink: (type) => (type === 'Revises' ? tracker503('/rest/api/2/issueLink') : null) },
+    }));
+    f['recreate-HAR-2033-revises-503'] = await capture(() => s.buildService.recreateForBuild({ partKey: 'HAR-2033', targetBuildKey: 'HAR-2053' }));
+  }
+  {
+    // HAR-2032 already has a later Revision that search doesn't list yet.
+    const revised = clone(P2032);
+    revised.fields.issuelinks = [{
+      type: { name: 'Revises' },
+      outwardIssue: { key: 'HAR-2045', fields: { summary: 'VF27P-0002B Plate' } },
+    }];
+    const s = services(jiraFor({ parts: [P2031, revised, P2033, P2035], builds: threeBuilds, links: threeLinks }));
+    f['recreate-HAR-2032-409'] = await capture(() => s.buildService.recreateForBuild({ partKey: 'HAR-2032', targetBuildKey: 'HAR-2052' }));
+  }
+  {
+    const s = services(jiraFor({ parts: fourParts, builds: threeBuilds, links: threeLinks, nextKeys: ['HAR-2040'] }));
+    f['clone-HAR-2032-ok'] = await capture(() => s.partService.clonePart({
+      sourceKey: 'HAR-2032', epicKey: 'HAR-2030', name: 'Plate spare', quantity: 1,
+    }));
+  }
+
   return f;
 }
 
@@ -472,4 +555,18 @@ export function checkBomFixtures(f, assert) {
   assert(f['cut-repair-resumed'].body.resumed === true && f['cut-repair-resumed'].body.superseded.join() === 'HAR-2052', 'cut-repair-resumed');
   assert(f['cut-repair-409'].status === 409, 'cut-repair-409');
   assert(f['status-503'].status === 503, 'status-503');
+  assert(f['builds-three'].body.length === 3, 'builds-three is not three Builds');
+  assert(f['stories-chain-four'].body.length === 4, 'stories-chain-four is not four Parts');
+  assert(f['build-parts-a-HAR-2053'].body.join() === 'HAR-2031,HAR-2035', 'Build 3 Parts');
+  assert(f['move-HAR-2035-ok'].body.results[0].ok === true, 'Move did not succeed');
+  assert(f['move-503'].status === 503 && f['move-503'].body.source === 'tracker', 'move-503');
+  assert(f['save-update-HAR-2033'].body.results[0].ok === true, 'Assembly-page update did not succeed');
+  const re = f['recreate-HAR-2033-ok'].body;
+  assert(re.key === 'HAR-2041' && re.part?.fullPartNumber === 'VF27P-0003B', `recreate ok: ${JSON.stringify(re)}`);
+  const reLink = f['recreate-HAR-2033-revises-503'];
+  assert(reLink.status === 503 && reLink.body.stage === 'revises-link' && reLink.body.key === 'HAR-2041' && reLink.body.part, 'recreate revises-link');
+  const re409 = f['recreate-HAR-2032-409'];
+  assert(re409.status === 409 && re409.body.recreatedAs === 'HAR-2045', `recreate 409: ${JSON.stringify(re409)}`);
+  assert(f['clone-HAR-2032-ok'].body.key === 'HAR-2040' && f['clone-HAR-2032-ok'].body.part?.key === 'HAR-2040', 'clone ok');
+  assert(f['archive-ok'].body.success === true, 'archive ok');
 }

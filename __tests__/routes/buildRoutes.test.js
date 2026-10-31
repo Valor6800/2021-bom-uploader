@@ -286,6 +286,14 @@ describe('POST /api/builds/:key/archive', () => {
     expect(res.status).toBe(200);
     expect(buildService.archiveBuild).toHaveBeenCalledWith('VAL-11');
   });
+
+  it('answers 400 for a key outside the project, before any write', async () => {
+    const buildService = { archiveBuild: jest.fn() };
+    const app = buildApp(buildService);
+    const res = await request(app).post('/api/builds/OTHER-11/archive');
+    expect(res.status).toBe(400);
+    expect(buildService.archiveBuild).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -96,6 +96,49 @@ export function mergeParts(fetched, createdParts) {
   return extra.length ? [...fetched, ...extra] : fetched;
 }
 
+/** Drop created Parts (`Map<key, Part>`) a re-fetch now lists. */
+export function dropAgreedParts(createdParts, fetched) {
+  if (!createdParts || createdParts.size === 0) return createdParts;
+  const seen = new Set((fetched ?? []).map((p) => p.key));
+  const next = new Map([...createdParts].filter(([key]) => !seen.has(key)));
+  return next.size === createdParts.size ? createdParts : next;
+}
+
+/**
+ * Drop re-created entries (`Map<sourceKey, newKey>`) whose new Part a
+ * re-fetch now lists; from then on hasNewerRevision covers the source.
+ */
+export function dropAgreedRecreated(recreatedThisSession, fetched) {
+  if (!recreatedThisSession || recreatedThisSession.size === 0) return recreatedThisSession;
+  const seen = new Set((fetched ?? []).map((p) => p.key));
+  const next = new Map([...recreatedThisSession].filter(([, newKey]) => !seen.has(newKey)));
+  return next.size === recreatedThisSession.size ? recreatedThisSession : next;
+}
+
+/**
+ * Rows for comparing two Builds: every Part in either, shared Parts first,
+ * then by summary.
+ *
+ * @param {object[]} parts
+ * @param {Map<string, Set<string>>} links  partKey -> Build keys (merged with the session)
+ * @param {string} aKey
+ * @param {string} bKey
+ * @returns {{ part: object, inA: boolean, inB: boolean, shared: boolean }[]}
+ */
+export function compareBuildRows(parts, links, aKey, bKey) {
+  if (!aKey || !bKey) return [];
+  return (parts ?? [])
+    .map((part) => {
+      const keys = links?.get(part.key) ?? new Set();
+      const inA = keys.has(aKey);
+      const inB = keys.has(bKey);
+      return { part, inA, inB, shared: inA && inB };
+    })
+    .filter((r) => r.inA || r.inB)
+    .sort((x, y) => Number(y.shared) - Number(x.shared)
+      || (x.part.summary ?? '').localeCompare(y.part.summary ?? ''));
+}
+
 /**
  * The newest other Part with the same number and a later Revision letter,
  * or null.

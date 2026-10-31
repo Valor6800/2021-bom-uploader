@@ -67,6 +67,33 @@ export function defaultBuildKey(builds, requested) {
 }
 
 /**
+ * Which Build tab the Assembly page opens on (design 3.5): `requested`
+ * when it is in the list, else the Active one, then the highest number.
+ * Archived Builds are only ever chosen by request.
+ *
+ * @returns {string|null}
+ */
+export function defaultAssembleBuildKey(builds, requested) {
+  const list = builds ?? [];
+  if (requested && list.some((b) => b.key === requested)) return requested;
+  const open = list.filter((b) => b.status !== 'Archived').sort(byNumberDesc);
+  return open.find((b) => b.status === 'Active')?.key ?? open[0]?.key ?? null;
+}
+
+/**
+ * The Build a Part counts as current in: the highest-numbered of the
+ * Builds it is linked to, among `builds`. Null when it is in none of them.
+ *
+ * @param {Iterable<string>} partBuildKeys
+ * @param {object[]} builds
+ * @returns {object|null}
+ */
+export function currentBuildOf(partBuildKeys, builds) {
+  const linked = new Set(partBuildKeys ?? []);
+  return [...(builds ?? [])].filter((b) => linked.has(b.key)).sort(byNumberDesc)[0] ?? null;
+}
+
+/**
  * Append Builds that search hasn't returned yet. The fetched copy wins
  * when a key is in both, since it is fresher.
  *

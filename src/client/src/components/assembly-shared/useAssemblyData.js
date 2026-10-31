@@ -40,14 +40,21 @@ export function useAssemblyData(key, { extraBuilds = [] } = {}) {
   const gen = useRef(0);
   const chainRef = useRef([key]);
   const chainPartsRef = useRef([]);
+  const lastBuildsRef = useRef([]);
+  const lastBuildPartsRef = useRef(new Map());
   const extraRef = useRef(extraBuilds);
   extraRef.current = extraBuilds;
 
-  /** Builds, their links, and linked Parts outside the chain. */
+  /**
+   * Builds, their links, and linked Parts outside the chain. A failed read
+   * keeps the last good list (empty on the first load), so a refresh that
+   * fails doesn't wipe Builds the page is showing.
+   */
   const loadBuildsAndLinks = useCallback(async (myGen, chainKeys, chainParts, errs) => {
-    let builds = [];
+    let builds = lastBuildsRef.current;
     try {
       builds = await fetchBuildsForAssembly(key, chainKeys);
+      lastBuildsRef.current = builds;
     } catch (err) {
       errs.builds = err;
     }
@@ -55,12 +62,14 @@ export function useAssemblyData(key, { extraBuilds = [] } = {}) {
     setFetchedBuilds(builds);
 
     const shown = visibleBuilds(mergeBuilds(builds, extraRef.current), key);
-    const perBuild = new Map();
+    let perBuild = new Map();
     try {
       const lists = await Promise.all(shown.map((b) => fetchBuildParts(b.key)));
       shown.forEach((b, i) => perBuild.set(b.key, lists[i] ?? []));
+      lastBuildPartsRef.current = perBuild;
     } catch (err) {
       errs.buildParts = err;
+      perBuild = lastBuildPartsRef.current;
     }
     if (myGen !== gen.current) return;
 
@@ -131,6 +140,8 @@ export function useAssemblyData(key, { extraBuilds = [] } = {}) {
     setParts([]);
     setFetchedBuilds([]);
     setBuildParts(new Map());
+    lastBuildsRef.current = [];
+    lastBuildPartsRef.current = new Map();
     loadAll();
   }, [key, loadAll]);
 

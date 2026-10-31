@@ -1,6 +1,7 @@
 import {
   deriveDesignerRows, mergeLinks, mergeParts, hasNewerRevision, newerRevisionOf,
   linksFromBuildParts, dropAgreedLinks, addSessionLinks, describeChanges,
+  dropAgreedParts, dropAgreedRecreated, compareBuildRows,
 } from '../../src/client/src/lib/designerRows.js';
 
 const part = (key, number, name, extra = {}) => {
@@ -207,5 +208,41 @@ describe('hasNewerRevision', () => {
 describe('describeChanges', () => {
   it('is empty with no changes', () => {
     expect(describeChanges({})).toBe('');
+  });
+});
+
+describe('dropAgreedParts and dropAgreedRecreated', () => {
+  const created = part('HAR-2040', 'VF27P-0007A', 'Clone');
+  it('keeps entries the re-fetch lacks and returns the same Map', () => {
+    const map = new Map([['HAR-2040', created]]);
+    expect(dropAgreedParts(map, [P31])).toBe(map);
+    const recreated = new Map([['HAR-2033', 'HAR-2041']]);
+    expect(dropAgreedRecreated(recreated, [P31])).toBe(recreated);
+  });
+  it('drops entries once the re-fetch lists the new key', () => {
+    expect(dropAgreedParts(new Map([['HAR-2040', created]]), [P31, created]).size).toBe(0);
+    expect(dropAgreedRecreated(new Map([['HAR-2033', 'HAR-2041']]), [{ key: 'HAR-2041' }]).size).toBe(0);
+  });
+});
+
+describe('compareBuildRows', () => {
+  const P33 = part('HAR-2033', 'VF27P-0003A', 'Bash bar 2"');
+  const P35 = part('HAR-2035', 'VF27P-0003B', 'Bash bar 1"');
+  const links = new Map([
+    ['HAR-2031', new Set(['B2', 'B3'])],
+    ['HAR-2033', new Set(['B2'])],
+    ['HAR-2035', new Set(['B3'])],
+    ['HAR-2032', new Set(['B1'])],
+  ]);
+  it('lists shared Parts first, then by summary, and skips Parts in neither', () => {
+    const rows = compareBuildRows([P35, P33, P32, P31], links, 'B2', 'B3');
+    expect(rows.map((r) => [r.part.key, r.inA, r.inB])).toEqual([
+      ['HAR-2031', true, true],
+      ['HAR-2033', true, false],
+      ['HAR-2035', false, true],
+    ]);
+  });
+  it('is empty until both Builds are chosen', () => {
+    expect(compareBuildRows([P31], links, 'B2', '')).toEqual([]);
   });
 });

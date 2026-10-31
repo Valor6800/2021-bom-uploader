@@ -3,7 +3,7 @@ import Alert from '../ui/Alert.jsx';
 import Button from '../ui/Button.jsx';
 import Dialog from '../ui/Dialog.jsx';
 import { cutBuildVersion, fetchBuildStatuses } from '../../api/client.js';
-import { friendlyError } from '../../lib/friendlyError.js';
+import { friendlyClause } from '../../lib/friendlyError.js';
 import {
   activeConflict, buildLabel, conflictSignature, cutErrorEntries, cutResultEntries, listLabels,
   repairCandidates, statusCheckEntries, statusCheckKeys, supersedeTargets,
@@ -94,7 +94,7 @@ export default function TwoActiveWarning({ builds, cutFailedKey, documentId, ass
         setAttempt((n) => n + 1);
       } else {
         const others = listLabels(supersedeTargets(conflict, chosen.key));
-        setDialogError(`Couldn't mark ${others} Superseded: ${friendlyError(err)} Try again.`);
+        setDialogError(`Couldn't mark ${others} Superseded: ${friendlyClause(err)} Try again.`);
       }
     }
   };

@@ -2,7 +2,7 @@ import {
   buildLabel, buildSummaryPreview, nextBuildNumber, visibleBuilds, pickerBuilds, defaultBuildKey,
   mergeBuilds, overlayBuildStatus, dropAgreedStatus, activeConflict, conflictSignature,
   statusCheckKeys, repairCandidates, supersedeTargets, cutResultEntries, cutErrorEntries,
-  statusCheckEntries, listLabels,
+  statusCheckEntries, listLabels, defaultAssembleBuildKey, currentBuildOf,
 } from '../../src/client/src/lib/buildNames.js';
 
 const DOC = '8c64dfdcb66184646a7a3f17';
@@ -171,5 +171,33 @@ describe('repairCandidates and supersedeTargets', () => {
     expect(supersedeTargets([b1, b2], 'HAR-2051')).toEqual([b2]);
     expect(listLabels([b1, b2])).toBe('Build 1 and Build 2');
     expect(listLabels([b1, b2, build('HAR-3', 3, 'Active')])).toBe('Build 1, Build 2 and Build 3');
+  });
+});
+
+describe('defaultAssembleBuildKey', () => {
+  const list = [build('HAR-1', 1, 'Superseded'), build('HAR-2', 2, 'Active'), build('HAR-3', 3, 'Draft'), build('HAR-4', 4, 'Archived')];
+  it('honours a requested Build, even an Archived one', () => {
+    expect(defaultAssembleBuildKey(list, 'HAR-3')).toBe('HAR-3');
+    expect(defaultAssembleBuildKey(list, 'HAR-4')).toBe('HAR-4');
+  });
+  it('prefers the Active Build over a newer Draft, then the highest number', () => {
+    expect(defaultAssembleBuildKey(list, 'HAR-99')).toBe('HAR-2');
+    expect(defaultAssembleBuildKey(list.filter((b) => b.key !== 'HAR-2'), null)).toBe('HAR-3');
+  });
+  it('never defaults to an Archived Build', () => {
+    expect(defaultAssembleBuildKey([build('HAR-4', 4, 'Archived')], null)).toBeNull();
+    expect(defaultAssembleBuildKey([], null)).toBeNull();
+  });
+});
+
+describe('currentBuildOf', () => {
+  const list = [build('HAR-1', 1, 'Superseded'), build('HAR-2', 2, 'Active'), build('HAR-3', 3, 'Draft')];
+  it('is the highest-numbered linked Build', () => {
+    expect(currentBuildOf(new Set(['HAR-1', 'HAR-3']), list).key).toBe('HAR-3');
+    expect(currentBuildOf(['HAR-2'], list).key).toBe('HAR-2');
+  });
+  it('ignores Builds outside the list and is null with none', () => {
+    expect(currentBuildOf(['HAR-9'], list)).toBeNull();
+    expect(currentBuildOf([], list)).toBeNull();
   });
 });

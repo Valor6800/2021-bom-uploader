@@ -1775,3 +1775,74 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 1279px) {
   .assembly-title { font-size: var(--text-xl); }
 }
+/* Keep a Part's key, number and name on one line at laptop width. */
+@media (min-width: 1280px) {
+  .parts-table .cell-part { white-space: nowrap; }
+}
+
+/* ===== Assembly page (INC-7) ===== */
+.build-tabs-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.build-tabs { display: flex; align-items: flex-end; gap: var(--space-3); flex-wrap: wrap; max-width: 100%; }
+.build-tablist {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  max-width: 100%;
+  border-bottom: 1px solid var(--border-strong);
+}
+.build-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap-min);
+  padding: 0 var(--space-4);
+  background: none;
+  color: var(--text-muted);
+  border: none;
+  border-bottom: 3px solid transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.build-tab:hover:not(:disabled) { color: var(--text); }
+.build-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-sm); }
+.build-tab:disabled { cursor: not-allowed; color: var(--text-disabled); }
+.build-tab-selected { color: var(--text); border-bottom-color: var(--accent); }
+.build-tabs-archived { font-size: var(--text-sm); }
+.draft-line { color: var(--text-muted); font-size: var(--text-sm); }
+.parts-table .cell-where { min-width: 12rem; }
+.parts-table .cell-actions { white-space: nowrap; text-align: right; }
+.row-actions { justify-content: flex-end; }
+.compare-pickers { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.compare-pickers .select-inline { width: auto; min-height: 2.5rem; }
+.compare-table { min-width: 40rem; }
+.cell-mark { text-align: center; font-weight: 600; }
+.dialog-form { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* Print sheet: a light preview on screen, plain black on paper. */
+.print-view { display: flex; flex-direction: column; gap: var(--space-3); }
+.print-view-actions { display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.print-sheet {
+  background: #ffffff;
+  color: #111111;
+  padding: var(--space-5);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+}
+.print-title { font-size: var(--text-lg); font-weight: 700; color: #111111; }
+.print-meta { font-size: var(--text-sm); color: #333333; margin-top: var(--space-1); word-break: break-all; }
+.print-table { width: 100%; margin-top: var(--space-4); border-collapse: collapse; font-size: var(--text-sm); }
+.print-table th,
+.print-table td { border: 1px solid #555555; padding: var(--space-1) var(--space-2); text-align: left; color: #111111; }
+.print-table th { background: #eeeeee; font-weight: 700; }
+.print-tick { width: 2rem; text-align: center; }
+.print-note { margin-top: var(--space-4); font-size: var(--text-sm); color: #333333; }
+
+@media print {
+  html, body, .app-wrapper, .app-main { background: #ffffff !important; }
+  .assembly-page-print .print-sheet { border: none; padding: 0; }
+  .print-table th:nth-child(n),
+  .print-table td:nth-child(n) { display: table-cell !important; }
+}
