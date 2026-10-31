@@ -24,6 +24,7 @@ export function friendlyError(err) {
       return `The team tracker refused the change (${status}).`;
     }
     if (source === 'onshape') {
+      if (status === 401 || status === 403) return `OnShape refused the change (${status}).`;
       return `OnShape didn't respond (${status === 0 ? 'no connection' : status}).`;
     }
     return err.message;

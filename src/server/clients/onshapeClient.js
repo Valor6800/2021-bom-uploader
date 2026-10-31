@@ -423,9 +423,19 @@ export class OnshapeClient {
     if (!status && !isNetworkError(err)) return err;
 
     // Auth failures get a clear, descriptive message
-    if (status === 401 || status === 403) {
+    if (status === 401) {
       return new OnshapeApiError(
         'Onshape authentication failed — verify ONSHAPE_ACCESS and ONSHAPE_SECRET env vars and check for clock drift',
+        status,
+        endpoint,
+      );
+    }
+
+    // Signed in, but the API key's scopes or the document's sharing don't
+    // allow this request (e.g. a read-only key asked to create a version).
+    if (status === 403) {
+      return new OnshapeApiError(
+        'Onshape refused access — the API key may lack write scope, or the document is not shared for this action',
         status,
         endpoint,
       );

@@ -25,6 +25,11 @@ describe('describeUpstreamError', () => {
       .toBe("OnShape didn't respond (404)");
   });
 
+  it('describes an OnShape 403 as a refusal', () => {
+    expect(describeUpstreamError(new OnshapeApiError('Onshape refused access', 403, 'x')))
+      .toBe('OnShape refused the change (403)');
+  });
+
   it('passes our own HttpError message through', () => {
     expect(describeUpstreamError(badRequest('Material "Steel" is not allowed')))
       .toBe('Material "Steel" is not allowed');

@@ -70,7 +70,7 @@ export class AuthRequiredError extends Error {
 }
 
 /**
- * Thrown for every non-OK response other than 401/403. Carries the HTTP status
+ * Thrown for every non-OK response other than ValorBOM's own 401/403. Carries the HTTP status
  * and the parsed JSON body, so callers (and lib/friendlyError.js) can read the
  * server's `source`, per-item details or `buildStatus` without parsing text.
  */
@@ -94,7 +94,9 @@ async function request(url, options = {}) {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
 
-    if (res.status === 401 || res.status === 403) {
+    // A 401/403 that names a `source` is the tracker or OnShape refusing,
+    // not ValorBOM's own sign-in gate.
+    if ((res.status === 401 || res.status === 403) && !body.source) {
       throw new AuthRequiredError(
         body.error || 'Sign-in required',
         { loginUrl: body.loginUrl, forbidden: res.status === 403 },

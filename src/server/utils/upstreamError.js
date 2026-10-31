@@ -41,6 +41,7 @@ export function describeUpstreamError(err) {
     return `the team tracker refused the change (${status})`;
   }
   if (err?.name === 'OnshapeApiError') {
+    if (status === 401 || status === 403) return `OnShape refused the change (${status})`;
     return `OnShape didn't respond (${status === 0 ? 'no connection' : status})`;
   }
   if (err?.name === 'HttpError') return err.message;

@@ -382,7 +382,8 @@ describe('OnshapeClient', () => {
         await client.getDocuments('test');
       } catch (e) {
         expect(e).toBeInstanceOf(OnshapeApiError);
-        expect(e.message).toContain('Onshape authentication failed');
+        // A 403 is a scope or sharing refusal, not a bad key.
+        expect(e.message).toContain('Onshape refused access');
         expect(e.status).toBe(403);
       }
     });

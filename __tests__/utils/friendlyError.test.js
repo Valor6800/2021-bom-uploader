@@ -44,6 +44,11 @@ describe('friendlyError', () => {
       .toBe("Couldn't reach ValorBOM. Is the server running?");
   });
 
+  it('describes an OnShape 403 as a refusal', () => {
+    expect(friendlyError(apiError(403, { error: 'Onshape refused access', status: 403, source: 'onshape' })))
+      .toBe('OnShape refused the change (403).');
+  });
+
   it('lowers only a leading "The" for use after a colon', () => {
     expect(friendlyClause(apiError(503, { status: 503, source: 'tracker' })))
       .toBe("the team tracker didn't respond (503).");
