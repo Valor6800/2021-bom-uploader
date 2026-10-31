@@ -193,6 +193,51 @@ describe('JiraClient', () => {
     });
   });
 
+  describe('non-HTTP errors', () => {
+    it('re-throws a TypeError from our own code unchanged, not as a tracker error', async () => {
+      const client = makeClient();
+      const bug = new TypeError('this.client.issueLinks.createIssueLink is not a function');
+      mockCreateIssueLink.mockRejectedValue(bug);
+
+      await expect(client.createIssueLink('Used In', 'VAL-2', 'VAL-1')).rejects.toBe(bug);
+      expect(mockCreateIssueLink).toHaveBeenCalledTimes(1);
+    });
+
+    it('wraps a real network failure (no response) as JiraApiError status 0', async () => {
+      // jira.js re-throws an axios error with no response as-is.
+      const { BaseClient } = await import('jira.js/out/clients/baseClient.js');
+      const axiosErr = Object.assign(new Error('getaddrinfo ENOTFOUND jira.test'), {
+        isAxiosError: true, code: 'ENOTFOUND',
+      });
+      const thrown = new BaseClient({ host: 'https://jira.test' }).buildErrorHandlingResponse(axiosErr);
+      const client = makeClient();
+      mockGetIssue.mockRejectedValue(thrown);
+
+      const err = await client.getIssue('VAL-1').catch((e) => e);
+      expect(err).toBeInstanceOf(JiraApiError);
+      expect(err.status).toBe(0);
+    });
+
+    it("keeps Jira's error body from the HttpException jira.js really throws", async () => {
+      const { BaseClient } = await import('jira.js/out/clients/baseClient.js');
+      const data = {
+        errorMessages: [],
+        errors: { customfield_10500: "Field 'customfield_10500' cannot be set. It is not on the appropriate screen" },
+      };
+      const axiosErr = Object.assign(new Error('Request failed with status code 400'), {
+        isAxiosError: true, code: 'ERR_BAD_REQUEST', response: { status: 400, statusText: 'Bad Request', data },
+      });
+      const thrown = new BaseClient({ host: 'https://jira.test' }).buildErrorHandlingResponse(axiosErr);
+      const client = makeClient();
+      mockEditIssue.mockRejectedValue(thrown);
+
+      const err = await client.updateIssue('VAL-1', { customfield_10500: 'B' }).catch((e) => e);
+      expect(err).toBeInstanceOf(JiraApiError);
+      expect(err.status).toBe(400);
+      expect(err.jiraErrors).toEqual({ errorMessages: [], errors: data.errors });
+    });
+  });
+
   describe('createIssueLink', () => {
     it('sends the source (outward phrase) as inwardIssue', async () => {
       // "Build VAL-200 uses Part VAL-100". Jira's POST /issueLink shows the

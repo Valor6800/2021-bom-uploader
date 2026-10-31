@@ -7,6 +7,7 @@
 
 import crypto from 'node:crypto';
 import axios from 'axios';
+import { isNetworkError } from '../utils/upstreamError.js';
 
 // ---------------------------------------------------------------------------
 // Custom error class
@@ -412,11 +413,14 @@ export class OnshapeClient {
   }
 
   /**
-   * Wrap axios errors into OnshapeApiError.
+   * Wrap axios errors into OnshapeApiError. Anything else (a TypeError from
+   * our own code) is returned unchanged, so it surfaces as ValorBOM's own
+   * error, not as OnShape's.
    * NEVER includes the secret key in the error message.
    */
   _wrapError(err, endpoint) {
     const status = err?.response?.status ?? 0;
+    if (!status && !isNetworkError(err)) return err;
 
     // Auth failures get a clear, descriptive message
     if (status === 401 || status === 403) {

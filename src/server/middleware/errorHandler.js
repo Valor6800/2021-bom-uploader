@@ -2,10 +2,11 @@
  * Shared error-handling middleware and API 404 handler.
  *
  * Centralizes the response shape that every route previously duplicated:
- *   { ...details, error: <message>, status: <code>, source? }
+ *   { ...details, error: <message>, status: <code>, source?, internal? }
  *
  * `details` come from an HttpError; `source` is 'tracker' for a
- * JiraApiError and 'onshape' for an OnshapeApiError.
+ * JiraApiError and 'onshape' for an OnshapeApiError; `internal: true`
+ * marks an error that carries no status (a bug in ValorBOM itself).
  *
  * Reads `.status` off the thrown error (HttpError, JiraApiError,
  * OnshapeApiError all expose it) and defaults to 500. Logs 5xx errors.
@@ -35,13 +36,24 @@ export function errorHandler(err, req, res, next) {
     return next(err);
   }
 
+  // Jira's own reason for a refusal stays in the server log.
+  if (err.jiraErrors && status < 500) {
+    console.warn(`Tracker refused ${req.method} ${req.originalUrl}:`, err.status,
+      JSON.stringify(err.jiraErrors));
+  }
+
   // `details` go first so they can never overwrite error, status or source.
+  // An error with no status of its own is a bug in ValorBOM (a TypeError,
+  // a bad argument), flagged `internal` so the browser doesn't blame the
+  // tracker, OnShape or the network.
   const source = upstreamSource(err);
+  const internal = !err.status && !source;
   res.status(status).json({
     ...(err.details ?? {}),
     error: err.message || 'Internal Server Error',
     status,
     ...(source && { source }),
+    ...(internal && { internal: true }),
   });
 }
 

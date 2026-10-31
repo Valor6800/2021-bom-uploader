@@ -5,8 +5,28 @@
  *
  * Chooses the wording from the error's class and status, never its message
  * text. Our own HttpError and validation messages are already student copy,
- * so they pass through unchanged.
+ * so they pass through unchanged. Any other error is a bug in ValorBOM
+ * itself (a TypeError, a bad argument), so it is never blamed on the
+ * tracker or OnShape.
  */
+
+/** Socket and DNS error codes that mean the upstream really didn't answer. */
+const NETWORK_ERROR_CODES = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'ENOTFOUND',
+  'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE', 'ERR_NETWORK',
+]);
+
+/**
+ * True for an HTTP client error that never got a response: an axios error,
+ * or any error carrying a socket/DNS code. A TypeError from our own code is
+ * not one.
+ *
+ * @param {Error & { code?: string, isAxiosError?: boolean }} err
+ * @returns {boolean}
+ */
+export function isNetworkError(err) {
+  return err?.isAxiosError === true || NETWORK_ERROR_CODES.has(err?.code);
+}
 
 /**
  * @param {Error & { status?: number }} err
@@ -23,7 +43,8 @@ export function describeUpstreamError(err) {
   if (err?.name === 'OnshapeApiError') {
     return `OnShape didn't respond (${status === 0 ? 'no connection' : status})`;
   }
-  return err?.message ?? String(err);
+  if (err?.name === 'HttpError') return err.message;
+  return 'ValorBOM hit an internal error';
 }
 
 /**

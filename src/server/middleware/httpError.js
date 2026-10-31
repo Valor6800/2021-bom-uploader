@@ -11,7 +11,7 @@
  * Keys the error handler writes itself. A detail with one of these names
  * would be silently replaced in the response body, so it is refused here.
  */
-const RESERVED_DETAIL_KEYS = ['error', 'status', 'source'];
+const RESERVED_DETAIL_KEYS = ['error', 'status', 'source', 'internal'];
 
 export class HttpError extends Error {
   /**

@@ -217,11 +217,24 @@ describe('error body details and source', () => {
   it('gives an HttpError no source', async () => {
     const res = await request(appThrowing(() => badRequest('Bad'))).get('/api/boom');
     expect(res.body).not.toHaveProperty('source');
+    expect(res.body).not.toHaveProperty('internal');
+  });
+
+  it('flags an error with no status (our own bug) as internal, with no source', async () => {
+    const res = await request(appThrowing(() => new TypeError('x is not a function'))).get('/api/boom');
+    expect(res.status).toBe(500);
+    expect(res.body).toMatchObject({ status: 500, internal: true });
+    expect(res.body).not.toHaveProperty('source');
+  });
+
+  it('never flags a tracker network failure as internal', async () => {
+    const res = await request(appThrowing(() => new JiraApiError('ECONNRESET', 0, 'x'))).get('/api/boom');
+    expect(res.body).not.toHaveProperty('internal');
   });
 });
 
 describe('HttpError details', () => {
-  it.each(['error', 'status', 'source'])('throws at construction for reserved key %s', (key) => {
+  it.each(['error', 'status', 'source', 'internal'])('throws at construction for reserved key %s', (key) => {
     expect(() => conflict('x', { [key]: 'Active' }))
       .toThrow(`HttpError details may not use reserved key '${key}'`);
     expect(() => new HttpError(400, 'x', { [key]: 1 })).toThrow(Error);

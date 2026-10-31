@@ -401,18 +401,23 @@ describe('OnshapeClient', () => {
       }
     });
 
-    it('wraps generic errors with status and endpoint', async () => {
+    it('wraps a network failure (axios, no response) with status 0 and endpoint', async () => {
       const client = makeClient();
-      const err = new Error('timeout');
+      const err = Object.assign(new Error('timeout of 30000ms exceeded'), {
+        isAxiosError: true, code: 'ECONNABORTED',
+      });
       mockGet.mockRejectedValueOnce(err);
+      const e = await client.getWorkspaces('doc1').catch((x) => x);
+      expect(e).toBeInstanceOf(OnshapeApiError);
+      expect(e.status).toBe(0);
+      expect(e.endpoint).toContain('GET');
+    });
 
-      try {
-        await client.getWorkspaces('doc1');
-      } catch (e) {
-        expect(e).toBeInstanceOf(OnshapeApiError);
-        expect(e.status).toBe(0);
-        expect(e.endpoint).toContain('GET');
-      }
+    it('re-throws an error from our own code unchanged, not as an OnShape error', async () => {
+      const client = makeClient();
+      const bug = new TypeError("Cannot read properties of undefined (reading 'id')");
+      mockGet.mockRejectedValueOnce(bug);
+      await expect(client.getWorkspaces('doc1')).rejects.toBe(bug);
     });
   });
 

@@ -106,7 +106,8 @@ export class RevisionService {
       // The ticket exists now; say which one, so a caller can show it and
       // refuse a second revision instead of creating another.
       console.warn('[revision]', result.key, 'created but Revises link to', previousKey,
-        'failed:', err?.status, err?.message);
+        'failed:', err?.status, err?.message,
+        ...(err?.jiraErrors ? [JSON.stringify(err.jiraErrors)] : []));
       if (err && typeof err === 'object') {
         err.details = { ...err.details, key: result.key, revision, stage: 'revises-link' };
       }

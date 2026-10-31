@@ -429,7 +429,8 @@ export class BuildService {
         return { onshapeVersionLink: stored, superseded, resumed: true };
       } catch (err) {
         console.warn('[cut]', buildKey, 'stage', err?.details?.cutStage,
-          'failed while resuming:', err?.status, err?.message);
+          'failed while resuming:', err?.status, err?.message,
+          ...(err?.jiraErrors ? [JSON.stringify(err.jiraErrors)] : []));
         throw withDetails(err, { onshapeVersionLink: stored });
       }
     }
@@ -459,7 +460,8 @@ export class BuildService {
       return { onshapeVersionLink, superseded, resumed };
     } catch (err) {
       console.warn('[cut]', buildKey, 'stage', err?.details?.cutStage,
-        'failed after the OnShape version was made:', err?.status, err?.message);
+        'failed after the OnShape version was made:', err?.status, err?.message,
+          ...(err?.jiraErrors ? [JSON.stringify(err.jiraErrors)] : []));
       throw withDetails(err, { onshapeVersionLink });
     }
   }
@@ -757,7 +759,8 @@ export class BuildService {
     const createdHere = new Set();
     const results = [];
     const fail = (base, err, prefix = '') => {
-      console.warn('[save]', buildKey, base.op, base.ref, 'failed:', err?.status, err?.message);
+      console.warn('[save]', buildKey, base.op, base.ref, 'failed:', err?.status, err?.message,
+        ...(err?.jiraErrors ? [JSON.stringify(err.jiraErrors)] : []));
       return {
         ...base,
         ok: false,
