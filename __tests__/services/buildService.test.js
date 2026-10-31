@@ -30,6 +30,15 @@ function makeRevisionService(overrides = {}) {
   };
 }
 
+/** A searchIssues mock that honours the `"Epic Link" in (...)` clause, like the tracker. */
+function searchByAssembly(builds) {
+  return jest.fn(async (jql) => {
+    const match = /"Epic Link" in \(([^)]*)\)/.exec(jql);
+    const keys = match ? match[1].split(',').map((k) => k.trim()) : [];
+    return builds.filter((b) => keys.includes(b.fields[BuildField.ASSEMBLY_LINK]));
+  });
+}
+
 function buildIssue(key, { buildNumber, status, assemblyKey = 'VAL-1' } = {}) {
   return {
     key,
@@ -129,9 +138,9 @@ describe('BuildService.createBuild', () => {
     expect(fields[BuildField.BUILD_NUMBER]).toBe(2);
   });
 
-  it('numbers against the full revision chain when one is given', async () => {
+  it('starts a new Revision at Build 1, whatever the earlier Revision has', async () => {
     const jiraClient = makeJiraClient({
-      searchIssues: jest.fn().mockResolvedValue([
+      searchIssues: searchByAssembly([
         buildIssue('VAL-10', { buildNumber: 1, status: BuildStatus.SUPERSEDED, assemblyKey: 'VAL-1' }),
         buildIssue('VAL-11', { buildNumber: 2, status: BuildStatus.ARCHIVED, assemblyKey: 'VAL-1' }),
       ]),
@@ -144,7 +153,20 @@ describe('BuildService.createBuild', () => {
       name: 'Intake',
     });
 
-    expect(result.buildNumber).toBe(3);
+    expect(result.buildNumber).toBe(1);
+    expect(result.summary).toBe('Intake Build 1');
+  });
+
+  it('then counts on from its own Builds only', async () => {
+    const jiraClient = makeJiraClient({
+      searchIssues: searchByAssembly([
+        buildIssue('VAL-10', { buildNumber: 5, status: BuildStatus.ACTIVE, assemblyKey: 'VAL-1' }),
+        buildIssue('VAL-20', { buildNumber: 1, status: BuildStatus.DRAFT, assemblyKey: 'VAL-1B' }),
+      ]),
+    });
+    const service = new BuildService({ jiraClient });
+    const result = await service.createBuild({ assemblyKey: 'VAL-1B', name: 'Intake' });
+    expect(result.buildNumber).toBe(2);
   });
 });
 
@@ -396,17 +418,22 @@ describe('BuildService.createBuild (INC-3)', () => {
     const { service, jiraClient, revisionService } = chainService({ chain: ['VAL-1B', 'VAL-1'] });
     await service.createBuild({ assemblyKey: 'VAL-1B', revisionChainKeys: ['VAL-1B', 'VAL-7'], name: 'Intake' });
     expect(revisionService.getRevisionChain).toHaveBeenCalledWith('VAL-1B');
+    // The chain is still derived (it scopes a copy source), but numbering counts this Revision only.
     const [jql] = jiraClient.searchIssues.mock.calls[0];
-    expect(jql).toContain('"Epic Link" in (VAL-1B, VAL-1, VAL-7)');
+    expect(jql).toContain('"Epic Link" in (VAL-1B)');
+    expect(jql).not.toContain('VAL-7');
   });
 
-  it('numbers past a Build the stale client chain did not know about', async () => {
-    const { service } = chainService({
+  it('does not count an earlier Revision\'s Builds, even ones the client chain did not know about', async () => {
+    const { service, jiraClient } = chainService({
       chain: ['VAL-1B', 'VAL-1'],
       builds: [buildIssue('VAL-10', { buildNumber: 4, status: BuildStatus.ACTIVE, assemblyKey: 'VAL-1' })],
     });
+    jiraClient.searchIssues.mockImplementation(searchByAssembly([
+      buildIssue('VAL-10', { buildNumber: 4, status: BuildStatus.ACTIVE, assemblyKey: 'VAL-1' }),
+    ]));
     const result = await service.createBuild({ assemblyKey: 'VAL-1B', revisionChainKeys: ['VAL-1B'], name: 'Intake' });
-    expect(result.buildNumber).toBe(5);
+    expect(result.buildNumber).toBe(1);
   });
 
   it('returns the Build object a client can select before search indexes it', async () => {

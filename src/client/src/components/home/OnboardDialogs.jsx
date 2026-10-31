@@ -12,7 +12,7 @@ import { countCreated } from '../../lib/subAssemblies.js';
 /** A. Confirm a new Assembly. */
 export function ConfirmDialog({
   open, proposed, drifted, busy, error, onCancel, onConfirm, returnFocusRef,
-  subAssemblies = [], subAssembliesError = null,
+  subAssemblies = [], subAssembliesError = null, previous = null,
 }) {
   const confirmRef = useRef(null);
   const newSubs = countCreated(subAssemblies, { preview: true });
@@ -22,7 +22,7 @@ export function ConfirmDialog({
       // Closing mid-request would hide whether the Assembly was made.
       onClose={busy ? () => {} : onCancel}
       closeDisabled={busy}
-      title="Create a new Assembly?"
+      title={previous ? 'Create a new Revision?' : 'Create a new Assembly?'}
       returnFocusRef={returnFocusRef}
       initialFocusRef={confirmRef}
       footer={(
@@ -37,7 +37,9 @@ export function ConfirmDialog({
           >
             {busy
               ? (<><span className="spinner" aria-hidden="true" /> Creating…</>)
-              : newSubs > 0 ? `Create ${newSubs + 1} Assemblies` : 'Create Assembly and Build 1'}
+              : newSubs > 0
+                ? `Create ${newSubs + 1} Assemblies`
+                : previous ? `Create Revision ${proposed?.revision} and Build 1` : 'Create Assembly and Build 1'}
           </Button>
         </>
       )}
@@ -51,6 +53,13 @@ export function ConfirmDialog({
             <span className="mono-key">{proposed.fullPartNumber}</span> {proposed.name}
           </p>
           <p className="text-muted">{[proposed.seasonLabel, `Revision ${proposed.revision}`].filter(Boolean).join(' · ')}</p>
+          {previous && (
+            <p className="onboard-revision">
+              The next Revision of <span className="mono-key">{previous.fullPartNumber}</span> {previous.name}{' '}
+              <span className="mono-key">({previous.key})</span>. Its Parts and sub-assemblies can be reused from
+              that Revision.
+            </p>
+          )}
           <p>
             Creates this Assembly and its Build 1 (Draft)
             {newSubs > 0 ? `, and ${newSubs === 1 ? 'the sub-assembly' : 'each sub-assembly'} below that doesn't exist yet` : ''}
@@ -67,7 +76,7 @@ export function ConfirmDialog({
 /** B. The OnShape assembly was onboarded before. */
 export function ExistsDialog({
   open, assembly, matchedOn, onCancel, onOpen, returnFocusRef,
-  subAssemblies = [], subAssembliesError = null, busy = false, error = null, onCreateMissing,
+  subAssemblies = [], subAssembliesError = null, busy = false, error = null, onCreateMissing, branchMismatch = null,
 }) {
   const openRef = useRef(null);
   const missing = countCreated(subAssemblies, { preview: true });
@@ -101,6 +110,13 @@ export function ExistsDialog({
               ? 'That OnShape assembly was added before from another branch of this document, so nothing new will be created.'
               : 'That OnShape assembly was added before, so it will not be created again.'}
           </p>
+          {branchMismatch && (
+            <p className="onboard-drift" role="status">
+              This branch is numbered <span className="mono-key">{branchMismatch.proposed.fullPartNumber}</span>, not
+              the number of this Assembly. If it is a new Revision, set its Part number to match in OnShape, then paste
+              the link again.
+            </p>
+          )}
           <SubAssemblyList subAssemblies={subAssemblies} error={subAssembliesError} preview />
           {error && <p className="form-error" role="alert">{error}</p>}
         </div>

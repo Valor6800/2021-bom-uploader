@@ -31,7 +31,7 @@ export function buildSummaryPreview(name, number, description) {
   return d ? `${base} - ${d}` : base;
 }
 
-/** One past the highest Build number over the whole Revision chain, or 1. */
+/** One past the highest Build number among these Builds, or 1. Pass one Revision's Builds. */
 export function nextBuildNumber(chainBuilds) {
   const max = (chainBuilds ?? []).reduce((acc, b) => Math.max(acc, b.buildNumber ?? 0), 0);
   return max + 1;

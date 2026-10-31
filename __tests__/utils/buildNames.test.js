@@ -34,13 +34,14 @@ describe('buildSummaryPreview', () => {
 });
 
 describe('nextBuildNumber and visibleBuilds', () => {
-  it('numbers across the whole chain', () => {
+  it('counts one Revision at a time, so a new Revision starts at Build 1', () => {
     const chainBuilds = [
       { ...build('HAR-A1', 1, 'Superseded'), assemblyKey: 'HAR-A' },
       { ...build('HAR-A2', 2, 'Active'), assemblyKey: 'HAR-A' },
     ];
     expect(visibleBuilds(chainBuilds, 'HAR-B')).toEqual([]);
-    expect(nextBuildNumber(chainBuilds)).toBe(3);
+    expect(nextBuildNumber(visibleBuilds(chainBuilds, 'HAR-B'))).toBe(1);
+    expect(nextBuildNumber(visibleBuilds(chainBuilds, 'HAR-A'))).toBe(3);
   });
   it('starts at 1', () => {
     expect(nextBuildNumber([])).toBe(1);

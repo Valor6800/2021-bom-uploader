@@ -42,6 +42,22 @@ describe('describeSubAssembly', () => {
   });
 });
 
+describe('Revisions of sub-assemblies', () => {
+  const previous = { key: 'HAR-2041', summary: 'VR27A-1100A Base Frame' };
+  it('previews a raised Revision as the next Revision of the earlier one', () => {
+    const sub = { name: 'Base Frame', status: 'revision', proposed: { summary: 'VR27A-1100B Base Frame' }, previous };
+    expect(describeSubAssembly(sub, { preview: true }))
+      .toBe('VR27A-1100B Base Frame: will be created as the next Revision of VR27A-1100A Base Frame');
+  });
+  it('reports the Revision that was created', () => {
+    const sub = { name: 'Base Frame', status: 'created', assembly: { key: 'HAR-3001', summary: 'VR27A-1100B Base Frame' }, revisionOf: previous };
+    expect(describeSubAssembly(sub)).toBe('VR27A-1100B Base Frame: created (HAR-3001), next Revision of HAR-2041');
+  });
+  it('counts a new Revision as something that will be created', () => {
+    expect(countCreated([{ status: 'revision' }, { status: 'new' }, { status: 'exists' }], { preview: true })).toBe(2);
+  });
+});
+
 describe('countCreated and subLabel', () => {
   const subs = [{ status: 'new' }, { status: 'new' }, { status: 'exists' }, { status: 'created' }];
   it('counts new ones in a preview and created ones in a result', () => {

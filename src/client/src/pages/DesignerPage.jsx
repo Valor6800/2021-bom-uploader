@@ -130,7 +130,7 @@ function DesignerPage({ assemblyKey: key }) {
   const selectedKey = defaultBuildKey(builds, requested);
   const selectedBuild = builds.find((b) => b.key === selectedKey) ?? null;
   const buildName = selectedBuild ? buildLabel(selectedBuild) : null;
-  const nextNumber = nextBuildNumber(chainBuilds);
+  const nextNumber = nextBuildNumber(builds);
   const hasIds = !!(assembly?.documentId && assembly?.workspaceId && assembly?.elementId);
   const loadFailed = !!data.secondaryError;
   // A cut Build never changes: it is shown view-only.
@@ -538,6 +538,14 @@ function DesignerPage({ assemblyKey: key }) {
         />
       )}
 
+
+      {onboard?.revisionLinkError && (
+        <Alert variant="warning" role="alert" className="onboard-banner">
+          {assembly.summary} was created, but it couldn&apos;t be recorded as the next Revision of{' '}
+          {onboard.revisionOf?.summary ?? 'the earlier Assembly'}: {onboard.revisionLinkError}. Its Parts and Builds
+          won&apos;t show the earlier Revision until that link exists.
+        </Alert>
+      )}
 
       {onboard?.subAssemblies?.length > 0 && (
         <Alert

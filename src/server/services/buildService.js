@@ -186,16 +186,15 @@ export class BuildService {
   }
 
   /**
-   * The Build Number the next Build under this Assembly should get.
-   * Continuous across the whole revision chain — never resets when a new
-   * Revision starts (Sheet 01 of the plan).
+   * The Build Number the next Build should get: one past the highest among
+   * the given tickets' Builds. Numbers count per Revision ticket, so a new
+   * Revision starts again at Build 1 (the caller passes just that ticket).
    *
-   * @param {string[]} revisionChainKeys  Every ticket in the Assembly's
-   *   revision chain, oldest or newest first — order doesn't matter here.
+   * @param {string[]} assemblyKeys  The Assembly (Revision) ticket(s) to count
    * @returns {Promise<number>}
    */
-  async getNextBuildNumber(revisionChainKeys) {
-    const builds = await this.getBuildsForAssemblies(revisionChainKeys);
+  async getNextBuildNumber(assemblyKeys) {
+    const builds = await this.getBuildsForAssemblies(assemblyKeys);
     const max = builds.reduce((acc, b) => Math.max(acc, b.buildNumber ?? 0), 0);
     return max + 1;
   }
@@ -208,8 +207,9 @@ export class BuildService {
    * transactional, but at least the number itself is never hand-typed.
    *
    * The revision chain is derived here (when revisionService is injected)
-   * and unioned with any keys the caller sent, so a stale client copy can
-   * only raise the next number, never reuse one.
+   * and unioned with any keys the caller sent. It only scopes `cloneFromBuildKey`
+   * (a Build of an earlier Revision may be copied); the number counts this
+   * Assembly's own Builds.
    *
    * `cloneFromBuildKey` is only validated here, before anything is created:
    * it must be a Build of this Assembly's chain. Copying its Parts is the
@@ -231,7 +231,8 @@ export class BuildService {
       await this._checkCloneSource(cloneFromBuildKey, chainKeys);
     }
 
-    const buildNumber = await this.getNextBuildNumber(chainKeys);
+    // Per Revision: Revision B's first Build is Build 1, whatever Revision A has.
+    const buildNumber = await this.getNextBuildNumber([assemblyKey]);
     const note = typeof description === 'string' ? description.trim() : '';
     const summary = note
       ? `${name} Build ${buildNumber} - ${note}`
