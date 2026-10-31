@@ -61,7 +61,8 @@ describe('PartService.clonePart', () => {
 
     const result = await service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
 
-    expect(result).toMatchObject({ key: 'VAL-99', fullPartNumber: 'VR26P-0002A Side Plate' });
+    // The part number alone, not the whole summary (live check F6).
+    expect(result).toMatchObject({ key: 'VAL-99', fullPartNumber: 'VR26P-0002A' });
     expect(result.part).toMatchObject({ key: 'VAL-99', fullPartNumber: 'VR26P-0002A', epic: 'VAL-1', quantity: 2 });
     const [fields] = jiraClient.createIssue.mock.calls[0];
     expect(fields).toMatchObject({

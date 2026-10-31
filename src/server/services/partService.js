@@ -221,7 +221,8 @@ export class PartService {
         powdercoat: source.powdercoat,
         thickness: source.thickness,
       });
-      return { key, fullPartNumber: summary, part: partFromWritten(key, summary, fields) };
+      const part = partFromWritten(key, summary, fields);
+      return { key, fullPartNumber: part.fullPartNumber, part };
     });
   }
 
