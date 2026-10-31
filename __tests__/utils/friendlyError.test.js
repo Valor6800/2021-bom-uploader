@@ -1,5 +1,5 @@
 import { friendlyError, friendlyClause } from '../../src/client/src/lib/friendlyError.js';
-import { ApiError, AuthRequiredError } from '../../src/client/src/api/client.js';
+import { ApiError, AuthRequiredError, NetworkError } from '../../src/client/src/api/client.js';
 
 const apiError = (status, body) => new ApiError(body.error ?? `Request failed: ${status}`, status, body);
 
@@ -39,9 +39,19 @@ describe('friendlyError', () => {
       .toBe('Jira says no');
   });
 
-  it('says the server is unreachable when fetch throws a TypeError', () => {
-    expect(friendlyError(new TypeError('Failed to fetch')))
+  it('says the server is unreachable when fetch itself failed', () => {
+    expect(friendlyError(new NetworkError("Couldn't reach ValorBOM", { cause: new TypeError('Failed to fetch') })))
       .toBe("Couldn't reach ValorBOM. Is the server running?");
+  });
+
+  it('calls a TypeError from our own browser code an internal error', () => {
+    expect(friendlyError(new TypeError("Cannot read properties of undefined (reading 'key')")))
+      .toBe('ValorBOM hit an internal error.');
+  });
+
+  it('calls a server error flagged internal an internal error, not the tracker', () => {
+    expect(friendlyError(apiError(500, { error: 'x is not a function', status: 500, internal: true })))
+      .toBe('ValorBOM hit an internal error.');
   });
 
   it('describes an OnShape 403 as a refusal', () => {

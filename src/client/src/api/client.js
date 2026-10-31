@@ -83,13 +83,33 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Thrown when fetch() itself fails: the ValorBOM server could not be reached
+ * (down, restarting, offline). Kept apart from errors in our own code so the
+ * UI only says "couldn't reach ValorBOM" when that is what happened.
+ */
+export class NetworkError extends Error {
+  constructor(message, { cause } = {}) {
+    super(message);
+    this.name = 'NetworkError';
+    this.cause = cause;
+  }
+}
+
 async function request(url, options = {}) {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    // Send the session cookie; harmless same-origin, required if ever not.
-    credentials: 'same-origin',
-    ...options,
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+      // Send the session cookie; harmless same-origin, required if ever not.
+      credentials: 'same-origin',
+      ...options,
+    });
+  } catch (err) {
+    // A cancelled request is not a failure; callers check for AbortError.
+    if (err?.name === 'AbortError') throw err;
+    throw new NetworkError("Couldn't reach ValorBOM", { cause: err });
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

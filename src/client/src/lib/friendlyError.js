@@ -27,13 +27,19 @@ export function friendlyError(err) {
       if (status === 401 || status === 403) return `OnShape refused the change (${status}).`;
       return `OnShape didn't respond (${status === 0 ? 'no connection' : status}).`;
     }
+    // The server threw an error with no status of its own: a ValorBOM bug.
+    if (err.body?.internal) return INTERNAL;
     return err.message;
   }
   // A sign-in prompt already carries its own copy.
   if (err?.name === 'AuthRequiredError') return err.message;
   // fetch() itself threw: the local ValorBOM server is unreachable.
-  return "Couldn't reach ValorBOM. Is the server running?";
+  if (err?.name === 'NetworkError') return "Couldn't reach ValorBOM. Is the server running?";
+  // Anything else was thrown by our own browser code.
+  return INTERNAL;
 }
+
+const INTERNAL = 'ValorBOM hit an internal error.';
 
 /**
  * friendlyError for use after an action prefix and a colon:
