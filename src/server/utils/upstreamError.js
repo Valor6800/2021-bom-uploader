@@ -60,3 +60,14 @@ export function upstreamSource(err) {
   if (err?.name === 'OnshapeApiError') return 'onshape';
   return null;
 }
+
+/**
+ * Jira's own error body, as extra `console.warn` arguments: one JSON string
+ * when the error carries `jiraErrors`, else none. Server logs only.
+ *
+ * @param {Error & { jiraErrors?: object }} err
+ * @returns {string[]}
+ */
+export function jiraErrorsForLog(err) {
+  return err?.jiraErrors ? [JSON.stringify(err.jiraErrors)] : [];
+}

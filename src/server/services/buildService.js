@@ -16,7 +16,7 @@ import { Powdercoat, Thickness } from '../utils/bomConstants.js';
 import { nextRevisionLetter } from './revisionService.js';
 import { partFromWritten } from './partService.js';
 import { badRequest, conflict, HttpError } from '../middleware/httpError.js';
-import { describeUpstreamError, upstreamSource } from '../utils/upstreamError.js';
+import { describeUpstreamError, jiraErrorsForLog, upstreamSource } from '../utils/upstreamError.js';
 import { preferNewestRevision } from '../utils/partChain.js';
 import { withKeyedLock } from '../utils/keyedLock.js';
 
@@ -429,8 +429,7 @@ export class BuildService {
         return { onshapeVersionLink: stored, superseded, resumed: true };
       } catch (err) {
         console.warn('[cut]', buildKey, 'stage', err?.details?.cutStage,
-          'failed while resuming:', err?.status, err?.message,
-          ...(err?.jiraErrors ? [JSON.stringify(err.jiraErrors)] : []));
+          'failed while resuming:', err?.status, err?.message, ...jiraErrorsForLog(err));
         throw withDetails(err, { onshapeVersionLink: stored });
       }
     }
@@ -460,8 +459,7 @@ export class BuildService {
       return { onshapeVersionLink, superseded, resumed };
     } catch (err) {
       console.warn('[cut]', buildKey, 'stage', err?.details?.cutStage,
-        'failed after the OnShape version was made:', err?.status, err?.message,
-          ...(err?.jiraErrors ? [JSON.stringify(err.jiraErrors)] : []));
+        'failed after the OnShape version was made:', err?.status, err?.message, ...jiraErrorsForLog(err));
       throw withDetails(err, { onshapeVersionLink });
     }
   }
@@ -760,7 +758,7 @@ export class BuildService {
     const results = [];
     const fail = (base, err, prefix = '') => {
       console.warn('[save]', buildKey, base.op, base.ref, 'failed:', err?.status, err?.message,
-        ...(err?.jiraErrors ? [JSON.stringify(err.jiraErrors)] : []));
+        ...jiraErrorsForLog(err));
       return {
         ...base,
         ok: false,

@@ -6,6 +6,8 @@
  */
 
 import { RevisionField, LinkType } from '../utils/buildConstants.js';
+import { conflict } from '../middleware/httpError.js';
+import { jiraErrorsForLog } from '../utils/upstreamError.js';
 
 const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL';
 
@@ -16,12 +18,16 @@ const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
  * The next letter after the given one. Revision A -> B -> C ...
  * @param {string|null|undefined} current  Blank/missing means "A" (Sheet 02)
  * @returns {string}
+ * @throws {HttpError} 409 past Z or for a value that isn't a single letter
  */
 export function nextRevisionLetter(current) {
   const normalized = (current ?? 'A').toUpperCase();
   const index = ALPHABET.indexOf(normalized);
-  if (index === -1 || index === ALPHABET.length - 1) {
-    throw new Error(`No revision letter follows "${current}"`);
+  if (index === ALPHABET.length - 1) {
+    throw conflict('This Part is already at Revision Z; no later revision letter exists.');
+  }
+  if (index === -1) {
+    throw conflict(`Revision "${current}" isn't a letter from A to Z, so no next revision letter exists.`);
   }
   return ALPHABET[index + 1];
 }
@@ -106,8 +112,7 @@ export class RevisionService {
       // The ticket exists now; say which one, so a caller can show it and
       // refuse a second revision instead of creating another.
       console.warn('[revision]', result.key, 'created but Revises link to', previousKey,
-        'failed:', err?.status, err?.message,
-        ...(err?.jiraErrors ? [JSON.stringify(err.jiraErrors)] : []));
+        'failed:', err?.status, err?.message, ...jiraErrorsForLog(err));
       if (err && typeof err === 'object') {
         err.details = { ...err.details, key: result.key, revision, stage: 'revises-link' };
       }

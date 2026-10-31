@@ -5,6 +5,7 @@
  */
 
 import { jest } from '@jest/globals';
+import { withoutEnv } from '../mocks/withoutEnv.js';
 
 // ---------------------------------------------------------------------------
 // Mock jira.js before importing JiraClient
@@ -53,17 +54,15 @@ beforeEach(() => {
 describe('JiraClient', () => {
   describe('constructor', () => {
     it('throws when host is missing', () => {
-      const origUrl = process.env.JIRA_URL;
-      delete process.env.JIRA_URL;
-      expect(() => new JiraClient({ bearerToken: 'tok' })).toThrow('Jira host URL is required');
-      process.env.JIRA_URL = origUrl;
+      withoutEnv(['JIRA_URL', 'JIRA_BASE_URL'], () => {
+        expect(() => new JiraClient({ bearerToken: 'tok' })).toThrow('Jira host URL is required');
+      });
     });
 
     it('throws when token is missing', () => {
-      const origKey = process.env.JIRA_KEY;
-      delete process.env.JIRA_KEY;
-      expect(() => new JiraClient({ host: 'https://jira.test' })).toThrow('Jira bearer token is required');
-      process.env.JIRA_KEY = origKey;
+      withoutEnv(['JIRA_KEY'], () => {
+        expect(() => new JiraClient({ host: 'https://jira.test' })).toThrow('Jira bearer token is required');
+      });
     });
   });
 

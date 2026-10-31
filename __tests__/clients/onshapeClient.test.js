@@ -5,6 +5,7 @@
  */
 
 import { jest } from '@jest/globals';
+import { withoutEnv } from '../mocks/withoutEnv.js';
 
 // ---------------------------------------------------------------------------
 // Mock axios before importing OnshapeClient
@@ -93,27 +94,24 @@ describe('createSignature', () => {
 describe('OnshapeClient', () => {
   describe('constructor', () => {
     it('throws when baseUrl is missing', () => {
-      const orig = process.env.ONSHAPE_URL;
-      delete process.env.ONSHAPE_URL;
-      expect(() => new OnshapeClient({ accessKey: 'a', secretKey: 's' }))
-        .toThrow('Onshape base URL is required');
-      process.env.ONSHAPE_URL = orig;
+      withoutEnv(['ONSHAPE_URL', 'ONSHAPE_BASE_URL'], () => {
+        expect(() => new OnshapeClient({ accessKey: 'a', secretKey: 's' }))
+          .toThrow('Onshape base URL is required');
+      });
     });
 
     it('throws when accessKey is missing', () => {
-      const orig = process.env.ONSHAPE_ACCESS;
-      delete process.env.ONSHAPE_ACCESS;
-      expect(() => new OnshapeClient({ baseUrl: 'https://x', secretKey: 's' }))
-        .toThrow('Onshape access key is required');
-      process.env.ONSHAPE_ACCESS = orig;
+      withoutEnv(['ONSHAPE_ACCESS', 'API_KEY'], () => {
+        expect(() => new OnshapeClient({ baseUrl: 'https://x', secretKey: 's' }))
+          .toThrow('Onshape access key is required');
+      });
     });
 
     it('throws when secretKey is missing', () => {
-      const orig = process.env.ONSHAPE_SECRET;
-      delete process.env.ONSHAPE_SECRET;
-      expect(() => new OnshapeClient({ baseUrl: 'https://x', accessKey: 'a' }))
-        .toThrow('Onshape secret key is required');
-      process.env.ONSHAPE_SECRET = orig;
+      withoutEnv(['ONSHAPE_SECRET', 'SECRET_KEY'], () => {
+        expect(() => new OnshapeClient({ baseUrl: 'https://x', accessKey: 'a' }))
+          .toThrow('Onshape secret key is required');
+      });
     });
   });
 

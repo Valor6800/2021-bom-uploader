@@ -38,6 +38,20 @@ describe('nextRevisionLetter', () => {
   it('throws once past Z rather than wrapping or silently truncating', () => {
     expect(() => nextRevisionLetter('Z')).toThrow();
   });
+
+  it('refuses past Z with a 409 HttpError the student can read', () => {
+    let err;
+    try { nextRevisionLetter('Z'); } catch (e) { err = e; }
+    expect(err).toMatchObject({
+      name: 'HttpError',
+      status: 409,
+      message: 'This Part is already at Revision Z; no later revision letter exists.',
+    });
+  });
+
+  it('refuses a value that is not a single letter with a 409', () => {
+    expect(() => nextRevisionLetter('AA')).toThrow(expect.objectContaining({ name: 'HttpError', status: 409 }));
+  });
 });
 
 describe('RevisionService.getRevisionChain', () => {
