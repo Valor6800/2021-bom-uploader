@@ -188,7 +188,9 @@ function sortRows(rows) {
  * @param {Map<string, Set<string>>} params.linkedByPart
  * @param {Map<string, Set<string>>} [params.linkedThisSession]
  * @param {string|null} params.buildKey       The selected Build
- * @param {object[]} [params.builds]          For "Also in Build 2" labels
+ * @param {object[]} [params.builds]          For "Also in Build 2" labels, and
+ *   which Builds are cut: a Part a cut Build uses keeps its stored values
+ *   (`sharedLocked`) until it is Re-created
  * @param {{ newParts: object[], existingParts: object[] }|null} [params.preview]
  * @param {Record<string, object>} [params.edits]        rowId -> { field: value }
  * @param {Record<string, string>} [params.createdKeys]  fullPartNumber -> key
@@ -212,6 +214,7 @@ export function deriveDesignerRows({
   const links = mergeLinks(linkedByPart, linkedThisSession);
   const chain = new Set(chainKeys ?? []);
   const buildLabels = new Map(builds.map((b) => [b.key, b.buildNumber != null ? `Build ${b.buildNumber}` : b.summary]));
+  const cutKeys = new Set(builds.filter((b) => b.status && b.status !== 'Draft').map((b) => b.key));
 
   const byKey = new Map();
   const byNumber = new Map();
@@ -257,10 +260,14 @@ export function deriveDesignerRows({
     const cadValues = cad ? pickValues(cad) : null;
     const changes = cadValues ? diff(stored, cadValues) : {};
     const changedInCad = Object.keys(changes).length > 0;
-    const values = { ...stored, ...(cadValues ?? {}), ...(edits[rowId] ?? {}) };
-    const dirty = PART_FIELDS.some((f) => values[f] !== stored[f]);
     const readOnly = chain.size > 0 && !chain.has(part.epic);
     const partBuilds = links.get(part.key) ?? new Set();
+    const cutBuildKeys = [...partBuilds].filter((k) => k !== buildKey && cutKeys.has(k));
+    const sharedLocked = !readOnly && cutBuildKeys.length > 0;
+    const values = sharedLocked
+      ? stored
+      : { ...stored, ...(cadValues ?? {}), ...(edits[rowId] ?? {}) };
+    const dirty = PART_FIELDS.some((f) => values[f] !== stored[f]);
     const inBuild = !!buildKey && partBuilds.has(buildKey);
     const otherBuildKeys = [...partBuilds].filter((k) => k !== buildKey && buildLabels.has(k));
     const label = otherBuildKeys.length
@@ -290,6 +297,8 @@ export function deriveDesignerRows({
       dirty: !readOnly && dirty,
       readOnly,
       readOnlyLabel: readOnly ? 'From another Assembly' : null,
+      sharedLocked,
+      lockedLabel: sharedLocked ? `In cut ${cutBuildKeys.map((k) => buildLabels.get(k)).join(', ')}` : null,
       group: inBuild ? 'inBuild' : 'other',
       buildKeys: [...partBuilds],
       otherBuildKeys,
@@ -323,6 +332,8 @@ export function deriveDesignerRows({
       dirty: true,
       readOnly: false,
       readOnlyLabel: null,
+      sharedLocked: false,
+      lockedLabel: null,
       group: 'new',
       buildKeys: [],
       otherBuildKeys: [],

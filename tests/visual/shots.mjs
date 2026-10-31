@@ -356,9 +356,9 @@ const INC6_SCENARIOS = [
       const [cut] = await waitForSent(ctx, 'POST', '/api/builds/HAR-2051/cut-version');
       assertEqual(cut.body, { assemblyKey: 'HAR-2030' }, 'cut body');
       await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
-      const cutButton = button(page, 'Cut Version');
-      await assertAttr(cutButton, 'aria-disabled', 'true');
-      await assertAttr(cutButton, 'title', 'Already cut');
+      await expectText(page, 'Build 1 is cut. Make a new Build to change Parts.');
+      assertEqual(await button(page, 'Cut Version').count(), 0, 'no Cut Version once cut');
+      assertEqual(await button(page, 'Update from CAD').count(), 0, 'no Update from CAD once cut');
       assertTrue((await chip(page, 'Build 1').textContent()).includes('Active'), 'Build 1 shows Active after the cut');
       assertTrue((await chip(page, 'Build 2').textContent()).includes('Superseded'), 'Build 2 shows Superseded after the cut');
       await ctx.shot('designer-after-cut');
@@ -608,7 +608,7 @@ const INC6_SCENARIOS = [
       const label = await chip(page, 'Build 1').textContent();
       assertTrue(label.includes('Superseded'), `Build 1 chip reads Superseded (got "${label}")`);
       await expectNoText(page, '409');
-      await assertAttr(button(page, 'Cut Version'), 'title', 'Already cut');
+      assertEqual(await button(page, 'Cut Version').count(), 0, 'no Cut Version on a cut Build');
     },
   },
   {
@@ -805,6 +805,78 @@ const INC6_SCENARIOS = [
 
 
 // ---------------------------------------------------------------------------
+// Cut Builds are view-only; Parts a cut Build uses are locked on a Draft
+// ---------------------------------------------------------------------------
+
+/** @type {Scenario[]} */
+const CUT_SCENARIOS = [
+  {
+    inc: 'CUT',
+    name: 'designer-cut-build-view-only',
+    url: `${DESIGN_URL}?build=HAR-2052`,
+    bom: true,
+    api: designerApi(),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page, ctx) {
+      await assertAttr(chip(page, 'Build 2'), 'aria-pressed', 'true');
+      await expectText(page, 'Build 2 is cut. Make a new Build to change Parts.');
+      for (const name of ['Update from CAD', 'Cut Version', 'Save']) {
+        assertEqual(await button(page, name).count(), 0, `no ${name} on a cut Build`);
+      }
+      assertEqual(await page.locator('.parts-table input, .parts-table select').count(), 0, 'the Parts table is read-only');
+      assertEqual(await page.locator('tbody.parts-group-other').count(), 0, 'no Parts to add');
+      const row = partRow(page, 'HAR-2033');
+      assertEqual((await row.locator('td[data-field="material"]').textContent()).trim(), 'AL 6061', 'Material is text');
+
+      await button(page, 'New Build from this one').click();
+      await page.locator('#new-build-form').waitFor({ state: 'visible' });
+      assertTrue(await page.getByRole('radio', { name: 'Copy Parts from' }).isChecked(), 'Copy Parts from is preselected');
+      assertEqual(await page.getByLabel('Copy Parts from', { exact: true }).last().inputValue(), 'HAR-2052', 'copies from this Build');
+      await ctx.shot('designer-cut-build-new-build');
+    },
+  },
+  {
+    inc: 'CUT',
+    name: 'designer-draft-shared-locked',
+    // Draft Build 1 holds HAR-2031 (only in Drafts) and HAR-2033 (also in
+    // Active Build 2): HAR-2033's fields are locked, with Re-create.
+    url: `${DESIGN_URL}?build=HAR-2051`,
+    bom: true,
+    api: designerApi({
+      buildParts: { 'HAR-2051': 'build-parts-HAR-2051-shared', 'HAR-2052': 'build-parts-HAR-2052' },
+      extra: [
+        previewRoute,
+        { method: 'POST', path: '/api/builds/HAR-2051/parts/HAR-2033/recreate', fixture: 'recreate-HAR-2033-for-2051' },
+      ],
+    }),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page, ctx) {
+      const locked = partRow(page, 'HAR-2033');
+      await locked.getByText('In cut Build 2').waitFor();
+      assertEqual(await locked.locator('input, select').count(), 0, 'the shared Part has no field controls');
+      const re = button(page, 'Re-create for this Build: VF27P-0003A');
+      assertTrue(await re.isEnabled(), 'Re-create is offered');
+      assertTrue(await page.getByLabel('Quantity for VF27P-0001A').isEnabled(), 'the Draft-only Part stays editable');
+
+      await button(page, 'Update from CAD').click();
+      await page.locator('tbody.parts-group-new').waitFor({ state: 'visible' });
+      assertTrue(await page.getByLabel('Material for VF27P-0004A').isEnabled(), 'a Part new from CAD stays editable');
+      await ctx.shot('designer-draft-shared-after-cad');
+
+      await re.click();
+      const [call] = await waitForSent(ctx, 'POST', '/api/builds/HAR-2051/parts/HAR-2033/recreate');
+      assertTrue(!!call, 'Re-create targets the Draft');
+      await expectText(page, 'Re-created HAR-2033 as HAR-2041 (Revision B) in Build 1.');
+      await page.getByLabel('Quantity for VF27P-0003B').waitFor({ state: 'visible' });
+      assertTrue(await page.getByLabel('Quantity for VF27P-0003B').isEnabled(), 'the new Revision is editable');
+      await assertAttr(re, 'aria-disabled', 'true');
+      await assertAttr(re, 'title', 'Already re-created as HAR-2041');
+      await ctx.shot('designer-draft-shared-after-recreate');
+    },
+  },
+];
+
+// ---------------------------------------------------------------------------
 // INC-7: Assembly page helpers and scenarios
 // ---------------------------------------------------------------------------
 
@@ -841,6 +913,29 @@ const otherRow = (page, text) => page.locator('tbody.parts-group-other tr.part-r
 const INC7_SCENARIOS = [
   {
     inc: 'INC-7',
+    name: 'assembly-view-only',
+    // Every Build here is cut, so its Parts are plain text: no inputs, no
+    // Save bar, no Move or Re-create. Clone, Print, Compare and Archive stay.
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    api: assemblyApi(),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page) {
+      await inBuildRow(page, 'HAR-2033').waitFor();
+      assertEqual(await page.locator('.parts-table input, .parts-table select').count(), 0, 'no inputs or selects in the Parts table');
+      assertEqual(await page.locator('.save-bar').count(), 0, 'no Save bar');
+      assertEqual(await page.getByRole('button', { name: /^(Save|Discard|Move here|Re-create)/ }).count(), 0, 'no Save, Move or Re-create');
+      const row = inBuildRow(page, 'HAR-2033');
+      assertEqual((await row.locator('td[data-field="thickness"]').textContent()).trim(), '0.250', 'Thickness is text');
+      await button(page, 'Clone a Part').waitFor();
+      await button(page, 'More actions for Build 2').waitFor();
+      await page.getByRole('link', { name: /Print/ }).waitFor();
+      await page.getByRole('link', { name: /Compare/ }).waitFor();
+    },
+  },
+  {
+    inc: 'INC-7',
     name: 'assembly-page',
     url: ASSEMBLE_URL,
     bom: true,
@@ -860,8 +955,7 @@ const INC7_SCENARIOS = [
       await expectText(page, 'Parts in other Builds, not in Build 2');
       assertEqual((await otherRow(page, 'HAR-2032').locator('.cell-where').textContent()).trim(), 'in Build 1', 'HAR-2032 location');
       assertEqual((await otherRow(page, 'HAR-2035').locator('.cell-where').textContent()).trim(), 'in Build 3', 'HAR-2035 location');
-      await button(page, 'Move here: HAR-2035 to Build 2').waitFor();
-      await button(page, 'Re-create here: HAR-2035 for Build 2').waitFor();
+      assertEqual(await page.getByRole('button', { name: /^(Move|Re-create)/ }).count(), 0, 'no Move or Re-create');
       await page.getByRole('link', { name: /OnShape version/ }).waitFor();
     },
   },
@@ -920,9 +1014,9 @@ const INC7_SCENARIOS = [
       const row = inBuildRow(page, 'HAR-2033');
       assertEqual((await row.locator('td[data-field="material"]').textContent()).trim(), 'AL 6061', 'Material is text');
       assertEqual((await row.locator('td[data-field="machinery"]').textContent()).trim(), 'CNC Router', 'Machinery is text');
-      assertEqual(await page.getByLabel(/^(Material|Machinery) for /).count(), 0, 'no Material or Machinery controls');
-      assertTrue(await page.getByLabel('Quantity for VF27P-0003A').isEnabled(), 'Quantity stays editable');
-      assertTrue(await page.getByLabel('Powdercoat for VF27P-0003A').isEnabled(), 'Powdercoat stays editable');
+      assertEqual((await row.locator('td[data-field="quantity"]').textContent()).trim(), '1', 'Quantity is text');
+      assertEqual((await row.locator('td[data-field="powdercoat"]').textContent()).trim(), 'Black', 'Powdercoat is text');
+      assertEqual(await page.getByLabel(/ for VF27P-/).count(), 0, 'no Part field controls');
     },
   },
   {
@@ -945,7 +1039,7 @@ const INC7_SCENARIOS = [
       await dialog.getByRole('button', { name: 'Clone', exact: true }).click();
       const [req] = await waitForSent(ctx, 'POST', '/api/parts/HAR-2032/clone');
       assertEqual(req.body, { epicKey: 'HAR-2030', name: 'Plate spare', quantity: 1 }, 'clone body');
-      await expectText(page, "Cloned as HAR-2040 (VF27P-0004A). It's listed under Parts in other Builds; Move it here to add it.");
+      await expectText(page, 'Cloned as HAR-2040 (VF27P-0004A).');
       // The chain-Parts re-fetch is unchanged (search lag), yet the row shows.
       await otherRow(page, 'HAR-2040').waitFor({ state: 'visible' });
       assertEqual((await otherRow(page, 'HAR-2040').locator('.cell-where').textContent()).trim(), 'Not in any Build', 'clone location');
@@ -1116,147 +1210,6 @@ const INC7_SCENARIOS = [
       await expectText(page, "Couldn't open this Assembly: the team tracker didn't respond (503).");
       await button(page, 'Retry').waitFor();
       await page.getByRole('link', { name: 'Back to all Assemblies' }).waitFor();
-    },
-  },
-  {
-    inc: 'INC-7',
-    name: 'assembly-action-error',
-    url: ASSEMBLE_URL,
-    bom: true,
-    assemble: true,
-    expectStatuses: [503],
-    api: assemblyApi({ extra: [{ method: 'POST', path: '/api/builds/HAR-2052/save', fixture: 'move-503' }] }),
-    waitFor: 'tbody.parts-group-in tr.part-row',
-    async run(page) {
-      await button(page, 'Move here: HAR-2035 to Build 2').click();
-      await expectText(page, "Couldn't move HAR-2035 to Build 2: the team tracker didn't respond (503).");
-      assertTrue(await button(page, 'Move here: HAR-2035 to Build 2').isEnabled(), 'Move is enabled again');
-      assertTrue(await button(page, 'Re-create here: HAR-2035 for Build 2').isEnabled(), 'Re-create is enabled again');
-      await otherRow(page, 'HAR-2035').waitFor();
-    },
-  },
-  {
-    inc: 'INC-7',
-    name: 'assembly-recreate-409',
-    url: ASSEMBLE_URL,
-    bom: true,
-    assemble: true,
-    expectStatuses: [409],
-    api: assemblyApi({ extra: [{ method: 'POST', path: '/api/builds/HAR-2052/parts/HAR-2032/recreate', fixture: 'recreate-HAR-2032-409' }] }),
-    waitFor: 'tbody.parts-group-in tr.part-row',
-    async run(page) {
-      await button(page, 'Re-create here: HAR-2032 for Build 2').click();
-      await expectText(page, 'HAR-2032 was already re-created as HAR-2045. Re-create HAR-2045 instead.');
-      const re = button(page, 'Re-create here: HAR-2032 for Build 2');
-      await assertAttr(re, 'aria-disabled', 'true');
-      await assertAttr(re, 'title', 'Already re-created as HAR-2045');
-      await expectNoText(page, '409');
-    },
-  },
-  {
-    inc: 'INC-7',
-    name: 'assembly-after-move',
-    url: ASSEMBLE_URL,
-    bom: true,
-    assemble: true,
-    // The Build's Parts re-fetch still lacks HAR-2035 (search lag).
-    api: assemblyApi({ extra: [{ method: 'POST', path: '/api/builds/HAR-2052/save', fixture: 'move-HAR-2035-ok' }] }),
-    waitFor: 'tbody.parts-group-in tr.part-row',
-    async run(page, ctx) {
-      await button(page, 'Move here: HAR-2035 to Build 2').click();
-      const [save] = await waitForSent(ctx, 'POST', '/api/builds/HAR-2052/save');
-      assertEqual(save.body, { links: [{ ref: 'HAR-2035', key: 'HAR-2035' }] }, 'Move sends the save body');
-      await inBuildRow(page, 'HAR-2035').waitFor({ state: 'visible' });
-      assertEqual(await otherRow(page, 'HAR-2035').count(), 0, 'HAR-2035 left the other-Builds section');
-      await expectText(page, 'Moved HAR-2035 to Build 2.');
-      assertEqual(sent(ctx, 'POST', /^\/api\/builds\/[^/]+\/parts$/).length, 0, 'nothing went to POST /api/builds/:k/parts');
-    },
-  },
-  {
-    inc: 'INC-7',
-    name: 'assembly-save',
-    url: ASSEMBLE_URL,
-    bom: true,
-    assemble: true,
-    skipMainShot: true,
-    api: assemblyApi({ extra: [{ method: 'POST', path: '/api/builds/HAR-2052/save', fixture: 'save-update-HAR-2033' }] }),
-    waitFor: 'tbody.parts-group-in tr.part-row',
-    async run(page, ctx) {
-      await page.getByLabel('Quantity for VF27P-0003A').fill('2');
-      await expectText(page, 'Unsaved: 1 change');
-      await ctx.shot('assembly-save-bar');
-      await button(page, 'Save').click();
-      const [save] = await waitForSent(ctx, 'POST', '/api/builds/HAR-2052/save');
-      assertEqual(save.body, {
-        creates: [],
-        updates: [{ ref: 'HAR-2033', key: 'HAR-2033', quantity: 2, material: 'AL 6061', machinery: 'CNC Router', powdercoat: 'Black', thickness: '0.250', link: false }],
-        links: [],
-      }, 'Assembly-page save body');
-      await inBuildRow(page, 'HAR-2033').getByText('Saved').waitFor();
-      assertEqual(await page.getByLabel('Quantity for VF27P-0003A').inputValue(), '2', 'the saved value stays while search lags');
-    },
-  },
-  {
-    inc: 'INC-7',
-    name: 'assembly-after-recreate',
-    url: `${ASSEMBLE_URL}?build=HAR-2053`,
-    bom: true,
-    assemble: true,
-    skipMainShot: true,
-    api: assemblyApi({
-      stories: 'stories-chain-HAR-2030',
-      buildParts: { 'HAR-2051': 'build-parts-a-HAR-2051', 'HAR-2052': 'build-parts-a-HAR-2052', 'HAR-2053': 'build-parts-b3-one' },
-      extra: [{ method: 'POST', path: '/api/builds/HAR-2053/parts/HAR-2033/recreate', fixture: 'recreate-HAR-2033-ok' }],
-    }),
-    waitFor: 'tbody.parts-group-other tr.part-row',
-    async run(page, ctx) {
-      await button(page, 'Re-create here: HAR-2033 for Build 3').click();
-      await waitForSent(ctx, 'POST', '/api/builds/HAR-2053/parts/HAR-2033/recreate');
-      await inBuildRow(page, 'VF27P-0003B').waitFor({ state: 'visible' });
-      const re = button(page, 'Re-create here: HAR-2033 for Build 3');
-      await assertAttr(re, 'aria-disabled', 'true');
-      assertTrue((await re.getAttribute('title')).includes('HAR-2041'), 'the tooltip names HAR-2041');
-      await expectText(page, 'Re-created HAR-2033 as HAR-2041 (Revision B) in Build 3.');
-      await ctx.shot('assembly-after-recreate');
-    },
-  },
-  {
-    inc: 'INC-7',
-    name: 'assembly-recreate-link-failed',
-    url: `${ASSEMBLE_URL}?build=HAR-2053`,
-    bom: true,
-    assemble: true,
-    expectStatuses: [503],
-    api: assemblyApi({
-      stories: 'stories-chain-HAR-2030',
-      buildParts: { 'HAR-2051': 'build-parts-a-HAR-2051', 'HAR-2052': 'build-parts-a-HAR-2052', 'HAR-2053': 'build-parts-b3-one' },
-      extra: [{ method: 'POST', path: '/api/builds/HAR-2053/parts/HAR-2033/recreate', fixture: 'recreate-HAR-2033-revises-503' }],
-    }),
-    waitFor: 'tbody.parts-group-other tr.part-row',
-    async run(page) {
-      await button(page, 'Re-create here: HAR-2033 for Build 3').click();
-      await expectText(page, "Created HAR-2041, but couldn't record it as the next Revision of HAR-2033: the team tracker didn't respond (503).");
-      await otherRow(page, 'VF27P-0003B').waitFor({ state: 'visible' });
-      await button(page, 'Move here: HAR-2041 to Build 3').waitFor();
-      await assertAttr(button(page, 'Re-create here: HAR-2033 for Build 3'), 'aria-disabled', 'true');
-    },
-  },
-  {
-    inc: 'INC-7',
-    name: 'assembly-recreate-already-revised',
-    url: `${ASSEMBLE_URL}?build=HAR-2053`,
-    bom: true,
-    assemble: true,
-    api: assemblyApi(),
-    waitFor: 'tbody.parts-group-other tr.part-row',
-    async run(page, ctx) {
-      const re = button(page, 'Re-create here: HAR-2033 for Build 3');
-      await assertAttr(re, 'aria-disabled', 'true');
-      assertEqual(await re.getAttribute('title'), 'Already re-created as HAR-2035. Re-create HAR-2035 instead.', 'tooltip names VF27P-0003B');
-      await re.click({ force: true });
-      await page.waitForTimeout(200);
-      assertEqual(sent(ctx, 'POST', /\/recreate$/).length, 0, 'a disabled Re-create sends nothing');
-      assertTrue(await button(page, 'Re-create here: HAR-2032 for Build 3').isEnabled(), 'other Parts can still be re-created');
     },
   },
   {
@@ -1898,6 +1851,7 @@ const INC8_SCENARIOS = [
 
 /** @type {Scenario[]} */
 const SCENARIOS = [
+  ...CUT_SCENARIOS,
   // ----- INC-5: tokens, primitives and the existing pages -----
   {
     inc: 'INC-5',

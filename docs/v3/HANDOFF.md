@@ -19,12 +19,12 @@ ValorBOM (Valor 6800, a FIRST Robotics team) is a Node/Express + React tool that
 | 0 Jira schema | Done, live on jira.valor6800.com |
 | 1 Backend services (BuildService, RevisionService, OnShape client additions, migration script) | Done |
 | 2 Designer | Done; rebuilt in the UX refactor as `/a/:key/design` |
-| 3 Assembly page: Build tabs, per-Build BOM, Move/Re-create, Archive, Clone a Part, Print, Compare Builds | Done; rebuilt in the UX refactor as `/a/:key/assemble` (Cut Version moved to the Designer only) |
+| 3 Assembly page: Build tabs, per-Build BOM, Move/Re-create, Archive, Clone a Part, Print, Compare Builds | Done; rebuilt in the UX refactor as `/a/:key/assemble` (Cut Version moved to the Designer only); now view-only for Parts, with Move and Re-create removed (Re-create lives in the Designer) |
 | UX refactor (Home search, chooser, OnShape onboarding that also creates Build 1, Build save endpoint, bug fixes B1 to B6) | Done (INC-1 to INC-9) |
 | 4 OnShape metadata round-trip | **Not started** |
 | 5 Guidance (teaching empty states beyond the glossary toggletips), instructions authoring (steps + images), activity log | **Not started** |
 
-Verified: `npm test` -> 42 suites / 937 tests pass; `npx vite build --config src/client/vite.config.js` is clean; `npm run test:visual -- --all` passes against fixtures (87 scenarios: screenshots, axe, vocabulary and console checks).
+Verified: `npm test` -> 43 suites / 961 tests pass; `npx vite build --config src/client/vite.config.js` is clean; `npm run test:visual -- --all` passes against fixtures (83 scenarios: screenshots, axe, vocabulary and console checks).
 **Not verified: a live end-to-end run against Jira and OnShape.** Every UI check runs against mocked `/api` responses. The test pass at the end of this file is the next step.
 
 ## Pages and routes (client)
@@ -82,6 +82,20 @@ The OnShape export endpoints `POST /api/export/step`, `POST /api/export/stl` and
 
 This is safe only while the server binds loopback (`127.0.0.1`, the default). **These endpoints must go behind the existing Authentik gate before the server is reachable from other machines**, meaning any `HOST` other than loopback or any deploy. `index.js` already warns at startup when bound beyond loopback without auth.
 
+## Cut Builds are immutable
+
+A cut Build is any Build that isn't a Draft (Active, Superseded, Archived). Its Parts list never changes; to change anything, make a new Build. The server enforces this (`utils/cutBuilds.js`), reading statuses from the tracker by key at write time, and answers 409 with no write for:
+
+- linking a Part into a cut Build: `POST /api/builds/:key/parts`, the save endpoint's links and Move, `cloneBuildParts` into a cut Build, and Re-create targeting a cut Build;
+- any `POST /api/builds/:key/save` on a cut Build (refused before any read of the Parts);
+- field updates to a Part that any cut Build uses, through the save (per-item result `{ ok: false, status: 409, locked: true, cutBuilds }`) and `PUT /api/stories/:key` (`PartService.updateStory`). The message names the cut Builds and says to Re-create the Part for the Draft.
+
+Still allowed: Archive, Cut Version on a Draft (and the Supersede it does), a new Build copying Parts from a cut Build, Re-create of a shared Part into a Draft (new revision linked only to the Draft), Clone a Part, and updates to Parts used only by Drafts.
+
+UI: the Designer shows a cut Build view-only (no Update from CAD, Save, Cut Version or add-existing-Part) with a "New Build from this one" button that opens + New Build with Copy Parts from preselected. On a Draft, a row whose Part a cut Build also uses is locked (plain text, "In cut Build N") with "Re-create for this Build". The Assembly page is view-only for Parts: no edits, Save bar, Move or Re-create; Clone, Print, Compare, Archive, the OnShape link and the two-Active repair stay.
+
+Known gap: there is no "remove from Build". After Re-create of a shared Part that was already in the Draft, the Draft holds both the old and the new revision.
+
 ## Archived Builds are final
 
 ValorBOM has no un-archive action, and the Archive confirm says "This can't be undone from ValorBOM." The Build workflow has no transition out of Archived. A tracker admin can add one later; ValorBOM would then need a matching button and the new transition id in `buildConstants.js`.
@@ -129,7 +143,7 @@ Constants live in `src/server/utils/buildConstants.js`:
 - Instructions authoring was moved from Phase 3 to Phase 5.
 - No glossary `?` buttons or teaching/helper text in the UI. Terms will be explained on a team Confluence page (URL TBD; no link in the app yet).
 - The Assembly page hides Draft Builds (tabs, Compare, Print, labels). A `?build=` pointing at a Draft falls back to the Active Build. The Designer still shows Drafts.
-- Material and Machinery are read-only on the Assembly page (UI-only). Its saves send the stored values; the server still accepts any value.
+- Cut Builds are immutable (server-enforced); shared Parts are locked until Re-created; the Assembly page is view-only for Parts. See "Cut Builds are immutable".
 
 ## Known gaps / open items
 
@@ -160,7 +174,7 @@ Constants live in `src/server/utils/buildConstants.js`:
 
 1. On Home, paste the OnShape link of an assembly whose Properties have Project, Part number, Revision and Name filled in. Confirm, and check that the Designer opens on Build 1 and runs Update from CAD.
 2. In the Designer, Save, then check in the tracker that each new Part has a Revision, is linked to Build 1, and has no Build fields set. Create a second Build with "What's different?", then Cut Version on one Build.
-3. Search for the Assembly on Home by number, name and key, open it in Assembly mode: Build tabs, Move/Re-create on a Part from another Build, edit + Save, Clone a Part, Compare Builds, Print, Archive.
+3. Search for the Assembly on Home by number, name and key, open it in Assembly mode: Build tabs, Clone a Part, Compare Builds, Print, Archive. Back in the Designer, select the cut Build, use "New Build from this one", and Re-create a locked shared Part in the new Draft.
 4. Paste the same OnShape link again and check that Home offers to open the existing Assembly instead of creating a second one.
 5. Watch the browser console and the server log for errors; report anything odd.
 

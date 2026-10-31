@@ -159,3 +159,14 @@ describe('batchBody', () => {
     expect(batches[1].updates).toHaveLength(20);
   });
 });
+
+describe('planSave with a Part a cut Build uses', () => {
+  it('sends a ticked locked row as a link only, never as an update', () => {
+    const row = {
+      rowId: 'HAR-2033', key: 'HAR-2033', group: 'other', readOnly: false, sharedLocked: true, dirty: false,
+      values: { quantity: 1, material: 'PLA', machinery: '3D Printer', powdercoat: 'None', thickness: 'None' },
+    };
+    const { body } = planSave({ newFromCad: [], inBuild: [], other: [row] }, new Set(['HAR-2033']));
+    expect(body).toEqual({ creates: [], updates: [], links: [{ ref: 'HAR-2033', key: 'HAR-2033' }] });
+  });
+});

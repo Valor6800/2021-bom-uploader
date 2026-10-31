@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useBlocker, useLocation, useNavigate, useParams, useSearchParams,
 } from 'react-router-dom';
-import { createBuild, cutBuildVersion, previewParts, saveBuildParts } from '../api/client.js';
+import {
+  createBuild, cutBuildVersion, previewParts, recreatePartForBuild, saveBuildParts,
+} from '../api/client.js';
 import { useAssemblyData } from '../components/assembly-shared/useAssemblyData.js';
 import AssemblyHeader from '../components/assembly-shared/AssemblyHeader.jsx';
 import AssemblyLoadError from '../components/assembly-shared/AssemblyLoadError.jsx';
@@ -18,13 +20,14 @@ import Button from '../components/ui/Button.jsx';
 import Dialog from '../components/ui/Dialog.jsx';
 import EmptyState from '../components/ui/EmptyState.jsx';
 import StickySaveBar from '../components/ui/StickySaveBar.jsx';
-import { friendlyClause } from '../lib/friendlyError.js';
+import { friendlyClause, friendlyError } from '../lib/friendlyError.js';
 import {
   buildLabel, cutErrorEntries, cutResultEntries, defaultBuildKey, dropAgreedStatus, listLabels,
   mergeBuilds, nextBuildNumber, overlayBuildStatus, pickerBuilds, visibleBuilds,
 } from '../lib/buildNames.js';
 import {
-  PART_FIELDS, addSessionLinks, deriveDesignerRows, dropAgreedLinks, dropAgreedParts,
+  PART_FIELDS, addSessionLinks, deriveDesignerRows, dropAgreedLinks, dropAgreedParts, dropAgreedRecreated,
+  mergeParts, newerRevisionOf,
 } from '../lib/designerRows.js';
 import {
   SAVE_BATCH, applySaveResults, batchBody, bodySize, planSave, saveCounts,
@@ -52,6 +55,9 @@ function addCreatedParts(prev, results, batch, preview, assemblyKey) {
   }
   return next;
 }
+
+/** Add one Part object to a `Map<key, Part>`; returns a new Map. */
+const withPart = (map, part) => (part?.key ? new Map(map).set(part.key, part) : map);
 
 const emptyWork = () => ({
   edits: {},
@@ -94,6 +100,10 @@ function DesignerPage({ assemblyKey: key }) {
   const [saveProgress, setSaveProgress] = useState(null);
   const [saveError, setSaveError] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
+  const [newStart, setNewStart] = useState('empty'); // 'copy' from "New Build from this one"
+  const [recreated, setRecreated] = useState(() => new Map());
+  const [recreatingKey, setRecreatingKey] = useState(null);
+  const [actionMsg, setActionMsg] = useState(null); // { variant, text }
   const [createBusy, setCreateBusy] = useState(null); // 'form' | 'empty'
   const [newError, setNewError] = useState(null);
   const [emptyError, setEmptyError] = useState(null);
@@ -122,7 +132,9 @@ function DesignerPage({ assemblyKey: key }) {
   const nextNumber = nextBuildNumber(chainBuilds);
   const hasIds = !!(assembly?.documentId && assembly?.workspaceId && assembly?.elementId);
   const loadFailed = !!data.secondaryError;
-  const locked = !selectedBuild || loadFailed;
+  // A cut Build never changes: it is shown view-only.
+  const viewOnly = !!selectedBuild && selectedBuild.status !== 'Draft';
+  const locked = !selectedBuild || loadFailed || viewOnly;
 
   // Overlays end once a re-fetch agrees.
   useEffect(() => {
@@ -130,6 +142,7 @@ function DesignerPage({ assemblyKey: key }) {
   }, [data.fetchedBuilds]);
   useEffect(() => {
     setCreatedParts((prev) => dropAgreedParts(prev, data.parts));
+    setRecreated((prev) => dropAgreedRecreated(prev, data.parts));
   }, [data.parts]);
   useEffect(() => {
     setWork((w) => {
@@ -222,8 +235,8 @@ function DesignerPage({ assemblyKey: key }) {
     next.delete('cad');
     if (selectedKey) next.set('build', selectedKey);
     setSearchParams(next, { replace: true, state: location.state });
-    if (selectedKey && hasIds) runCad({ fresh: false });
-  }, [data.ready, assembly, searchParams, setSearchParams, location.state, selectedKey, hasIds, runCad]);
+    if (selectedKey && hasIds && !viewOnly) runCad({ fresh: false });
+  }, [data.ready, assembly, searchParams, setSearchParams, location.state, selectedKey, hasIds, viewOnly, runCad]);
 
   // Pin the default selection into ?build once the list is final, so a
   // status change (a cut, a lagging re-fetch) never moves the student to
@@ -272,9 +285,58 @@ function DesignerPage({ assemblyKey: key }) {
     setSaveError(null);
   }, []);
 
+  // ----- Re-create a Part a cut Build uses, for this Draft -----
+  const recreate = async (row) => {
+    if (!selectedKey) return;
+    const target = selectedKey;
+    const name = buildName;
+    setRecreatingKey(row.key);
+    setActionMsg(null);
+    try {
+      const res = await recreatePartForBuild(target, row.key);
+      setCreatedParts((prev) => withPart(prev, res.part));
+      setWork((w) => ({ ...w, linkedThisSession: addSessionLinks(w.linkedThisSession, target, [res.key]) }));
+      setRecreated((prev) => new Map(prev).set(row.key, res.key));
+      setActionMsg({ variant: 'info', text: `Re-created ${row.key} as ${res.key} (Revision ${res.revision}) in ${name}.` });
+      data.refresh();
+    } catch (err) {
+      const body = err?.body ?? {};
+      if (err?.status === 409 && body.recreatedAs) {
+        setRecreated((prev) => new Map(prev).set(row.key, body.recreatedAs));
+        setActionMsg({ variant: 'error', text: friendlyError(err) });
+        data.refresh();
+      } else if ((body.stage === 'revises-link' || body.stage === 'used-in-link') && body.key) {
+        setCreatedParts((prev) => withPart(prev, body.part));
+        setRecreated((prev) => new Map(prev).set(row.key, body.key));
+        setActionMsg({
+          variant: 'error',
+          text: body.stage === 'revises-link'
+            ? `Created ${body.key}, but couldn't record it as the next Revision of ${row.key}: ${friendlyClause(err)}`
+            : `Created ${body.key}, but couldn't add it to ${name}: ${friendlyClause(err)} Tick it under Other Parts to add it.`,
+        });
+        data.refresh();
+      } else {
+        setActionMsg({ variant: 'error', text: `Couldn't re-create ${row.key} for ${name}: ${friendlyClause(err)}` });
+      }
+    } finally {
+      setRecreatingKey(null);
+    }
+  };
+
+  const allParts = useMemo(() => mergeParts(data.parts, createdParts), [data.parts, createdParts]);
+  /** Why "Re-create for this Build" is off for this Part, or null. */
+  const recreateBlocked = (row) => {
+    const part = allParts.find((p) => p.key === row.key);
+    const newer = part ? newerRevisionOf(part, allParts) : null;
+    if (newer) return `Already re-created as ${newer.key}`;
+    const session = recreated.get(row.key);
+    return session ? `Already re-created as ${session}` : null;
+  };
+
   // ----- Builds: select, create -----
   const selectBuild = useCallback((buildKey) => {
     setWrongBuild(false);
+    setActionMsg(null);
     const next = new URLSearchParams(searchParams);
     next.set('build', buildKey);
     next.delete('cad');
@@ -405,9 +467,7 @@ function DesignerPage({ assemblyKey: key }) {
       : loadFailed
         ? 'Reload the missing data first.'
         : null;
-  const cutDisabledReason = selectedBuild && selectedBuild.status !== 'Draft'
-    ? 'Already cut'
-    : !hasIds
+  const cutDisabledReason = !hasIds
       ? 'This Assembly has no OnShape link.'
       : loadFailed
         ? 'Reload the missing data first.'
@@ -456,7 +516,7 @@ function DesignerPage({ assemblyKey: key }) {
         builds={pickerList}
         selectedKey={selectedKey}
         onSelect={onPick}
-        onNew={() => { setNewError(null); setNewOpen((o) => !o); }}
+        onNew={() => { setNewError(null); setNewStart('empty'); setNewOpen((o) => !o); }}
         disabled={loadFailed || !data.ready}
         newDisabled={!!createBusy}
         newOpen={newOpen}
@@ -464,10 +524,12 @@ function DesignerPage({ assemblyKey: key }) {
 
       {newOpen && (
         <NewBuildForm
+          key={newStart}
           defaultName={assembly.name}
           nextNumber={nextNumber}
-          copyFrom={builds.filter((b) => b.status !== 'Archived')}
+          copyFrom={builds.filter((b) => b.status !== 'Archived' || b.key === selectedKey)}
           defaultCopyKey={selectedKey}
+          defaultStart={newStart}
           busy={createBusy === 'form'}
           error={newError}
           onCreate={(values) => create(values, 'form')}
@@ -526,16 +588,18 @@ function DesignerPage({ assemblyKey: key }) {
             ) : 'Parts'}
           </h2>
           <div className="build-panel-actions">
-            <Button
-              variant="secondary"
-              onClick={() => runCad({ fresh: true })}
-              ariaDisabled={!!cadDisabledReason}
-              disabled={cadBusy || saving}
-              aria-describedby={cadDisabledReason ? 'cad-help' : undefined}
-            >
-              <span aria-hidden="true">⟳ </span>{cadBusy ? 'Reading CAD…' : 'Update from CAD'}
-            </Button>
-            {selectedBuild && (
+            {!viewOnly && (
+              <Button
+                variant="secondary"
+                onClick={() => runCad({ fresh: true })}
+                ariaDisabled={!!cadDisabledReason}
+                disabled={cadBusy || saving}
+                aria-describedby={cadDisabledReason ? 'cad-help' : undefined}
+              >
+                <span aria-hidden="true">⟳ </span>{cadBusy ? 'Reading CAD…' : 'Update from CAD'}
+              </Button>
+            )}
+            {selectedBuild && !viewOnly && (
               <Button
                 variant="secondary"
                 onClick={openCut}
@@ -548,8 +612,32 @@ function DesignerPage({ assemblyKey: key }) {
             )}
           </div>
         </div>
-        {cadDisabledReason && <p id="cad-help" className="form-help build-panel-help">{cadDisabledReason}</p>}
-        {cadError && <Alert variant="error" role="alert">{cadError}</Alert>}
+        {cadDisabledReason && !viewOnly && <p id="cad-help" className="form-help build-panel-help">{cadDisabledReason}</p>}
+        {cadError && !viewOnly && <Alert variant="error" role="alert">{cadError}</Alert>}
+
+        {viewOnly && (
+          <Alert
+            variant="info"
+            role="status"
+            actions={(
+              <Button
+                variant="primary"
+                onClick={() => { setNewError(null); setNewStart('copy'); setNewOpen(true); }}
+                disabled={!!createBusy}
+              >
+                New Build from this one
+              </Button>
+            )}
+          >
+            {buildName} is cut. Make a new Build to change Parts.
+          </Alert>
+        )}
+
+        {actionMsg && (
+          <Alert variant={actionMsg.variant} role={actionMsg.variant === 'error' ? 'alert' : 'status'}>
+            {actionMsg.text}
+          </Alert>
+        )}
 
         {buildWarning && <Alert variant="warning" role="alert">{buildWarning}</Alert>}
 
@@ -562,7 +650,7 @@ function DesignerPage({ assemblyKey: key }) {
           onResolved={() => { setCutFailedKey(null); data.refresh(); }}
         />
 
-        {preview?.unidentified?.length > 0 && <UnidentifiedPartsWarning parts={preview.unidentified} />}
+        {!viewOnly && preview?.unidentified?.length > 0 && <UnidentifiedPartsWarning parts={preview.unidentified} />}
 
         {!selectedBuild && hasAnyParts && data.ready && (
           <p className="form-help">Create Build 1 to add these Parts to it.</p>
@@ -580,6 +668,11 @@ function DesignerPage({ assemblyKey: key }) {
             heldBack={heldBack}
             locked={locked}
             busy={saving}
+            viewOnly={viewOnly}
+            onRecreate={recreate}
+            recreatingKey={recreatingKey}
+            recreateBlocked={recreateBlocked}
+            actionsLocked={!!recreatingKey}
           />
         ) : (
           <p className="page-loading" role="status">Loading Builds and Parts…</p>

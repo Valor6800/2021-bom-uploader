@@ -246,3 +246,39 @@ describe('compareBuildRows', () => {
     expect(compareBuildRows([P31], links, 'B2', '')).toEqual([]);
   });
 });
+
+describe('deriveDesignerRows locks Parts a cut Build uses', () => {
+  // Draft Build 1 holds HAR-2031 (Draft-only) and HAR-2033 (also in Active Build 2).
+  const shared = (over = {}) => base({
+    linkedByPart: linksFromBuildParts(new Map([
+      ['HAR-2051', ['HAR-2031', 'HAR-2033']],
+      ['HAR-2052', ['HAR-2033']],
+    ])),
+    ...over,
+  });
+  const row = (groups, key) => [...groups.inBuild, ...groups.other].find((r) => r.key === key);
+
+  it('marks the shared row locked with the cut Build, and leaves a Draft-only row editable', () => {
+    const { groups } = shared();
+    expect(row(groups, 'HAR-2033')).toMatchObject({ sharedLocked: true, lockedLabel: 'In cut Build 2' });
+    expect(row(groups, 'HAR-2031')).toMatchObject({ sharedLocked: false, lockedLabel: null });
+  });
+
+  it('ignores edits and CAD values on a locked row, but still describes the CAD change', () => {
+    const { groups, pendingOps } = shared({
+      edits: { 'HAR-2033': { quantity: 5 }, 'HAR-2031': { quantity: 7 } },
+      preview: { newParts: [], existingParts: [{ story: { key: 'HAR-2033' }, bomItem: { ...bomItem('VF27P-0003A', 'Bash bar 2"'), quantity: 3 } }] },
+    });
+    const locked = row(groups, 'HAR-2033');
+    expect(locked.values.quantity).toBe(1);
+    expect(locked.dirty).toBe(false);
+    expect(locked.changeText).toBe('Changed in CAD: Qty 1→3');
+    expect(row(groups, 'HAR-2031')).toMatchObject({ dirty: true, values: expect.objectContaining({ quantity: 7 }) });
+    expect(pendingOps).toEqual(['HAR-2031']);
+  });
+
+  it('does not lock a Part whose other Builds are all Drafts', () => {
+    const { groups } = shared({ builds: builds.map((b) => ({ ...b, status: 'Draft' })) });
+    expect(row(groups, 'HAR-2033').sharedLocked).toBe(false);
+  });
+});

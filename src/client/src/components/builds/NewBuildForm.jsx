@@ -11,17 +11,18 @@ import { buildLabel, buildSummaryPreview } from '../../lib/buildNames.js';
  * @param {number} props.nextNumber      Display only; the server assigns it
  * @param {object[]} props.copyFrom      Builds whose Parts may be copied
  * @param {string|null} [props.defaultCopyKey]
+ * @param {'empty'|'copy'} [props.defaultStart]
  * @param {boolean} props.busy
  * @param {string|null} props.error      Text shown under the form
  * @param {(values: { name: string, description: string, cloneFromBuildKey?: string }) => void} props.onCreate
  * @param {() => void} props.onCancel
  */
 export default function NewBuildForm({
-  defaultName, nextNumber, copyFrom, defaultCopyKey = null, busy, error, onCreate, onCancel,
+  defaultName, nextNumber, copyFrom, defaultCopyKey = null, defaultStart = 'empty', busy, error, onCreate, onCancel,
 }) {
   const [name, setName] = useState(defaultName);
   const [description, setDescription] = useState('');
-  const [start, setStart] = useState('empty');
+  const [start, setStart] = useState(defaultStart === 'copy' && copyFrom.length > 0 ? 'copy' : 'empty');
   const [copyKey, setCopyKey] = useState(defaultCopyKey ?? copyFrom[0]?.key ?? '');
   const nameRef = useRef(null);
   const ids = useId();

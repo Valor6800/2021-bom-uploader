@@ -1,8 +1,0 @@
-{
-  "status": 503,
-  "body": {
-    "error": "Service Unavailable",
-    "status": 503,
-    "source": "tracker"
-  }
-}

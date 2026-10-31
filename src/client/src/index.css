@@ -1720,6 +1720,7 @@ a { color: inherit; text-decoration: none; }
 .status-text { color: var(--text-muted); font-size: var(--text-sm); }
 .status-detail { display: block; margin-top: var(--space-1); color: var(--warning); font-size: var(--text-xs); }
 .part-row-readonly .status-detail { color: var(--text-muted); }
+.row-recreate { display: block; margin-top: var(--space-2); }
 .group-row th {
   background: var(--surface-1);
   color: var(--text);

@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Link, useBlocker, useLocation, useNavigate, useParams, useSearchParams,
+  Link, useLocation, useNavigate, useParams, useSearchParams,
 } from 'react-router-dom';
-import {
-  archiveBuild, clonePart, recreatePartForBuild, saveBuildParts,
-} from '../api/client.js';
+import { archiveBuild, clonePart } from '../api/client.js';
 import { useAssemblyData } from '../components/assembly-shared/useAssemblyData.js';
 import AssemblyHeader from '../components/assembly-shared/AssemblyHeader.jsx';
 import AssemblyLoadError from '../components/assembly-shared/AssemblyLoadError.jsx';
@@ -20,31 +18,13 @@ import Button from '../components/ui/Button.jsx';
 import Dialog from '../components/ui/Dialog.jsx';
 import DisclosureMenu from '../components/ui/DisclosureMenu.jsx';
 import EmptyState from '../components/ui/EmptyState.jsx';
-import StickySaveBar from '../components/ui/StickySaveBar.jsx';
-import { friendlyClause, friendlyError } from '../lib/friendlyError.js';
+import { friendlyClause } from '../lib/friendlyError.js';
 import {
   buildLabel, currentBuildOf, defaultAssembleBuildKey, dropAgreedStatus, overlayBuildStatus, visibleBuilds,
 } from '../lib/buildNames.js';
 import {
-  addSessionLinks, deriveDesignerRows, dropAgreedLinks, dropAgreedParts, dropAgreedRecreated,
-  mergeLinks, mergeParts, newerRevisionOf,
+  deriveDesignerRows, dropAgreedParts, mergeLinks, mergeParts,
 } from '../lib/designerRows.js';
-import {
-  SAVE_BATCH, applySaveResults, batchBody, bodySize, planSave,
-} from '../lib/designerSave.js';
-
-const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-const NO_SELECTION = new Set();
-/** Fields only the Designer changes; this page shows them as text. */
-const LOCKED_FIELDS = ['material', 'machinery'];
-
-const emptyWork = () => ({
-  edits: {},
-  createdKeys: {},
-  linkedThisSession: new Map(),
-  selection: new Set(),
-  rowResults: {},
-});
 
 /** Add one Part object to a `Map<key, Part>`; returns a new Map. */
 const withPart = (map, part) => (part?.key ? new Map(map).set(part.key, part) : map);
@@ -65,9 +45,10 @@ function compareDefault(builds, selectedKey) {
 
 /**
  * Assembly page `/a/:key/assemble` (design 3.5): what an assembly student
- * needs for one Assembly. One tab per Build, the Build's Parts with the
- * Parts of other Builds as Move or Re-create candidates, Clone, Archive,
- * Compare and Print. No Cut Version here: that is a CAD decision (Q3).
+ * needs for one Assembly. One tab per cut Build, the Build's Parts as
+ * plain text (a cut Build never changes; the Designer makes a new Build),
+ * Parts in other Builds, Clone, Archive, Compare and Print. No Cut Version
+ * here: that is a CAD decision (Q3).
  *
  * Keyed by the Assembly key, so switching Revision starts clean, and its
  * state is its own (the Designer keeps a separate copy).
@@ -85,14 +66,8 @@ function AssemblyPage({ assemblyKey: key }) {
   const { assembly } = data;
 
   const [statusThisSession, setStatusThisSession] = useState(() => new Map());
-  const [work, setWork] = useState(emptyWork);
   const [createdParts, setCreatedParts] = useState(() => new Map());
-  const [recreated, setRecreated] = useState(() => new Map());
-  const [actionBusy, setActionBusy] = useState(null); // { key, kind }
   const [actionMsg, setActionMsg] = useState(null); // { variant, text }
-  const [saving, setSaving] = useState(false);
-  const [saveProgress, setSaveProgress] = useState(null);
-  const [saveError, setSaveError] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [cloneBusy, setCloneBusy] = useState(false);
@@ -100,11 +75,8 @@ function AssemblyPage({ assemblyKey: key }) {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [archiveError, setArchiveError] = useState(null);
-  const [switchTo, setSwitchTo] = useState(null);
   const [wrongBuild, setWrongBuild] = useState(false);
   const [compareKeys, setCompareKeys] = useState(null); // [a, b]
-  const keepRef = useRef(null);
-  const leaveRef = useRef(null);
   const archiveCancelRef = useRef(null);
 
   // ----- Builds -----
@@ -117,8 +89,8 @@ function AssemblyPage({ assemblyKey: key }) {
     [chainBuilds, key],
   );
   // Drafts belong to the designer. Everything on this page (tabs, Compare,
-  // Print, the two-Active check, current-Build labels, Move and Re-create
-  // targets) sees only the Builds that are ready.
+  // Print, the two-Active check, current-Build labels) sees only the
+  // Builds that are ready.
   const builds = useMemo(() => allBuilds.filter((b) => b.status !== 'Draft'), [allBuilds]);
   const requested = searchParams.get('build');
   const view = searchParams.get('view');
@@ -128,7 +100,6 @@ function AssemblyPage({ assemblyKey: key }) {
   const archivedCount = builds.filter((b) => b.status === 'Archived').length;
   const tabBuilds = builds.filter((b) => b.status !== 'Archived' || showArchived || b.key === selectedKey);
   const loadFailed = !!data.secondaryError;
-  const locked = !selectedBuild || loadFailed || selectedBuild.status === 'Archived';
 
   // Overlays end once a re-fetch agrees.
   useEffect(() => {
@@ -136,14 +107,7 @@ function AssemblyPage({ assemblyKey: key }) {
   }, [data.fetchedBuilds]);
   useEffect(() => {
     setCreatedParts((prev) => dropAgreedParts(prev, data.parts));
-    setRecreated((prev) => dropAgreedRecreated(prev, data.parts));
   }, [data.parts]);
-  useEffect(() => {
-    setWork((w) => {
-      const next = dropAgreedLinks(w.linkedThisSession, data.buildParts);
-      return next === w.linkedThisSession ? w : { ...w, linkedThisSession: next };
-    });
-  }, [data.buildParts]);
 
   const addStatus = useCallback((entries) => {
     if (!entries.length) return;
@@ -167,50 +131,15 @@ function AssemblyPage({ assemblyKey: key }) {
 
   // ----- Rows -----
   const allParts = useMemo(() => mergeParts(data.parts, createdParts), [data.parts, createdParts]);
-  const links = useMemo(
-    () => mergeLinks(data.linkedByPart, work.linkedThisSession),
-    [data.linkedByPart, work.linkedThisSession],
-  );
+  const links = useMemo(() => mergeLinks(data.linkedByPart), [data.linkedByPart]);
   const { groups } = useMemo(() => deriveDesignerRows({
     parts: data.parts,
     createdParts,
     chainKeys: data.chain,
     linkedByPart: data.linkedByPart,
-    linkedThisSession: work.linkedThisSession,
     buildKey: selectedKey,
     builds,
-    edits: work.edits,
-    rowResults: work.rowResults,
-  }), [data.parts, createdParts, data.chain, data.linkedByPart, work, selectedKey, builds]);
-
-  // Saves always carry the stored Material and Machinery, never an edit.
-  const saveGroups = useMemo(() => ({
-    newFromCad: [],
-    inBuild: groups.inBuild.map((r) => ({
-      ...r,
-      values: { ...r.values, ...Object.fromEntries(LOCKED_FIELDS.map((f) => [f, r.stored[f]])) },
-    })),
-    other: [],
-  }), [groups.inBuild]);
-  const plan = useMemo(
-    () => (locked ? { body: { creates: [], updates: [], links: [] }, heldBack: [] } : planSave(saveGroups, NO_SELECTION)),
-    [locked, saveGroups],
-  );
-  const heldBack = useMemo(() => new Map(plan.heldBack.map((h) => [h.rowId, h])), [plan]);
-  const pendingCount = bodySize(plan.body) + plan.heldBack.length;
-  const hasPending = pendingCount > 0;
-
-  // ----- Unsaved-changes guard: path changes only, plus closing the tab -----
-  const blocker = useBlocker(useCallback(
-    ({ currentLocation, nextLocation }) => hasPending && currentLocation.pathname !== nextLocation.pathname,
-    [hasPending],
-  ));
-  useEffect(() => {
-    if (!hasPending) return undefined;
-    const onBeforeUnload = (e) => { e.preventDefault(); e.returnValue = ''; };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [hasPending]);
+  }), [data.parts, createdParts, data.chain, data.linkedByPart, selectedKey, builds]);
 
   // ----- Navigation within the page -----
   const setParams = useCallback((changes) => {
@@ -229,9 +158,7 @@ function AssemblyPage({ assemblyKey: key }) {
   }, [setParams]);
 
   const onPick = (buildKey) => {
-    if (buildKey === selectedKey) return;
-    if (hasPending) setSwitchTo(buildKey);
-    else selectBuild(buildKey);
+    if (buildKey !== selectedKey) selectBuild(buildKey);
   };
 
   const viewUrl = (v) => {
@@ -239,122 +166,6 @@ function AssemblyPage({ assemblyKey: key }) {
     if (selectedKey) next.set('build', selectedKey);
     if (v) next.set('view', v);
     return `?${next}`;
-  };
-
-  // ----- Save -----
-  const save = useCallback(async (only) => {
-    if (!selectedKey) return;
-    const { body } = only ? planSave(saveGroups, NO_SELECTION, { only }) : plan;
-    const total = bodySize(body);
-    if (total === 0) return;
-    setSaving(true);
-    setSaveError(null);
-    let done = 0;
-    for (const batch of batchBody(body, SAVE_BATCH)) {
-      if (total > SAVE_BATCH) setSaveProgress(`Saving ${done}/${total}…`);
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        const res = await saveBuildParts(selectedKey, batch);
-        setWork((w) => applySaveResults(w, res.results, selectedKey, { body: batch, buildName }));
-        done += bodySize(batch);
-      } catch (err) {
-        setSaveError(done === 0
-          ? `Couldn't save: ${friendlyClause(err)} Nothing was changed.`
-          : `Couldn't save the last ${total - done}: ${friendlyClause(err)} Those changes are still here.`);
-        break;
-      }
-    }
-    setSaving(false);
-    setSaveProgress(null);
-    await data.refresh();
-  }, [selectedKey, saveGroups, plan, buildName, data]);
-
-  const discard = useCallback(() => {
-    setWork((w) => ({ ...w, edits: {}, rowResults: {} }));
-    setSaveError(null);
-  }, []);
-
-  const onEdit = (rowId, field, value) => {
-    if (LOCKED_FIELDS.includes(field)) return;
-    setWork((w) => ({
-      ...w,
-      edits: { ...w.edits, [rowId]: { ...(w.edits[rowId] ?? {}), [field]: value } },
-    }));
-  };
-
-  // ----- Move and Re-create -----
-  const linkInSession = (buildKey, partKey) => setWork((w) => ({
-    ...w,
-    linkedThisSession: addSessionLinks(w.linkedThisSession, buildKey, [partKey]),
-  }));
-
-  const move = async (row) => {
-    if (!selectedKey) return;
-    const target = selectedKey;
-    const name = buildName;
-    setActionBusy({ key: row.key, kind: 'move' });
-    setActionMsg(null);
-    try {
-      const res = await saveBuildParts(target, { links: [{ ref: row.key, key: row.key }] });
-      const result = res.results?.[0];
-      if (result?.ok) {
-        linkInSession(target, row.key);
-        setActionMsg({ variant: 'info', text: `Moved ${row.key} to ${name}.` });
-      } else {
-        setActionMsg({ variant: 'error', text: `Couldn't move ${row.key} to ${name}: ${result?.error ?? 'no result came back.'}` });
-      }
-      data.refresh();
-    } catch (err) {
-      setActionMsg({ variant: 'error', text: `Couldn't move ${row.key} to ${name}: ${friendlyClause(err)}` });
-    } finally {
-      setActionBusy(null);
-    }
-  };
-
-  const recreate = async (row) => {
-    if (!selectedKey) return;
-    const target = selectedKey;
-    const name = buildName;
-    setActionBusy({ key: row.key, kind: 'recreate' });
-    setActionMsg(null);
-    try {
-      const res = await recreatePartForBuild(target, row.key);
-      setCreatedParts((prev) => withPart(prev, res.part));
-      linkInSession(target, res.key);
-      setRecreated((prev) => new Map(prev).set(row.key, res.key));
-      setActionMsg({ variant: 'info', text: `Re-created ${row.key} as ${res.key} (Revision ${res.revision}) in ${name}.` });
-      data.refresh();
-    } catch (err) {
-      const body = err?.body ?? {};
-      if (err?.status === 409 && body.recreatedAs) {
-        setRecreated((prev) => new Map(prev).set(row.key, body.recreatedAs));
-        setActionMsg({ variant: 'error', text: friendlyError(err) });
-        data.refresh();
-      } else if ((body.stage === 'revises-link' || body.stage === 'used-in-link') && body.key) {
-        setCreatedParts((prev) => withPart(prev, body.part));
-        setRecreated((prev) => new Map(prev).set(row.key, body.key));
-        setActionMsg({
-          variant: 'error',
-          text: body.stage === 'revises-link'
-            ? `Created ${body.key}, but couldn't record it as the next Revision of ${row.key}: ${friendlyClause(err)}`
-            : `Created ${body.key}, but couldn't add it to ${name}: ${friendlyClause(err)} Move it here to add it.`,
-        });
-        data.refresh();
-      } else {
-        setActionMsg({ variant: 'error', text: `Couldn't re-create ${row.key} for ${name}: ${friendlyClause(err)}` });
-      }
-    } finally {
-      setActionBusy(null);
-    }
-  };
-
-  /** Why "Re-create here" is off for this Part, or null. */
-  const recreateBlocked = (row) => {
-    const part = allParts.find((p) => p.key === row.key);
-    const newer = part ? newerRevisionOf(part, allParts) : null;
-    if (newer) return `Already re-created as ${newer.key}. Re-create ${newer.key} instead.`;
-    const session = recreated.get(row.key);
-    return session ? `Already re-created as ${session}` : null;
   };
 
   // ----- Clone -----
@@ -372,10 +183,7 @@ function AssemblyPage({ assemblyKey: key }) {
       const res = await clonePart(sourceKey, { epicKey: key, name, quantity });
       setCreatedParts((prev) => withPart(prev, res.part));
       const number = res.part?.fullPartNumber ?? res.fullPartNumber;
-      setActionMsg({
-        variant: 'info',
-        text: `Cloned as ${res.key} (${number}). It's listed under Parts in other Builds; Move it here to add it.`,
-      });
+      setActionMsg({ variant: 'info', text: `Cloned as ${res.key} (${number}).` });
       setCloneOpen(false);
       data.refresh();
     } catch (err) {
@@ -417,7 +225,6 @@ function AssemblyPage({ assemblyKey: key }) {
   }
 
   const inBuildParts = groups.inBuild.map((r) => ({ key: r.key, summary: r.summary, ...r.stored }));
-  const actionsLocked = !!actionBusy || loadFailed || !selectedBuild || selectedBuild.status === 'Archived';
 
   let body;
   if (!data.ready) {
@@ -562,7 +369,7 @@ function AssemblyPage({ assemblyKey: key }) {
                   {groups.inBuild.length === 0 && (
                     <tr>
                       <td colSpan={COLUMN_COUNT} className="table-empty">
-                        No Parts in {buildName} yet. Move them here from other Builds below.
+                        No Parts in {buildName}.
                       </td>
                     </tr>
                   )}
@@ -572,18 +379,7 @@ function AssemblyPage({ assemblyKey: key }) {
                       ? { current: false, label: `${buildLabel(cur)} is newer` }
                       : { current: true, label: 'Current' };
                     return (
-                      <AssemblyPartRow
-                        key={row.rowId}
-                        row={row}
-                        inBuild
-                        buildName={buildName}
-                        current={current}
-                        problem={heldBack.get(row.rowId) ?? null}
-                        editable={!locked && !row.readOnly}
-                        saving={saving}
-                        onEdit={(field, value) => onEdit(row.rowId, field, value)}
-                        onRetry={() => save(new Set([row.rowId]))}
-                      />
+                      <AssemblyPartRow key={row.rowId} row={row} inBuild current={current} />
                     );
                   })}
                 </tbody>
@@ -596,19 +392,7 @@ function AssemblyPage({ assemblyKey: key }) {
                       </th>
                     </tr>
                     {groups.other.map((row) => (
-                      <AssemblyPartRow
-                        key={row.rowId}
-                        row={row}
-                        inBuild={false}
-                        buildName={buildName}
-                        editable={false}
-                        saving={saving}
-                        onMove={() => move(row)}
-                        onRecreate={() => recreate(row)}
-                        actionBusy={actionBusy?.key === row.key ? actionBusy.kind : null}
-                        actionsLocked={actionsLocked}
-                        recreateBlocked={recreateBlocked(row)}
-                      />
+                      <AssemblyPartRow key={row.rowId} row={row} inBuild={false} />
                     ))}
                   </tbody>
                 )}
@@ -650,25 +434,6 @@ function AssemblyPage({ assemblyKey: key }) {
 
       {body}
 
-      {(hasPending || saving || saveError) && view !== 'print' && (
-        <StickySaveBar
-          summary={`Unsaved: ${plural(plan.body.updates.length + plan.heldBack.length, 'change', 'changes')}`}
-          status={saveProgress
-            ?? (plan.heldBack.length
-              ? `${plural(plan.heldBack.length, 'row needs', 'rows need')} a fix before it can save.${bodySize(plan.body) === 0 ? ' Fix the marked rows to save.' : ''}`
-              : null)}
-          alert={saveError ? <Alert variant="error" role="alert">{saveError}</Alert> : null}
-          actions={(
-            <>
-              <Button variant="secondary" onClick={discard} disabled={saving}>Discard</Button>
-              <Button variant="primary" onClick={() => save()} disabled={saving || bodySize(plan.body) === 0}>
-                {saving ? 'Saving…' : 'Save'}
-              </Button>
-            </>
-          )}
-        />
-      )}
-
       <CloneDialog
         open={cloneOpen}
         parts={cloneSources}
@@ -699,40 +464,6 @@ function AssemblyPage({ assemblyKey: key }) {
         {archiveError && <p className="form-error" role="alert">{archiveError}</p>}
       </Dialog>
 
-      <Dialog
-        open={!!switchTo}
-        onClose={() => setSwitchTo(null)}
-        title={`Discard ${plural(pendingCount, 'unsaved change', 'unsaved changes')}?`}
-        initialFocusRef={keepRef}
-        footer={(
-          <>
-            <Button ref={keepRef} variant="secondary" onClick={() => setSwitchTo(null)}>Keep editing</Button>
-            <Button
-              variant="danger-solid"
-              onClick={() => { const k = switchTo; setSwitchTo(null); discard(); selectBuild(k); }}
-            >
-              Discard and switch
-            </Button>
-          </>
-        )}
-      >
-        <p>Switching Build drops the changes you haven&apos;t saved.</p>
-      </Dialog>
-
-      <Dialog
-        open={blocker.state === 'blocked'}
-        onClose={() => blocker.reset?.()}
-        title="Leave without saving?"
-        initialFocusRef={leaveRef}
-        footer={(
-          <>
-            <Button ref={leaveRef} variant="secondary" onClick={() => blocker.reset?.()}>Stay</Button>
-            <Button variant="danger-solid" onClick={() => blocker.proceed?.()}>Leave</Button>
-          </>
-        )}
-      >
-        <p>{plural(pendingCount, 'unsaved change', 'unsaved changes')} will be lost.</p>
-      </Dialog>
     </div>
   );
 }

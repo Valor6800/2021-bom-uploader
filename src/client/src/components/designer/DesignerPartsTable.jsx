@@ -16,11 +16,17 @@ import DesignerPartRow, { COLUMN_COUNT } from './DesignerPartRow.jsx';
  * @param {Map<string, { field: string, error: string }>} props.heldBack
  * @param {boolean} props.locked           No Build yet, or a load failed: read-only
  * @param {boolean} props.busy
+ * @param {boolean} [props.viewOnly]       The Build is cut: only its own Parts, as text
+ * @param {(row: object) => void} [props.onRecreate]  Re-create a locked shared Part
+ * @param {string|null} [props.recreatingKey]  The Part whose Re-create is running
+ * @param {(row: object) => string|null} [props.recreateBlocked]
+ * @param {boolean} [props.actionsLocked]
  */
 export default function DesignerPartsTable({
   groups, buildName, selection, onToggle, onToggleAll, onEdit, onRetry, heldBack, locked, busy,
+  viewOnly = false, onRecreate, recreatingKey = null, recreateBlocked = () => null, actionsLocked = false,
 }) {
-  const sections = [
+  const allSections = [
     { id: 'new', title: 'New from CAD', rows: groups.newFromCad, selectAll: true },
     { id: 'in', title: buildName ? `In ${buildName}` : 'In this Build', rows: groups.inBuild },
     {
@@ -28,7 +34,9 @@ export default function DesignerPartsTable({
       title: buildName ? 'Other Parts in this Assembly' : 'Parts in this Assembly (not in any Build yet)',
       rows: groups.other,
     },
-  ].filter((s) => s.rows.length > 0 || (s.id === 'in' && buildName));
+  ];
+  const sections = (viewOnly ? allSections.filter((s) => s.id === 'in') : allSections)
+    .filter((s) => s.rows.length > 0 || (s.id === 'in' && buildName));
 
   const empty = sections.every((s) => s.rows.length === 0);
 
@@ -48,7 +56,7 @@ export default function DesignerPartsTable({
             <th scope="col">Status</th>
           </tr>
         </thead>
-        {empty && (
+        {empty && !viewOnly && (
           <tbody>
             <tr>
               <td colSpan={COLUMN_COUNT} className="table-empty">
@@ -82,7 +90,9 @@ export default function DesignerPartsTable({
               {section.rows.length === 0 && (
                 <tr>
                   <td colSpan={COLUMN_COUNT} className="table-empty">
-                    No Parts in {buildName} yet. Tick Parts below, or use Update from CAD.
+                    {viewOnly
+                      ? `No Parts in ${buildName}.`
+                      : `No Parts in ${buildName} yet. Tick Parts below, or use Update from CAD.`}
                   </td>
                 </tr>
               )}
@@ -98,6 +108,11 @@ export default function DesignerPartsTable({
                   problem={heldBack.get(row.rowId) ?? null}
                   editable={!locked && !row.readOnly}
                   busy={busy}
+                  viewOnly={viewOnly}
+                  onRecreate={onRecreate ? () => onRecreate(row) : undefined}
+                  recreateBusy={recreatingKey === row.key}
+                  recreateBlocked={row.sharedLocked ? recreateBlocked(row) : null}
+                  actionsLocked={locked || actionsLocked}
                 />
               ))}
             </tbody>

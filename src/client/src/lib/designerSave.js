@@ -1,5 +1,5 @@
 /**
- * Pure save planning for the Designer (and the Assembly page's edits):
+ * Pure save planning for the Designer:
  * turn the row groups into a POST /api/builds/:key/save body, hold back
  * rows the server would refuse, split the body into small batches, and
  * fold per-item results back into page state.
