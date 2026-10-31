@@ -366,23 +366,98 @@ export class EpicService {
     if (![documentId, workspaceId, elementId].every((id) => ONSHAPE_ID_RE.test(id))) {
       throw badRequest(INVALID_URL_MESSAGE);
     }
+    const matches = await this._assembliesForElement(documentId, elementId);
+    if (!matches.length) return null;
+
+    const same = (a, b) => String(a ?? '').toLowerCase() === b;
+    const onWorkspace = matches.find((a) => same(a.workspaceId, workspaceId));
+    return onWorkspace
+      ? { assembly: onWorkspace, matchedOn: 'workspace' }
+      : { assembly: matches[0], matchedOn: 'document' };
+  }
+
+  /**
+   * Every Assembly made from this OnShape element in this document, newest
+   * first. The JQL `~` match only narrows; ids are compared exactly here.
+   * @private
+   */
+  async _assembliesForElement(documentId, elementId) {
     const project = sanitizeJQL(process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL');
     const jql =
       `project = ${project} AND issuetype = Assembly AND cf[10302] ~ "${sanitizeJQL(elementId)}"`;
     const issues = await this.jiraClient.searchIssues(jql, { paginate: true, fields: ASSEMBLY_FIELDS });
 
     const same = (a, b) => String(a ?? '').toLowerCase() === b;
-    const matches = issues
+    return issues
       .filter((i) => same(i.fields?.customfield_10302, elementId)
         && same(i.fields?.customfield_10300, documentId))
       .map((i) => this._toAssembly(i))
       .sort((a, b) => String(b.created ?? '').localeCompare(String(a.created ?? '')));
-    if (!matches.length) return null;
+  }
 
-    const onWorkspace = matches.find((a) => same(a.workspaceId, workspaceId));
-    return onWorkspace
-      ? { assembly: onWorkspace, matchedOn: 'workspace' }
-      : { assembly: matches[0], matchedOn: 'document' };
+  /**
+   * The sub-assemblies of an Assembly, for the links on the Designer and
+   * Assembly pages. The tracker stores no parent/child link, so they are read
+   * from the Assembly's own OnShape BOM (a minute's cache) and each is matched
+   * to the Assembly made from it: `exists` with that Assembly, or `missing`.
+   *
+   * A failure to read the BOM never fails the page: it comes back as `error`.
+   *
+   * @param {string} key  Assembly key (already validated)
+   * @returns {Promise<{ subAssemblies: object[], error?: string }>}
+   */
+  async getSubAssemblies(key) {
+    const assembly = await this.getEpicByKey(key);
+    if (!assembly) throw badRequest(`"${key}" is not an Assembly`);
+    if (!this.bomService || !assembly.documentId || !assembly.workspaceId || !assembly.elementId) {
+      return { subAssemblies: [] };
+    }
+
+    const season = assembly.seasonType && assembly.year
+      ? { seasonType: assembly.seasonType, year: assembly.year }
+      : null;
+    let subs;
+    try {
+      const report = await this.bomService.getBOMReport(
+        null, assembly.documentId, assembly.workspaceId, assembly.elementId, season,
+      );
+      subs = report.subAssemblies ?? [];
+    } catch (err) {
+      return { subAssemblies: [], error: describeUpstreamError(err) };
+    }
+
+    const results = [];
+    for (const sub of subs) {
+      const documentId = String(sub.documentId ?? '').toLowerCase();
+      const elementId = String(sub.elementId ?? '').toLowerCase();
+      const base = { name: sub.name || sub.partNumber || 'Sub-assembly', partNumber: sub.partNumber, revision: sub.revision };
+      if (!ONSHAPE_ID_RE.test(documentId) || !ONSHAPE_ID_RE.test(elementId)) {
+        results.push({ ...base, status: 'missing' });
+        continue;
+      }
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const matches = await this._assembliesForElement(documentId, elementId);
+        const workspace = sub.wvmType === 'w' ? String(sub.wvmId ?? '').toLowerCase() : null;
+        // The workspace the BOM points at, then the Revision the BOM row shows.
+        let found = matches.find((a) => workspace && String(a.workspaceId ?? '').toLowerCase() === workspace)
+          ?? matches.find((a) => sub.revision && a.revision === sub.revision)
+          ?? matches[0];
+        if (!found) {
+          // Search lags a create; the recent record covers Assemblies made a moment ago.
+          // eslint-disable-next-line no-await-in-loop
+          const recent = await this._findExisting({
+            documentId, workspaceId: workspace ?? assembly.workspaceId, elementId,
+          });
+          found = recent?.assembly;
+        }
+        results.push(found ? { ...base, status: 'exists', assembly: found } : { ...base, status: 'missing' });
+      } catch (err) {
+        console.warn('[sub-assemblies]', key, sub.name, 'lookup failed:', err?.status, err?.message);
+        results.push({ ...base, status: 'missing' });
+      }
+    }
+    return { subAssemblies: results };
   }
 
   /**

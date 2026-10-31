@@ -12,6 +12,7 @@ import AssemblyPartRow, { COLUMN_COUNT } from '../components/assembly/AssemblyPa
 import BuildCompare from '../components/assembly/BuildCompare.jsx';
 import PrintView from '../components/assembly/PrintView.jsx';
 import CloneDialog from '../components/assembly/CloneDialog.jsx';
+import SubAssemblyLinks from '../components/assembly-shared/SubAssemblyLinks.jsx';
 import Alert from '../components/ui/Alert.jsx';
 import Badge from '../components/ui/Badge.jsx';
 import Button from '../components/ui/Button.jsx';
@@ -416,6 +417,8 @@ function AssemblyPage({ assemblyKey: key }) {
           onRevisionChange={onRevisionChange}
         />
       </div>
+
+      <SubAssemblyLinks assemblyKey={key} mode="assemble" />
 
       {wrongBuild && (
         <Alert variant="info" role="status">

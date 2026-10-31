@@ -1,6 +1,6 @@
 /**
  * Epic Routes — GET /api/epics/search, GET /api/epics/:key,
- * POST /api/epics/onboard/preview, POST /api/epics/onboard
+ * GET /api/epics/:key/sub-assemblies, POST /api/epics/onboard/preview, POST /api/epics/onboard
  */
 
 import { Router } from 'express';
@@ -56,6 +56,19 @@ export default function epicRoutes({ epicService }) {
       includeClosed: includeClosed === '1',
     });
     res.json(result);
+  }));
+
+  /**
+   * GET /api/epics/:key/sub-assemblies — the Assembly's sub-assemblies from
+   * its OnShape BOM, each matched to its own Assembly where one exists.
+   * → { subAssemblies: [{ name, status: 'exists'|'missing', assembly? }], error? }
+   */
+  router.get('/:key/sub-assemblies', asyncHandler(async (req, res) => {
+    const check = validateIssueKey(req.params.key);
+    if (!check.valid) {
+      throw badRequest(check.error);
+    }
+    res.json(await epicService.getSubAssemblies(req.params.key));
   }));
 
   /**
