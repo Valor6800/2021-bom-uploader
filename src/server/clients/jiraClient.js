@@ -254,9 +254,10 @@ export class JiraClient {
    * @returns {Promise<void>}
    */
   async createIssueLink(typeName, inwardKey, outwardKey) {
-    const endpoint = `issueLinks.createIssueLink(${inwardKey}, ${outwardKey})`;
+    const endpoint = `issueLinks.linkIssues(${inwardKey}, ${outwardKey})`;
     return this._retry(async () => {
-      await this.client.issueLinks.createIssueLink({
+      // jira.js names this method linkIssues (POST /rest/api/2/issueLink).
+      await this.client.issueLinks.linkIssues({
         type: { name: typeName },
         inwardIssue: { key: inwardKey },
         outwardIssue: { key: outwardKey },

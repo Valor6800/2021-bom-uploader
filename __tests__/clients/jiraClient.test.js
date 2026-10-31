@@ -25,7 +25,8 @@ jest.unstable_mockModule('jira.js', () => ({
         editIssue: mockEditIssue,
         getIssue: mockGetIssue,
       };
-      this.issueLinks = { createIssueLink: mockCreateIssueLink };
+      // jira.js's real method is linkIssues; there is no createIssueLink.
+      this.issueLinks = { linkIssues: mockCreateIssueLink };
     }
   },
 }));
@@ -214,6 +215,14 @@ describe('JiraClient', () => {
 
       await expect(client.createIssueLink('Revises', 'VAL-1', 'VAL-2'))
         .rejects.toThrow(JiraApiError);
+    });
+
+    it('calls a method that really exists on jira.js IssueLinks', async () => {
+      // Guards the mock above: it once stubbed a createIssueLink method the
+      // library doesn't have, so every real link failed while tests passed.
+      const { IssueLinks } = await import('jira.js/out/version2/issueLinks.js');
+      expect(typeof IssueLinks.prototype.linkIssues).toBe('function');
+      expect(IssueLinks.prototype.createIssueLink).toBeUndefined();
     });
   });
 });
