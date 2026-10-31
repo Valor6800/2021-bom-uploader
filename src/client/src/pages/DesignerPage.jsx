@@ -15,6 +15,7 @@ import TwoActiveWarning from '../components/builds/TwoActiveWarning.jsx';
 import DesignerPartsTable from '../components/designer/DesignerPartsTable.jsx';
 import UnidentifiedPartsWarning from '../components/parts/UnidentifiedPartsWarning.jsx';
 import SubAssemblyList from '../components/home/SubAssemblyList.jsx';
+import SubAssemblyLinks from '../components/assembly-shared/SubAssemblyLinks.jsx';
 import Alert from '../components/ui/Alert.jsx';
 import Badge from '../components/ui/Badge.jsx';
 import Button from '../components/ui/Button.jsx';
@@ -486,6 +487,8 @@ function DesignerPage({ assemblyKey: key }) {
         buildKey={selectedKey}
         onRevisionChange={onRevisionChange}
       />
+
+      <SubAssemblyLinks assemblyKey={key} mode="design" />
 
       {showAlreadyAdded && (
         <Alert

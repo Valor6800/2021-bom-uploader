@@ -139,6 +139,11 @@ export function fetchEpicByKey(key) {
   return request(`/api/epics/${encodeURIComponent(key)}`);
 }
 
+/** The Assembly's sub-assemblies (from its OnShape BOM), each matched to its own Assembly where one exists. */
+export function fetchSubAssemblies(key) {
+  return request(`/api/epics/${encodeURIComponent(key)}/sub-assemblies`);
+}
+
 /**
  * Search Assemblies by key, name, number, season or year.
  * @param {string} q

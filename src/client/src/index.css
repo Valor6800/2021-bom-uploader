@@ -1962,3 +1962,19 @@ a { color: inherit; text-decoration: none; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+/* ===== Sub-assemblies section (Designer and Assembly pages) ===== */
+.sub-assemblies {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+.sub-assemblies-title { font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: var(--space-2); }
+.sub-assembly-list { list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
+.sub-assembly-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+.sub-assembly-link { color: var(--color-gold); text-decoration: underline; text-underline-offset: 2px; }
+.sub-assemblies-note { color: var(--color-text-muted); font-size: 0.875rem; }

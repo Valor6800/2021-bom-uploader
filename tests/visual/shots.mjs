@@ -164,6 +164,7 @@ function designerApi({
   return [
     ...extra,
     { method: 'GET', path: '/api/epics/HAR-2030', fixture: 'epic-HAR-2030' },
+    { method: 'GET', path: '/api/epics/HAR-2030/sub-assemblies', respond: () => ({ status: 200, body: { subAssemblies: [] } }) },
     { method: 'GET', path: '/api/revisions/chain/HAR-2030', fixture: 'chain-HAR-2030' },
     { method: 'GET', path: '/api/stories', query: { key: 'HAR-2030', chain: '1' }, fixture: stories },
     typeof builds === 'function'

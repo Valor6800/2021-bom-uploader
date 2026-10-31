@@ -319,3 +319,24 @@ describe('POST /api/epics/onboard', () => {
     expect(res.body.proposed).toEqual({ summary: 'New' });
   });
 });
+
+describe('GET /api/epics/:key/sub-assemblies', () => {
+  it('returns the sub-assemblies of the Assembly', async () => {
+    const epicService = {
+      getSubAssemblies: jest.fn().mockResolvedValue({
+        subAssemblies: [{ name: 'Base Frame', status: 'exists', assembly: { key: 'VAL-41' } }],
+      }),
+    };
+    const res = await request(buildApp(epicService)).get('/api/epics/VAL-49/sub-assemblies');
+    expect(res.status).toBe(200);
+    expect(res.body.subAssemblies[0].assembly.key).toBe('VAL-41');
+    expect(epicService.getSubAssemblies).toHaveBeenCalledWith('VAL-49');
+  });
+
+  it('answers 400 for a key that is not valid, without calling the service', async () => {
+    const epicService = { getSubAssemblies: jest.fn() };
+    const res = await request(buildApp(epicService)).get('/api/epics/har-1/sub-assemblies');
+    expect(res.status).toBe(400);
+    expect(epicService.getSubAssemblies).not.toHaveBeenCalled();
+  });
+});
