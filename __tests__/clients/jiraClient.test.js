@@ -5,6 +5,7 @@
  */
 
 import { jest } from '@jest/globals';
+import { withoutEnv } from '../mocks/withoutEnv.js';
 
 // ---------------------------------------------------------------------------
 // Mock jira.js before importing JiraClient
@@ -14,6 +15,7 @@ const mockSearchForIssuesUsingJql = jest.fn();
 const mockCreateIssue = jest.fn();
 const mockEditIssue = jest.fn();
 const mockGetIssue = jest.fn();
+const mockCreateIssueLink = jest.fn();
 
 jest.unstable_mockModule('jira.js', () => ({
   Version2Client: class {
@@ -24,6 +26,8 @@ jest.unstable_mockModule('jira.js', () => ({
         editIssue: mockEditIssue,
         getIssue: mockGetIssue,
       };
+      // jira.js's real method is linkIssues; there is no createIssueLink.
+      this.issueLinks = { linkIssues: mockCreateIssueLink };
     }
   },
 }));
@@ -50,17 +54,15 @@ beforeEach(() => {
 describe('JiraClient', () => {
   describe('constructor', () => {
     it('throws when host is missing', () => {
-      const origUrl = process.env.JIRA_URL;
-      delete process.env.JIRA_URL;
-      expect(() => new JiraClient({ bearerToken: 'tok' })).toThrow('Jira host URL is required');
-      process.env.JIRA_URL = origUrl;
+      withoutEnv(['JIRA_URL', 'JIRA_BASE_URL'], () => {
+        expect(() => new JiraClient({ bearerToken: 'tok' })).toThrow('Jira host URL is required');
+      });
     });
 
     it('throws when token is missing', () => {
-      const origKey = process.env.JIRA_KEY;
-      delete process.env.JIRA_KEY;
-      expect(() => new JiraClient({ host: 'https://jira.test' })).toThrow('Jira bearer token is required');
-      process.env.JIRA_KEY = origKey;
+      withoutEnv(['JIRA_KEY'], () => {
+        expect(() => new JiraClient({ host: 'https://jira.test' })).toThrow('Jira bearer token is required');
+      });
     });
   });
 
@@ -187,6 +189,100 @@ describe('JiraClient', () => {
         expect(e.status).toBe(400);
         expect(e.endpoint).toContain('createIssue');
       }
+    });
+  });
+
+  describe('non-HTTP errors', () => {
+    it('re-throws a TypeError from our own code unchanged, not as a tracker error', async () => {
+      const client = makeClient();
+      const bug = new TypeError('this.client.issueLinks.createIssueLink is not a function');
+      mockCreateIssueLink.mockRejectedValue(bug);
+
+      await expect(client.createIssueLink('Used In', 'VAL-2', 'VAL-1')).rejects.toBe(bug);
+      expect(mockCreateIssueLink).toHaveBeenCalledTimes(1);
+    });
+
+    it('wraps a real network failure (no response) as JiraApiError status 0', async () => {
+      // jira.js re-throws an axios error with no response as-is.
+      const { BaseClient } = await import('jira.js/out/clients/baseClient.js');
+      const axiosErr = Object.assign(new Error('getaddrinfo ENOTFOUND jira.test'), {
+        isAxiosError: true, code: 'ENOTFOUND',
+      });
+      const thrown = new BaseClient({ host: 'https://jira.test' }).buildErrorHandlingResponse(axiosErr);
+      const client = makeClient();
+      mockGetIssue.mockRejectedValue(thrown);
+
+      const err = await client.getIssue('VAL-1').catch((e) => e);
+      expect(err).toBeInstanceOf(JiraApiError);
+      expect(err.status).toBe(0);
+    });
+
+    it("keeps Jira's error body from the HttpException jira.js really throws", async () => {
+      const { BaseClient } = await import('jira.js/out/clients/baseClient.js');
+      const data = {
+        errorMessages: [],
+        errors: { customfield_10500: "Field 'customfield_10500' cannot be set. It is not on the appropriate screen" },
+      };
+      const axiosErr = Object.assign(new Error('Request failed with status code 400'), {
+        isAxiosError: true, code: 'ERR_BAD_REQUEST', response: { status: 400, statusText: 'Bad Request', data },
+      });
+      const thrown = new BaseClient({ host: 'https://jira.test' }).buildErrorHandlingResponse(axiosErr);
+      const client = makeClient();
+      mockEditIssue.mockRejectedValue(thrown);
+
+      const err = await client.updateIssue('VAL-1', { customfield_10500: 'B' }).catch((e) => e);
+      expect(err).toBeInstanceOf(JiraApiError);
+      expect(err.status).toBe(400);
+      expect(err.jiraErrors).toEqual({ errorMessages: [], errors: data.errors });
+    });
+  });
+
+  describe('createIssueLink', () => {
+    it('sends the source (outward phrase) as inwardIssue', async () => {
+      // "Build VAL-200 uses Part VAL-100". Jira's POST /issueLink shows the
+      // outward phrase on `inwardIssue` (checked live, link 16601).
+      const client = makeClient();
+      mockCreateIssueLink.mockResolvedValueOnce({});
+
+      await client.createIssueLink('Used In', 'VAL-200', 'VAL-100');
+
+      expect(mockCreateIssueLink).toHaveBeenCalledWith({
+        type: { name: 'Used In' },
+        inwardIssue: { key: 'VAL-200' },
+        outwardIssue: { key: 'VAL-100' },
+      });
+    });
+
+    it('matches the request body real jira.js linkIssues sends', async () => {
+      // Guards the body shape above against the library itself.
+      const { IssueLinks } = await import('jira.js/out/version2/issueLinks.js');
+      const sendRequest = jest.fn().mockResolvedValue(undefined);
+      await new IssueLinks({ sendRequest }).linkIssues({
+        type: { name: 'Used In' }, inwardIssue: { key: 'VAL-200' }, outwardIssue: { key: 'VAL-100' },
+      });
+      expect(sendRequest.mock.calls[0][0]).toMatchObject({
+        url: '/rest/api/2/issueLink',
+        method: 'POST',
+        data: { type: { name: 'Used In' }, inwardIssue: { key: 'VAL-200' }, outwardIssue: { key: 'VAL-100' } },
+      });
+    });
+
+    it('wraps a failure as JiraApiError', async () => {
+      const client = makeClient();
+      const err = new Error('Bad request');
+      err.status = 400;
+      mockCreateIssueLink.mockRejectedValue(err);
+
+      await expect(client.createIssueLink('Revises', 'VAL-2', 'VAL-1'))
+        .rejects.toThrow(JiraApiError);
+    });
+
+    it('calls a method that really exists on jira.js IssueLinks', async () => {
+      // Guards the mock above: it once stubbed a createIssueLink method the
+      // library doesn't have, so every real link failed while tests passed.
+      const { IssueLinks } = await import('jira.js/out/version2/issueLinks.js');
+      expect(typeof IssueLinks.prototype.linkIssues).toBe('function');
+      expect(IssueLinks.prototype.createIssueLink).toBeUndefined();
     });
   });
 });

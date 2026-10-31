@@ -32,6 +32,7 @@ export default function QueueRow({
       <td className="cell-check">
         <input
           type="checkbox"
+          aria-label={`Select ${line.key}`}
           checked={selected}
           disabled={line.blocked}
           title={line.blocked ? 'Fix the blocking problem in Jira first' : undefined}
@@ -76,6 +77,7 @@ export default function QueueRow({
       <td className="cell-select">
         <select
           className="select-inline"
+          aria-label={`Classification for ${line.key}`}
           value={selection?.classification ?? ''}
           disabled={line.blocked}
           onChange={(e) => onChange(line.key, { classification: e.target.value })}

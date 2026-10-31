@@ -1,0 +1,10 @@
+{
+  "status": 200,
+  "body": {
+    "onshapeVersionLink": "https://cad.onshape.com/documents/8c64dfdcb66184646a7a3f17/v/5d1c0e2f9a7b3c4d5e6f7a8b/e/faea62821490977c33bc8d7c",
+    "superseded": [
+      "HAR-2052"
+    ],
+    "resumed": false
+  }
+}

@@ -7,6 +7,7 @@
  */
 
 import { Version2Client } from 'jira.js';
+import { isNetworkError } from '../utils/upstreamError.js';
 
 // ---------------------------------------------------------------------------
 // Custom error class
@@ -17,12 +18,15 @@ export class JiraApiError extends Error {
    * @param {string} message  Human-readable description
    * @param {number} status   HTTP status code (0 for network errors)
    * @param {string} endpoint The Jira endpoint that failed
+   * @param {{ errorMessages?: string[], errors?: object }|null} [jiraErrors]
+   *   Jira's own reason from the response body, for server logs only
    */
-  constructor(message, status, endpoint) {
+  constructor(message, status, endpoint, jiraErrors = null) {
     super(message);
     this.name = 'JiraApiError';
     this.status = status;
     this.endpoint = endpoint;
+    this.jiraErrors = jiraErrors;
   }
 }
 
@@ -59,12 +63,27 @@ function extractStatus(err) {
 }
 
 /**
- * Wrap any error thrown by jira.js into a JiraApiError.
+ * Jira's error body (`errorMessages`, `errors`) from a jira.js HttpException,
+ * whose `response.data` holds what Jira sent. Null when there is none.
+ */
+function extractJiraErrors(err) {
+  const data = err?.response?.data;
+  if (!data || typeof data !== 'object') return null;
+  const { errorMessages, errors } = data;
+  if (!errorMessages?.length && !(errors && Object.keys(errors).length)) return null;
+  return { errorMessages: errorMessages ?? [], errors: errors ?? {} };
+}
+
+/**
+ * Wrap an HTTP or network error from jira.js into a JiraApiError. Anything
+ * else (a TypeError from our own code, a bad argument) is returned unchanged,
+ * so it surfaces as ValorBOM's own error, not as the tracker's.
  */
 function wrapError(err, endpoint) {
   const status = extractStatus(err);
+  if (!status && !isNetworkError(err)) return err;
   const msg = err?.message ?? String(err);
-  return new JiraApiError(msg, status, endpoint);
+  return new JiraApiError(msg, status, endpoint, extractJiraErrors(err));
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +255,35 @@ export class JiraClient {
       await this.client.issues.doTransition({
         issueIdOrKey: key,
         transition: { id: String(transitionId) },
+      });
+    }, endpoint);
+  }
+
+  /**
+   * Create an issue link that reads "sourceKey <outward phrase> targetKey".
+   *
+   * For "Used In" (outward "uses", inward "is used in") pass the Build as
+   * source and the Part as target: the Build's page reads "uses" the Part
+   * and the Part's page reads "is used in" the Build. For "Revises" pass the
+   * new revision as source and the one it replaces as target.
+   *
+   * Jira's POST /rest/api/2/issueLink names the source `inwardIssue` and the
+   * target `outwardIssue` (checked live: sending inwardIssue=HAR-2031,
+   * outwardIssue=HAR-2032 made HAR-2031 read "uses" HAR-2032).
+   *
+   * @param {string} typeName   Link type name (e.g. "Used In", "Revises")
+   * @param {string} sourceKey  Issue that shows the outward phrase
+   * @param {string} targetKey  Issue that shows the inward phrase
+   * @returns {Promise<void>}
+   */
+  async createIssueLink(typeName, sourceKey, targetKey) {
+    const endpoint = `issueLinks.linkIssues(${sourceKey} ${typeName} ${targetKey})`;
+    return this._retry(async () => {
+      // jira.js names this method linkIssues (POST /rest/api/2/issueLink).
+      await this.client.issueLinks.linkIssues({
+        type: { name: typeName },
+        inwardIssue: { key: sourceKey },
+        outwardIssue: { key: targetKey },
       });
     }, endpoint);
   }

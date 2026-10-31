@@ -7,6 +7,7 @@
 
 import crypto from 'node:crypto';
 import axios from 'axios';
+import { isNetworkError } from '../utils/upstreamError.js';
 
 // ---------------------------------------------------------------------------
 // Custom error class
@@ -164,9 +165,85 @@ export class OnshapeClient {
     return this._getBinary(path);
   }
 
+  /**
+   * List versions already cut for a document, newest first per the Onshape
+   * API's own ordering. Used to avoid re-cutting a version that already
+   * exists for a Build.
+   */
+  async listVersions(documentId) {
+    return this._get(`/api/documents/d/${documentId}/versions`);
+  }
+
+  /**
+   * Read the metadata (properties) of an element (tab), e.g. an assembly's
+   * native Name, Part number, Revision, and Project fields.
+   *
+   * Response shape: `{ elementId, elementType, properties: [{ name,
+   * propertyId, value, valueType, editable, ... }], ... }`.
+   *
+   * @see https://onshape-public.github.io/docs/api-adv/metadata/
+   */
+  async getElementMetadata(documentId, workspaceId, elementId) {
+    return this._get(`/api/metadata/d/${documentId}/w/${workspaceId}/e/${elementId}`);
+  }
+
   // -----------------------------------------------------------------------
   // Write operations
   // -----------------------------------------------------------------------
+
+  /**
+   * Cut a version — an immutable snapshot of a workspace. This is what
+   * happens when a Build is cut: the version's own id gets written back onto
+   * the Build's Onshape Version Link field (Sheet 02/03 of the plan).
+   *
+   * @param {string} documentId
+   * @param {string} workspaceId
+   * @param {object} args
+   * @param {string} args.name          The Build's own key, so the version is
+   *   identifiable from Onshape's version list without cross-referencing Jira
+   * @param {string} [args.description]  Free text; this plan puts a link back
+   *   to the Jira issue here
+   * @returns {Promise<{ id: string, name: string }>}
+   */
+  async createVersion(documentId, workspaceId, { name, description } = {}) {
+    const path = `/api/documents/d/${documentId}/versions`;
+    return this._post(path, {
+      documentId,
+      workspaceId,
+      name,
+      description: description ?? '',
+    });
+  }
+
+  /**
+   * Fork a new workspace from a specific version — what happens when a
+   * Revision starts. The prior revision's workspace and version history stay
+   * exactly as they were; the new workspace moves forward independently.
+   *
+   * UNVERIFIED REQUEST SHAPE: Onshape's own API Explorer (the authoritative
+   * source for this endpoint's body) requires a logged-in session and isn't
+   * reachable from here, and the public docs pages don't spell out the
+   * branch-from-version fields. `branchedFrom.vid` is a reasonable guess
+   * based on Onshape's version-id terminology elsewhere in the API, not a
+   * confirmed field name — verify against the API Explorer
+   * (https://cad.onshape.com/glassworks/explorer/#/Document) before this
+   * runs against anything that matters.
+   *
+   * @param {string} documentId
+   * @param {string} fromVersionId
+   * @param {object} args
+   * @param {string} args.name  The new Revision's own key
+   * @returns {Promise<{ id: string, name: string }>}
+   */
+  async createBranch(documentId, fromVersionId, { name } = {}) {
+    const path = `/api/documents/d/${documentId}/workspaces`;
+    return this._post(path, {
+      name,
+      documentId,
+      isBranchedFrom: true,
+      branchedFrom: { vid: fromVersionId },
+    });
+  }
 
   /**
    * Update metadata (custom properties) for a part.
@@ -336,16 +413,29 @@ export class OnshapeClient {
   }
 
   /**
-   * Wrap axios errors into OnshapeApiError.
+   * Wrap axios errors into OnshapeApiError. Anything else (a TypeError from
+   * our own code) is returned unchanged, so it surfaces as ValorBOM's own
+   * error, not as OnShape's.
    * NEVER includes the secret key in the error message.
    */
   _wrapError(err, endpoint) {
     const status = err?.response?.status ?? 0;
+    if (!status && !isNetworkError(err)) return err;
 
     // Auth failures get a clear, descriptive message
-    if (status === 401 || status === 403) {
+    if (status === 401) {
       return new OnshapeApiError(
         'Onshape authentication failed — verify ONSHAPE_ACCESS and ONSHAPE_SECRET env vars and check for clock drift',
+        status,
+        endpoint,
+      );
+    }
+
+    // Signed in, but the API key's scopes or the document's sharing don't
+    // allow this request (e.g. a read-only key asked to create a version).
+    if (status === 403) {
+      return new OnshapeApiError(
+        'Onshape refused access — the API key may lack write scope, or the document is not shared for this action',
         status,
         endpoint,
       );

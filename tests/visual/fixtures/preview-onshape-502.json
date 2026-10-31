@@ -1,0 +1,8 @@
+{
+  "status": 502,
+  "body": {
+    "error": "Bad Gateway",
+    "status": 502,
+    "source": "onshape"
+  }
+}

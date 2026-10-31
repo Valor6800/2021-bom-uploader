@@ -6,6 +6,7 @@ import {
   validateQuantity,
   validatePartPayload,
   sanitizeJQL,
+  validateIssueKey,
 } from '../../src/server/utils/validators.js';
 
 import {
@@ -144,5 +145,50 @@ describe('sanitizeJQL', () => {
 
   test('escapes backslashes', () => {
     expect(sanitizeJQL('test\\value')).toBe('test\\\\value');
+  });
+});
+
+describe('validateIssueKey', () => {
+  const saved = { PROJECT_KEY: process.env.PROJECT_KEY, JIRA_PROJECT: process.env.JIRA_PROJECT };
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  test('accepts a key in the project', () => {
+    process.env.PROJECT_KEY = 'HAR';
+    expect(validateIssueKey('HAR-2030')).toEqual({ valid: true });
+  });
+
+  test('honours a PROJECT_KEY set after import', () => {
+    process.env.PROJECT_KEY = 'VAL';
+    expect(validateIssueKey('HAR-2030').valid).toBe(false);
+    process.env.PROJECT_KEY = 'HAR';
+    expect(validateIssueKey('HAR-2030').valid).toBe(true);
+  });
+
+  test('falls back to JIRA_PROJECT, then VAL', () => {
+    delete process.env.PROJECT_KEY;
+    process.env.JIRA_PROJECT = 'HAR';
+    expect(validateIssueKey('HAR-1').valid).toBe(true);
+    delete process.env.JIRA_PROJECT;
+    expect(validateIssueKey('VAL-1').valid).toBe(true);
+    expect(validateIssueKey('HAR-1').valid).toBe(false);
+  });
+
+  test.each([
+    'har-2030', 'HAR-', 'HAR-12345678', '-1', '1HAR-1', 'HAR-1 OR 1=1', 'HAR-1"', '', null, 42, ['HAR-1'],
+  ])('rejects %p', (key) => {
+    process.env.PROJECT_KEY = 'HAR';
+    const result = validateIssueKey(key);
+    expect(result.valid).toBe(false);
+    expect(typeof result.error).toBe('string');
+  });
+
+  test('rejects another project with a message naming the project', () => {
+    process.env.PROJECT_KEY = 'HAR';
+    expect(validateIssueKey('VAL-1')).toEqual({ valid: false, error: '"VAL-1" is not in project HAR' });
   });
 });

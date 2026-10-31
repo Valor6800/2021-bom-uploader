@@ -19,4 +19,6 @@ coverage
 .gitlab-ci.yml
 .vscode
 .kiro
+.agents
+docs
 __tests__

@@ -1,0 +1,7 @@
+{
+  "status": 500,
+  "body": {
+    "error": "BOM table is missing required columns: name. Verify the following items are in your BOM: quantity, part number, material, name",
+    "status": 500
+  }
+}

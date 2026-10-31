@@ -1,5 +1,11 @@
 node_modules/
 .env
+.env*
+!.env.example
 dist/
 coverage/
 keys.json
+# Agent task notes (reports, designs, reviews) are checked in as handoff
+# context; only their bulky screenshots are not.
+.agents/**/screenshots/
+tests/visual/output/

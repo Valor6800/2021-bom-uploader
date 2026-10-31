@@ -1,0 +1,9 @@
+{
+  "status": 200,
+  "body": {
+    "query": "bash",
+    "total": 0,
+    "results": [],
+    "groups": null
+  }
+}

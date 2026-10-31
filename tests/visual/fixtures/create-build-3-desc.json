@@ -1,0 +1,16 @@
+{
+  "status": 200,
+  "body": {
+    "build": {
+      "key": "HAR-2053",
+      "summary": "Test Assembly Build 3 - 1in bash bar",
+      "assemblyKey": "HAR-2030",
+      "buildNumber": 3,
+      "status": "Draft",
+      "onshapeVersionLink": null
+    },
+    "linked": [],
+    "failed": [],
+    "cloneError": null
+  }
+}

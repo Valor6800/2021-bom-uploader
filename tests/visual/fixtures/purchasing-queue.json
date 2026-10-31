@@ -1,0 +1,224 @@
+{
+  "status": 200,
+  "body": {
+    "vendorGroups": [
+      {
+        "vendor": "Rev",
+        "items": [
+          {
+            "key": "PARTS-404",
+            "summary": "NEO Vortex brushless motor",
+            "partNumber": "REV-21-1652",
+            "vendorRaw": "REV Robotics",
+            "vendor": "Rev",
+            "qty": 2,
+            "price": 59.99,
+            "link": "https://www.revrobotics.com/rev-21-1652/",
+            "epic": "HAR-2030",
+            "priority": "Medium",
+            "created": "2026-10-23T18:05:00.000-0500",
+            "status": "Approved",
+            "requestedBy": {
+              "name": "mentor1",
+              "displayName": "Alex Mentor"
+            },
+            "classification": "Robot",
+            "wishId": null,
+            "lineTotal": 119.98,
+            "alreadyInSheet": null,
+            "priceHistory": [
+              59.99
+            ],
+            "flags": [],
+            "blocked": false
+          }
+        ],
+        "total": 119.98,
+        "pricedCount": 1,
+        "unpricedCount": 0
+      },
+      {
+        "vendor": "WCP",
+        "items": [
+          {
+            "key": "PARTS-401",
+            "summary": "Hex bearing 1/2in",
+            "partNumber": "WCP-0072",
+            "vendorRaw": "WCP",
+            "vendor": "WCP",
+            "qty": 12,
+            "price": 3.99,
+            "link": "https://wcproducts.com/products/bearings",
+            "epic": "HAR-2030",
+            "priority": "Medium",
+            "created": "2026-10-20T15:02:00.000-0500",
+            "status": "Approved",
+            "requestedBy": {
+              "name": "student1",
+              "displayName": "Sam Student"
+            },
+            "classification": "Robot",
+            "wishId": null,
+            "lineTotal": 47.88,
+            "alreadyInSheet": null,
+            "priceHistory": [
+              3.99
+            ],
+            "flags": [],
+            "blocked": false
+          },
+          {
+            "key": "PARTS-402",
+            "summary": "1/2in hex shaft, 36in",
+            "partNumber": "WCP-0201",
+            "vendorRaw": "WCP",
+            "vendor": "WCP",
+            "qty": 2,
+            "price": 21.99,
+            "link": "https://wcproducts.com/products/hex-shaft",
+            "epic": "HAR-2030",
+            "priority": "Medium",
+            "created": "2026-10-21T10:15:00.000-0500",
+            "status": "Approved",
+            "requestedBy": {
+              "name": "student1",
+              "displayName": "Sam Student"
+            },
+            "classification": "Robot",
+            "wishId": null,
+            "lineTotal": 43.98,
+            "alreadyInSheet": null,
+            "priceHistory": [],
+            "flags": [],
+            "blocked": false
+          }
+        ],
+        "total": 91.86,
+        "pricedCount": 2,
+        "unpricedCount": 0
+      },
+      {
+        "vendor": "McMaster-Carr",
+        "items": [
+          {
+            "key": "PARTS-403",
+            "summary": "Socket head cap screw 10-32 x 1/2in (100)",
+            "partNumber": "92196A269",
+            "vendorRaw": "McMaster Carr",
+            "vendor": "McMaster-Carr",
+            "qty": 1,
+            "price": 11.48,
+            "link": "https://www.mcmaster.com/92196A269/",
+            "epic": "HAR-1984",
+            "priority": "Medium",
+            "created": "2026-10-22T09:40:00.000-0500",
+            "status": "Approved",
+            "requestedBy": {
+              "name": "student2",
+              "displayName": "Riley Student"
+            },
+            "classification": "Robot",
+            "wishId": null,
+            "lineTotal": 11.48,
+            "alreadyInSheet": null,
+            "priceHistory": [],
+            "flags": [],
+            "blocked": false
+          }
+        ],
+        "total": 11.48,
+        "pricedCount": 1,
+        "unpricedCount": 0
+      }
+    ],
+    "summary": {
+      "total": 223.32,
+      "pricedCount": 4,
+      "unpricedCount": 0,
+      "itemCount": 4,
+      "blockedCount": 0,
+      "flaggedCount": 0
+    },
+    "budget": {
+      "total": {
+        "classification": "Total",
+        "budget": 25000,
+        "spent": 14210.55,
+        "remaining": 10789.45
+      },
+      "categories": [
+        {
+          "classification": "Robot",
+          "budget": 15000,
+          "spent": 9876.4,
+          "remaining": 5123.6
+        },
+        {
+          "classification": "Tooling",
+          "budget": 4000,
+          "spent": 2210.15,
+          "remaining": 1789.85
+        },
+        {
+          "classification": "Business",
+          "budget": 3000,
+          "spent": 1124,
+          "remaining": 1876
+        },
+        {
+          "classification": "Game",
+          "budget": 3000,
+          "spent": 1000,
+          "remaining": 2000
+        }
+      ],
+      "vouchers": [
+        {
+          "vendor": "REV Robotics",
+          "budget": 1000,
+          "spent": 400,
+          "remaining": 600
+        }
+      ]
+    },
+    "wishList": [
+      {
+        "wishId": 1,
+        "item": "Spare swerve modules",
+        "allocated": 2400,
+        "reserved": 0,
+        "spent": 800,
+        "remaining": 1600,
+        "notes": null
+      },
+      {
+        "wishId": 2,
+        "item": "Pit cart rebuild",
+        "allocated": 600,
+        "reserved": 0,
+        "spent": 0,
+        "remaining": 600,
+        "notes": "After build season"
+      }
+    ],
+    "options": {
+      "classifications": [
+        "Robot",
+        "Tooling",
+        "Business",
+        "VFF",
+        "Voucher",
+        "Game"
+      ],
+      "sources": [
+        "LISD",
+        "VFF"
+      ]
+    },
+    "history": {
+      "medianLineTotal": 87.5187020013437,
+      "sampleSize": 2
+    },
+    "jiraBaseUrl": "https://jira.valor6800.com"
+  }
+}

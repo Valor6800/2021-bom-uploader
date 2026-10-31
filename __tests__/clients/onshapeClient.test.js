@@ -5,6 +5,7 @@
  */
 
 import { jest } from '@jest/globals';
+import { withoutEnv } from '../mocks/withoutEnv.js';
 
 // ---------------------------------------------------------------------------
 // Mock axios before importing OnshapeClient
@@ -93,27 +94,24 @@ describe('createSignature', () => {
 describe('OnshapeClient', () => {
   describe('constructor', () => {
     it('throws when baseUrl is missing', () => {
-      const orig = process.env.ONSHAPE_URL;
-      delete process.env.ONSHAPE_URL;
-      expect(() => new OnshapeClient({ accessKey: 'a', secretKey: 's' }))
-        .toThrow('Onshape base URL is required');
-      process.env.ONSHAPE_URL = orig;
+      withoutEnv(['ONSHAPE_URL', 'ONSHAPE_BASE_URL'], () => {
+        expect(() => new OnshapeClient({ accessKey: 'a', secretKey: 's' }))
+          .toThrow('Onshape base URL is required');
+      });
     });
 
     it('throws when accessKey is missing', () => {
-      const orig = process.env.ONSHAPE_ACCESS;
-      delete process.env.ONSHAPE_ACCESS;
-      expect(() => new OnshapeClient({ baseUrl: 'https://x', secretKey: 's' }))
-        .toThrow('Onshape access key is required');
-      process.env.ONSHAPE_ACCESS = orig;
+      withoutEnv(['ONSHAPE_ACCESS', 'API_KEY'], () => {
+        expect(() => new OnshapeClient({ baseUrl: 'https://x', secretKey: 's' }))
+          .toThrow('Onshape access key is required');
+      });
     });
 
     it('throws when secretKey is missing', () => {
-      const orig = process.env.ONSHAPE_SECRET;
-      delete process.env.ONSHAPE_SECRET;
-      expect(() => new OnshapeClient({ baseUrl: 'https://x', accessKey: 'a' }))
-        .toThrow('Onshape secret key is required');
-      process.env.ONSHAPE_SECRET = orig;
+      withoutEnv(['ONSHAPE_SECRET', 'SECRET_KEY'], () => {
+        expect(() => new OnshapeClient({ baseUrl: 'https://x', accessKey: 'a' }))
+          .toThrow('Onshape secret key is required');
+      });
     });
   });
 
@@ -272,6 +270,64 @@ describe('OnshapeClient', () => {
     });
   });
 
+  describe('listVersions', () => {
+    it('calls the correct path', async () => {
+      const client = makeClient();
+      mockGet.mockResolvedValueOnce({ data: [{ id: 'v1', name: 'VR27B-2087 Intake Build 1' }] });
+
+      const result = await client.listVersions('doc1');
+      expect(result).toEqual([{ id: 'v1', name: 'VR27B-2087 Intake Build 1' }]);
+      expect(mockGet.mock.calls[0][0]).toBe('/api/documents/d/doc1/versions');
+    });
+  });
+
+  describe('createVersion', () => {
+    it('POSTs documentId, workspaceId, name, and description', async () => {
+      const client = makeClient();
+      mockRequest.mockResolvedValueOnce({ data: { id: 'v2', name: 'Build 1' } });
+
+      const result = await client.createVersion('doc1', 'ws1', {
+        name: 'Build 1',
+        description: 'VAL-100',
+      });
+      expect(result).toEqual({ id: 'v2', name: 'Build 1' });
+
+      const config = mockRequest.mock.calls[0][0];
+      expect(config.method).toBe('POST');
+      expect(config.url).toBe('/api/documents/d/doc1/versions');
+      expect(config.data).toEqual({
+        documentId: 'doc1',
+        workspaceId: 'ws1',
+        name: 'Build 1',
+        description: 'VAL-100',
+      });
+    });
+
+    it('defaults description to an empty string when omitted', async () => {
+      const client = makeClient();
+      mockRequest.mockResolvedValueOnce({ data: {} });
+
+      await client.createVersion('doc1', 'ws1', { name: 'Build 1' });
+      expect(mockRequest.mock.calls[0][0].data.description).toBe('');
+    });
+  });
+
+  describe('createBranch', () => {
+    it('POSTs to the workspaces path with the source version id', async () => {
+      const client = makeClient();
+      mockRequest.mockResolvedValueOnce({ data: { id: 'ws2', name: 'Intake Rev B' } });
+
+      const result = await client.createBranch('doc1', 'v1', { name: 'Intake Rev B' });
+      expect(result).toEqual({ id: 'ws2', name: 'Intake Rev B' });
+
+      const config = mockRequest.mock.calls[0][0];
+      expect(config.method).toBe('POST');
+      expect(config.url).toBe('/api/documents/d/doc1/workspaces');
+      expect(config.data.name).toBe('Intake Rev B');
+      expect(config.data.branchedFrom).toEqual({ vid: 'v1' });
+    });
+  });
+
   describe('write error handling', () => {
     it('wraps write failures as OnshapeApiError with the write endpoint', async () => {
       const client = makeClient();
@@ -324,7 +380,8 @@ describe('OnshapeClient', () => {
         await client.getDocuments('test');
       } catch (e) {
         expect(e).toBeInstanceOf(OnshapeApiError);
-        expect(e.message).toContain('Onshape authentication failed');
+        // A 403 is a scope or sharing refusal, not a bad key.
+        expect(e.message).toContain('Onshape refused access');
         expect(e.status).toBe(403);
       }
     });
@@ -343,18 +400,23 @@ describe('OnshapeClient', () => {
       }
     });
 
-    it('wraps generic errors with status and endpoint', async () => {
+    it('wraps a network failure (axios, no response) with status 0 and endpoint', async () => {
       const client = makeClient();
-      const err = new Error('timeout');
+      const err = Object.assign(new Error('timeout of 30000ms exceeded'), {
+        isAxiosError: true, code: 'ECONNABORTED',
+      });
       mockGet.mockRejectedValueOnce(err);
+      const e = await client.getWorkspaces('doc1').catch((x) => x);
+      expect(e).toBeInstanceOf(OnshapeApiError);
+      expect(e.status).toBe(0);
+      expect(e.endpoint).toContain('GET');
+    });
 
-      try {
-        await client.getWorkspaces('doc1');
-      } catch (e) {
-        expect(e).toBeInstanceOf(OnshapeApiError);
-        expect(e.status).toBe(0);
-        expect(e.endpoint).toContain('GET');
-      }
+    it('re-throws an error from our own code unchanged, not as an OnShape error', async () => {
+      const client = makeClient();
+      const bug = new TypeError("Cannot read properties of undefined (reading 'id')");
+      mockGet.mockRejectedValueOnce(bug);
+      await expect(client.getWorkspaces('doc1')).rejects.toBe(bug);
     });
   });
 

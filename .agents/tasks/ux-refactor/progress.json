@@ -1,0 +1,50 @@
+{
+  "complete": true,
+  "increments": [
+    {
+      "id": "INC-1",
+      "title": "Part create and BOM parse fixes (B1, B3, B4, B6 part 1), .gitignore",
+      "done": true
+    },
+    {
+      "id": "INC-2",
+      "title": "Assembly search endpoint, validateIssueKey, HttpError details/conflict, errorHandler source, describeUpstreamError",
+      "done": true
+    },
+    {
+      "id": "INC-3",
+      "title": "Onboarding preview/commit (B5), Build 1 creation, createBuild returns Build with description and chain",
+      "done": true
+    },
+    {
+      "id": "INC-4",
+      "title": "Build save endpoint (B2 server), chain-scoped Part reads, Clone/Re-create/Cut Version guards, Build status by key, B6 part 2",
+      "done": true
+    },
+    {
+      "id": "INC-5",
+      "title": "Design tokens, UI primitives, ApiError, friendlyError, Playwright harness",
+      "done": true
+    },
+    {
+      "id": "INC-6",
+      "title": "New Designer page at /a/:key/design; /designer redirect",
+      "done": true
+    },
+    {
+      "id": "INC-7",
+      "title": "New Assembly page at /a/:key/assemble; /assembly/:key redirect",
+      "done": true
+    },
+    {
+      "id": "INC-8",
+      "title": "Home search, chooser, onboarding UI, new nav; /assembly redirect",
+      "done": true
+    },
+    {
+      "id": "INC-9",
+      "title": "Delete dead code and legacy APIs, update HANDOFF.md, final screenshots",
+      "done": true
+    }
+  ]
+}

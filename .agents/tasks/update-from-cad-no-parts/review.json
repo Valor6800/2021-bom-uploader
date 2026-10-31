@@ -1,0 +1,9 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    "Old /assembly page stays silent (likely, non-blocking): PartsListTable.jsx ignores preview.unidentified. Render UnidentifiedPartsWarning there in a follow-up if that page is still in use.",
+    "Preview now hard-depends on the Assembly getIssue (confirmed, non-blocking): if jiraClient.getIssue fails, the whole preview fails, even for legacy BOMs that need no season. Consider catching the error and falling back to a null season.",
+    "COTS/hardware rows now appear as unidentified (possible, non-blocking): rows with no Part number used to be dropped silently and now show as 'missing Part number'. This matches requirement (2). If the list gets noisy, honor excludeFromBom."
+  ],
+  "reviewDoc": "/Volumes/workplace/6800/bom-uploader/.agents/tasks/update-from-cad-no-parts/review.md"
+}

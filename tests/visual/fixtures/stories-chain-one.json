@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "body": [
+    {
+      "summary": "VF27P-0001A Test Part",
+      "name": "Test Part",
+      "version": "A",
+      "year": "27",
+      "seasonType": "F",
+      "partNumber": "0001",
+      "fullPartNumber": "VF27P-0001A",
+      "isEpic": false,
+      "key": "HAR-2031",
+      "epic": "HAR-2030",
+      "material": "PLA",
+      "machinery": "3D Printer",
+      "powdercoat": "None",
+      "quantity": 1,
+      "thickness": "None",
+      "project": "HAR"
+    }
+  ]
+}

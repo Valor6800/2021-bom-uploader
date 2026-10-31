@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "body": {
+    "key": "HAR-2030",
+    "summary": "VF27A-0000A Test Assembly",
+    "name": "Test Assembly",
+    "numbered": true,
+    "fullPartNumber": "VF27A-0000A",
+    "partNumber": "0000",
+    "revision": "A",
+    "seasonType": "F",
+    "year": "27",
+    "seasonCode": "VF27",
+    "seasonLabel": "Facility 2027",
+    "status": "New",
+    "closed": false,
+    "created": "2026-10-29T20:15:40.000+0000",
+    "documentId": "8c64dfdcb66184646a7a3f17",
+    "workspaceId": "82f00d3cbea6901ac26040bd",
+    "elementId": "faea62821490977c33bc8d7c",
+    "onshapeUrl": "https://cad.onshape.com/documents/8c64dfdcb66184646a7a3f17/w/82f00d3cbea6901ac26040bd/e/faea62821490977c33bc8d7c"
+  }
+}

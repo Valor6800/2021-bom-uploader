@@ -1,0 +1,27 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": "M1",
+      "severity": "MEDIUM",
+      "where": "3.4 'Two Active Builds (repair path)'; 3.5; section 9 'A Cut Version that fails partway'; section 12 INC-7",
+      "problem": "3.4 and section 9 say both pages show the two-Active warning and repair path, and Cut Version also lives on the Assembly page's ⋯ menu. INC-7's scope and 3.5 omit the warning, statusThisSession overlay, cutFailedKey, fetchBuildStatuses, the repair confirm and the cutStage copy, and INC-7 has no screenshot or interaction check for any Cut Version state. The Assembly page can ship without the repair path and nothing in the plan would catch it.",
+      "fix": "Add the shared Cut Version handling (overlayBuildStatus, cutFailedKey, cutStage copy, two-Active warning via fetchBuildStatuses/repairCandidates/confirm Dialog) to INC-7 scope, preferably as a shared component such as builds/TwoActiveWarning. Point 3.5 at the 3.4 repair path with its placement on the Assembly page. Add INC-7 screenshots assembly-two-active-builds.png (assert one button) and assembly-cut-version-already-cut.png (assert chip reads 'Superseded', never '409'), plus the check that the cut-version body is { assemblyKey } only."
+    },
+    {
+      "id": "N1",
+      "severity": "NIT",
+      "where": "3.4 step 3; section 9",
+      "problem": "Section 9 says 'Finish cutting' appears in the tab where the cut failed, but cutFailedKey is local page state and is lost on a Designer/Assembly mode switch, after which both Builds with this document's link get 'Make Build N' buttons (still behind the confirm).",
+      "fix": "Either persist cutFailedKey in sessionStorage under valorbom.cutFailed.<revisionKey> (cleared on repair success or when no conflict is found), or reword section 9 to 'on the page where the cut failed'. Add the matching test."
+    },
+    {
+      "id": "N2",
+      "severity": "NIT",
+      "where": "3.4 step 2; 7.1 overlayBuildStatus / dropAgreedStatus",
+      "problem": "Keys in the status endpoint's missing list are written to statusThisSession as status 'Missing'. The picker and tabs render overlaid status chips, Badge has no 'Missing' style, and dropAgreedStatus never drops the entry because no fetch reports 'Missing'.",
+      "fix": "Keep missing keys in a separate Set that activeConflict excludes instead of the overlay, or state that a Build with overlaid status 'Missing' is hidden from the picker and tabs, with a buildNames.test.js case."
+    }
+  ],
+  "reviewDoc": "/Volumes/workplace/6800/bom-uploader/.agents/tasks/ux-refactor/design-review.md"
+}

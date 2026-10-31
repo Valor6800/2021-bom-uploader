@@ -1,0 +1,25 @@
+{
+  "status": 200,
+  "body": {
+    "build": {
+      "key": "HAR-2053",
+      "summary": "Test Assembly Build 3",
+      "assemblyKey": "HAR-2030",
+      "buildNumber": 3,
+      "status": "Draft",
+      "onshapeVersionLink": null
+    },
+    "linked": [
+      "HAR-2031"
+    ],
+    "failed": [
+      {
+        "partKey": "HAR-2032",
+        "error": "the team tracker didn't respond (503)",
+        "status": 503,
+        "source": "tracker"
+      }
+    ],
+    "cloneError": null
+  }
+}

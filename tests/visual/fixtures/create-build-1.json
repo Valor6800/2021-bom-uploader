@@ -1,0 +1,16 @@
+{
+  "status": 200,
+  "body": {
+    "build": {
+      "key": "HAR-2051",
+      "summary": "Test Assembly Build 1",
+      "assemblyKey": "HAR-2030",
+      "buildNumber": 1,
+      "status": "Draft",
+      "onshapeVersionLink": null
+    },
+    "linked": [],
+    "failed": [],
+    "cloneError": null
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "status": 200,
+  "body": {
+    "tickets": [
+      {
+        "id": "PARTS-350",
+        "key": "PARTS-350",
+        "sheetOnly": false,
+        "summary": "Polycarbonate sheet 1/8in 24x48",
+        "status": "Ordered",
+        "partNumber": "8574K26",
+        "vendorRaw": "McMaster Carr",
+        "vendor": "McMaster-Carr",
+        "qty": 1,
+        "price": 64.12,
+        "link": null,
+        "epic": "HAR-2030",
+        "assembly": {
+          "key": "HAR-2030",
+          "name": "VF27A-0000A Test Assembly"
+        },
+        "created": "2026-10-10T12:00:00.000-0500",
+        "requestedBy": {
+          "name": "student1",
+          "displayName": "Sam Student"
+        },
+        "sheetRow": 52,
+        "sheetStatus": "Ordered",
+        "trackingNumber": "1Z999AA10123456784",
+        "outcome": "in-sync",
+        "outcomeReason": "PARTS-350 and sheet row 52 agree.",
+        "pendingTransitions": [],
+        "lineTotal": 64.12
+      },
+      {
+        "id": "PARTS-351",
+        "key": "PARTS-351",
+        "sheetOnly": false,
+        "summary": "Timing belt 9mm HTD 5mm 225T",
+        "status": "Sent to VFF",
+        "partNumber": "WCP-0447",
+        "vendorRaw": "WCP",
+        "vendor": "WCP",
+        "qty": 3,
+        "price": 8.99,
+        "link": null,
+        "epic": "HAR-1984",
+        "assembly": {
+          "key": "HAR-1984",
+          "name": "VR26A-1200A End Effector"
+        },
+        "created": "2026-10-12T12:00:00.000-0500",
+        "requestedBy": {
+          "name": "student2",
+          "displayName": "Riley Student"
+        },
+        "sheetRow": 53,
+        "sheetStatus": "Ordered",
+        "trackingNumber": null,
+        "outcome": "advance",
+        "outcomeReason": "Sheet row 53 says \"Ordered\" but PARTS-351 is still Sent to VFF.",
+        "pendingTransitions": [
+          "101"
+        ],
+        "lineTotal": 26.97
+      },
+      {
+        "id": "row:54",
+        "key": null,
+        "sheetOnly": true,
+        "summary": "Zip ties, 8in (100)",
+        "partNumber": null,
+        "vendorRaw": "Amazon",
+        "vendor": "Amazon",
+        "qty": 1,
+        "price": 6.49,
+        "link": null,
+        "epic": null,
+        "assembly": null,
+        "classification": "Robot",
+        "created": null,
+        "status": null,
+        "requestedBy": null,
+        "sheetRow": 54,
+        "sheetStatus": "Ordered",
+        "trackingNumber": null,
+        "outcome": "sheet-only",
+        "outcomeReason": "Sheet row 54 has no Jira ticket, so there is no requester or assembly recorded. Checking it in marks the sheet only.",
+        "pendingTransitions": [],
+        "lineTotal": 6.49
+      }
+    ],
+    "unmatched": [],
+    "plan": {
+      "advance": [
+        {
+          "key": "PARTS-351",
+          "jiraStatus": "Sent to VFF",
+          "sheetStatus": "Ordered",
+          "row": 53,
+          "outcome": "advance",
+          "transitions": [
+            "101"
+          ],
+          "reason": "Sheet row 53 says \"Ordered\" but PARTS-351 is still Sent to VFF."
+        }
+      ],
+      "attention": [],
+      "drift": []
+    },
+    "summary": {
+      "itemCount": 2,
+      "matchedCount": 2,
+      "unmatchedCount": 0,
+      "sheetOnlyCount": 1,
+      "advanceCount": 1,
+      "attentionCount": 0,
+      "driftCount": 0
+    },
+    "jiraBaseUrl": "https://jira.valor6800.com"
+  }
+}

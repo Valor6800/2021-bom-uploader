@@ -1,12 +1,12 @@
-import { NavLink } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 
 /**
  * Navigation entries for the portal. Add a route here and it appears in the
  * nav automatically — keeping navigation extensible as new pages are added.
+ * The "ValorBOM" brand also links to Home, so it isn't listed here.
  */
 export const NAV_ITEMS = [
-  { to: '/', label: 'Dashboard', end: true },
-  { to: '/assembly', label: 'Assembly BOM' },
+  { to: '/', label: 'Find an Assembly', end: true },
   // Mentor-only: these move money and close tickets, so they sit behind
   // Authentik while the BOM tooling stays open to the whole team.
   { to: '/purchasing', label: 'Parts Order', mentorsOnly: true },
@@ -15,12 +15,12 @@ export const NAV_ITEMS = [
 
 export default function AppNav() {
   return (
-    <nav className="nav no-print">
+    <nav className="nav no-print" aria-label="Main">
       <div className="nav-inner">
-        <div className="nav-brand">
-          <span className="nav-icon">⚙</span>
-          <h1 className="nav-title">BOM Portal</h1>
-        </div>
+        <Link to="/" className="nav-brand">
+          <span className="nav-icon" aria-hidden="true">⚙</span>
+          <span className="nav-title">ValorBOM</span>
+        </Link>
         <ul className="nav-links">
           {NAV_ITEMS.map((item) => (
             <li key={item.to}>
@@ -33,7 +33,7 @@ export default function AppNav() {
               >
                 {item.label}
                 {item.mentorsOnly && (
-                  <span className="nav-lock" title="Mentors only">🔒</span>
+                  <span className="nav-lock" title="Mentors only" role="img" aria-label="Mentors only">🔒</span>
                 )}
               </NavLink>
             </li>

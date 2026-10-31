@@ -1,0 +1,8 @@
+{
+  "status": 404,
+  "body": {
+    "error": "Issue Does Not Exist",
+    "status": 404,
+    "source": "tracker"
+  }
+}

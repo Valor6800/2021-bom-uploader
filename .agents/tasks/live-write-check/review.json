@@ -1,0 +1,11 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    {"severity": "non-blocking", "label": "Pre-fix reversed links", "detail": "Used In links 16601 (HAR-2031/HAR-2032) and 16603 (HAR-2031/HAR-2033) still read 'HAR-2031 uses ...'. With the user's OK, delete and re-create them as Build -> Part. The app matches either direction, so nothing breaks meanwhile."},
+    {"severity": "non-blocking", "label": "Cut/Supersede/Archive still unverified live", "detail": "Steps c, f and h need an OnShape API key with OAuth2Write in .env, an API restart and a re-run. This is config (F2), not a code change."},
+    {"severity": "low", "label": "Revision-past-Z message lost", "detail": "nextRevisionLetter throws a plain Error, which recreateForBuild (buildService.js:602) can reach. It now reads 'ValorBOM hit an internal error.' Throw an HttpError (409) if the reason should reach the student."},
+    {"severity": "non-blocking", "label": ".env.authentik not ignored", "detail": "This untracked file (created before this run) is not matched by the '.env' line in .gitignore. Add '.env*' to .gitignore before committing. It is not part of this diff."},
+    {"severity": "cosmetic", "label": "Repeated jiraErrors log spread", "detail": "The jiraErrors spread expression is repeated four times, and the [cut] resume warn line is mis-indented. A small helper would tidy this."}
+  ],
+  "reviewDoc": "/Volumes/workplace/6800/bom-uploader/.agents/tasks/live-write-check/review.md"
+}

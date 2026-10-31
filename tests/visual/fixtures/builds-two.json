@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "body": [
+    {
+      "key": "HAR-2052",
+      "summary": "Test Assembly Build 2",
+      "assemblyKey": "HAR-2030",
+      "buildNumber": 2,
+      "onshapeVersionLink": "https://cad.onshape.com/documents/8c64dfdcb66184646a7a3f17/v/5d1c0e2f9a7b3c4d5e6f7a8b/e/faea62821490977c33bc8d7c",
+      "instructionsData": null,
+      "status": "Active"
+    },
+    {
+      "key": "HAR-2051",
+      "summary": "Test Assembly Build 1",
+      "assemblyKey": "HAR-2030",
+      "buildNumber": 1,
+      "onshapeVersionLink": null,
+      "instructionsData": null,
+      "status": "Draft"
+    }
+  ]
+}

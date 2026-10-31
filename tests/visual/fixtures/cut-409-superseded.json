@@ -1,0 +1,8 @@
+{
+  "status": 409,
+  "body": {
+    "buildStatus": "Superseded",
+    "error": "Build 1 has already been cut.",
+    "status": 409
+  }
+}

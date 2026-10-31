@@ -69,25 +69,61 @@ export class AuthRequiredError extends Error {
   }
 }
 
+/**
+ * Thrown for every non-OK response other than ValorBOM's own 401/403. Carries the HTTP status
+ * and the parsed JSON body, so callers (and lib/friendlyError.js) can read the
+ * server's `source`, per-item details or `buildStatus` without parsing text.
+ */
+export class ApiError extends Error {
+  constructor(message, status, body) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
+  }
+}
+
+/**
+ * Thrown when fetch() itself fails: the ValorBOM server could not be reached
+ * (down, restarting, offline). Kept apart from errors in our own code so the
+ * UI only says "couldn't reach ValorBOM" when that is what happened.
+ */
+export class NetworkError extends Error {
+  constructor(message, { cause } = {}) {
+    super(message);
+    this.name = 'NetworkError';
+    this.cause = cause;
+  }
+}
+
 async function request(url, options = {}) {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    // Send the session cookie; harmless same-origin, required if ever not.
-    credentials: 'same-origin',
-    ...options,
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+      // Send the session cookie; harmless same-origin, required if ever not.
+      credentials: 'same-origin',
+      ...options,
+    });
+  } catch (err) {
+    // A cancelled request is not a failure; callers check for AbortError.
+    if (err?.name === 'AbortError') throw err;
+    throw new NetworkError("Couldn't reach ValorBOM", { cause: err });
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
 
-    if (res.status === 401 || res.status === 403) {
+    // A 401/403 that names a `source` is the tracker or OnShape refusing,
+    // not ValorBOM's own sign-in gate.
+    if ((res.status === 401 || res.status === 403) && !body.source) {
       throw new AuthRequiredError(
         body.error || 'Sign-in required',
         { loginUrl: body.loginUrl, forbidden: res.status === 403 },
       );
     }
 
-    throw new Error(body.error || `Request failed: ${res.status}`);
+    throw new ApiError(body.error || `Request failed: ${res.status}`, res.status, body);
   }
 
   return res.json();
@@ -96,15 +132,47 @@ async function request(url, options = {}) {
 // ---------------------------------------------------------------------------
 // Epics
 // ---------------------------------------------------------------------------
-export function fetchEpics(seasonType, year) {
-  return request(`/api/epics?seasonType=${encodeURIComponent(seasonType)}&year=${encodeURIComponent(year)}`);
+export function fetchEpicByKey(key) {
+  return request(`/api/epics/${encodeURIComponent(key)}`);
 }
 
-export function createEpicFromURL(url) {
-  return request('/api/epics/from-url', {
+/**
+ * Search Assemblies by key, name, number, season or year.
+ * @param {string} q
+ * @param {{ limit?: number, includeClosed?: boolean, signal?: AbortSignal }} [options]
+ * @returns {Promise<{ results: object[], total: number, groups: object[] }>}
+ */
+export function searchAssemblies(q, { limit, includeClosed = false, signal } = {}) {
+  const params = new URLSearchParams({ q: q ?? '' });
+  if (limit !== undefined) params.set('limit', String(limit));
+  if (includeClosed) params.set('includeClosed', '1');
+  return request(`/api/epics/search?${params}`, { signal });
+}
+
+/** Read-only check of a pasted OnShape link before onboarding it. */
+export function previewOnboarding(url) {
+  return request('/api/epics/onboard/preview', {
     method: 'POST',
     body: JSON.stringify({ url }),
   });
+}
+
+/**
+ * Create the Assembly for an OnShape link, plus its Build 1.
+ * @param {{ url: string, expectedSummary: string }} payload
+ */
+export function onboardAssembly(payload) {
+  return request('/api/epics/onboard', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Revisions
+// ---------------------------------------------------------------------------
+export function fetchRevisionChain(key) {
+  return request(`/api/revisions/chain/${encodeURIComponent(key)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -114,15 +182,13 @@ export function fetchStoriesByEpic(epicKey) {
   return request(`/api/stories?key=${encodeURIComponent(epicKey)}`);
 }
 
-export function fetchStoriesByPartNumber(partNumber) {
-  return request(`/api/stories?partNumber=${encodeURIComponent(partNumber)}`);
+/** Every Part under the Assembly's whole Revision chain. */
+export function fetchChainParts(key) {
+  return request(`/api/stories?key=${encodeURIComponent(key)}&chain=1`);
 }
 
-export function createStory(payload) {
-  return request('/api/stories', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+export function fetchStoriesByPartNumber(partNumber) {
+  return request(`/api/stories?partNumber=${encodeURIComponent(partNumber)}`);
 }
 
 export function updateStory(key, payload) {
@@ -130,6 +196,110 @@ export function updateStory(key, payload) {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
+}
+
+/** Bulk fetch for rendering a per-build BOM, where BuildService only knows linked part keys. */
+export function fetchPartsByKeys(keys) {
+  if (!keys?.length) return Promise.resolve([]);
+  return request(`/api/parts/by-keys?keys=${encodeURIComponent(keys.join(','))}`);
+}
+
+/** "Clone a part": a fresh, self-numbered ticket under epicKey, not a revision of sourceKey. */
+export function clonePart(sourceKey, payload) {
+  return request(`/api/parts/${encodeURIComponent(sourceKey)}/clone`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Builds
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {string} assemblyKey
+ * @param {string[]} [revisionChainKeys]  Full revision chain for continuous
+ *   numbering/history; defaults server-side to just assemblyKey when omitted.
+ */
+export function fetchBuildsForAssembly(assemblyKey, revisionChainKeys) {
+  const params = new URLSearchParams({ assemblyKey });
+  if (revisionChainKeys?.length) {
+    params.set('revisionChainKeys', revisionChainKeys.join(','));
+  }
+  return request(`/api/builds?${params}`);
+}
+
+/**
+ * @param {{ assemblyKey: string, revisionChainKeys?: string[], name: string, description?: string, cloneFromBuildKey?: string }} payload
+ */
+export function createBuild(payload) {
+  return request('/api/builds', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Build statuses read by key (search lags a status change). At most 10.
+ * @param {string[]} keys
+ * @returns {Promise<{ builds: { key: string, status: string, assemblyKey: string|null,
+ *   onshapeVersionLink: string|null }[], missing: string[] }>}
+ */
+export function fetchBuildStatuses(keys) {
+  return request(`/api/builds/status?keys=${encodeURIComponent(keys.join(','))}`);
+}
+
+export function fetchBuildParts(buildKey) {
+  return request(`/api/builds/${encodeURIComponent(buildKey)}/parts`);
+}
+
+export function linkPartToBuild(buildKey, partKey) {
+  return request(`/api/builds/${encodeURIComponent(buildKey)}/parts`, {
+    method: 'POST',
+    body: JSON.stringify({ partKey }),
+  });
+}
+
+/**
+ * Save a Build's Part changes in one request; answers per-item results.
+ * @param {string} buildKey
+ * @param {{ creates?: object[], updates?: object[], links?: { ref: string, key: string }[] }} body
+ * @returns {Promise<{ results: object[] }>}
+ */
+export function saveBuildParts(buildKey, body) {
+  return request(`/api/builds/${encodeURIComponent(buildKey)}/save`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** Every Build a Part is linked to, newest first — the current-build indicator. */
+export function fetchBuildsForPart(partKey) {
+  return request(`/api/builds/for-part/${encodeURIComponent(partKey)}`);
+}
+
+/** "Re-create for this Build": a new revision of the Part, linked only to targetBuildKey. */
+export function recreatePartForBuild(targetBuildKey, partKey) {
+  return request(`/api/builds/${encodeURIComponent(targetBuildKey)}/parts/${encodeURIComponent(partKey)}/recreate`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * The server reads the OnShape ids from the Assembly record, so only the
+ * Assembly key is sent.
+ * @param {string} buildKey
+ * @param {{ assemblyKey: string }} payload
+ */
+export function cutBuildVersion(buildKey, payload) {
+  return request(`/api/builds/${encodeURIComponent(buildKey)}/cut-version`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function archiveBuild(buildKey) {
+  return request(`/api/builds/${encodeURIComponent(buildKey)}/archive`, { method: 'POST' });
 }
 
 // ---------------------------------------------------------------------------
@@ -141,19 +311,16 @@ export function fetchBOM(epicKey, documentId, workspaceId, elementId) {
 }
 
 // ---------------------------------------------------------------------------
-// Parts preview / upload
+// Parts preview
 // ---------------------------------------------------------------------------
+/**
+ * @param {{ epicKey: string, documentId: string, workspaceId: string, elementId: string, fresh?: boolean }} params
+ *   `fresh: true` skips the server's short BOM cache (Update from CAD).
+ */
 export function previewParts(params) {
   return request('/api/parts/preview', {
     method: 'POST',
     body: JSON.stringify(params),
-  });
-}
-
-export function uploadSelectedParts(parts) {
-  return request('/api/parts/upload', {
-    method: 'POST',
-    body: JSON.stringify({ parts }),
   });
 }
 
