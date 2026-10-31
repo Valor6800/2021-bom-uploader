@@ -241,26 +241,30 @@ export class JiraClient {
   }
 
   /**
-   * Create an issue link between two issues.
+   * Create an issue link that reads "sourceKey <outward phrase> targetKey".
    *
-   * The link type's "outward" phrase describes `outwardKey`'s relationship to
-   * `inwardKey` (e.g. for "Used In" — outward "uses", inward "is used in" —
-   * outwardKey is the Build and inwardKey is the Part, so the Part's own page
-   * reads "is used in" the Build).
+   * For "Used In" (outward "uses", inward "is used in") pass the Build as
+   * source and the Part as target: the Build's page reads "uses" the Part
+   * and the Part's page reads "is used in" the Build. For "Revises" pass the
+   * new revision as source and the one it replaces as target.
    *
-   * @param {string} typeName    Link type name (e.g. "Used In", "Revises")
-   * @param {string} inwardKey   Issue key on the link type's inward side
-   * @param {string} outwardKey  Issue key on the link type's outward side
+   * Jira's POST /rest/api/2/issueLink names the source `inwardIssue` and the
+   * target `outwardIssue` (checked live: sending inwardIssue=HAR-2031,
+   * outwardIssue=HAR-2032 made HAR-2031 read "uses" HAR-2032).
+   *
+   * @param {string} typeName   Link type name (e.g. "Used In", "Revises")
+   * @param {string} sourceKey  Issue that shows the outward phrase
+   * @param {string} targetKey  Issue that shows the inward phrase
    * @returns {Promise<void>}
    */
-  async createIssueLink(typeName, inwardKey, outwardKey) {
-    const endpoint = `issueLinks.linkIssues(${inwardKey}, ${outwardKey})`;
+  async createIssueLink(typeName, sourceKey, targetKey) {
+    const endpoint = `issueLinks.linkIssues(${sourceKey} ${typeName} ${targetKey})`;
     return this._retry(async () => {
       // jira.js names this method linkIssues (POST /rest/api/2/issueLink).
       await this.client.issueLinks.linkIssues({
         type: { name: typeName },
-        inwardIssue: { key: inwardKey },
-        outwardIssue: { key: outwardKey },
+        inwardIssue: { key: sourceKey },
+        outwardIssue: { key: targetKey },
       });
     }, endpoint);
   }

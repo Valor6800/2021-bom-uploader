@@ -288,9 +288,9 @@ export class BuildService {
    * @returns {Promise<void>}
    */
   async linkPartToBuild(partKey, buildKey) {
-    // Part reads "is used in" the Build; Build reads "uses" the Part —
-    // matches the inward/outward phrasing the link type was created with.
-    await this.jiraClient.createIssueLink(LinkType.USED_IN, partKey, buildKey);
+    // "Build uses Part": the Build's page reads "uses" the Part and the
+    // Part's page reads "is used in" the Build.
+    await this.jiraClient.createIssueLink(LinkType.USED_IN, buildKey, partKey);
   }
 
   /**

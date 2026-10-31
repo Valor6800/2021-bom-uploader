@@ -92,12 +92,13 @@ Constants live in `src/server/utils/buildConstants.js`:
 - Custom fields: Epic Link `customfield_10110`, Revision `customfield_10500`, Build Number `10501`, Onshape Version Link `10502`, Instructions Data `10503`. Existing: Epic Name `10104`, Onshape doc/workspace/element `10300/10301/10302`, Machinery `10201`, Material `10202`, Powdercoat `10204`, Quantity `10206`, Thickness `10207`.
 - Part creates write Revision (`10500`) from the payload, else the summary letter, else `A` (B1). Build Number, Onshape Version Link and Instructions Data are Build fields; no Part write path sets them (B6).
 - Build workflow: Draft -> Active -> Superseded, plus Archived. Transition IDs: Cut Version `11` (Draft->Active), Supersede `21` (Active->Superseded), Archive `31` (global). Verified by walking a test issue through the chain.
-- Link types: **Used In** (Part "is used in" Build; inward=Part, outward=Build) and **Revises** (inward "is revised by", outward "revises").
+- Link types: **Used In** (Build "uses" Part; Part "is used in" Build) and **Revises** (new revision "revises" the one it replaces; inward "is revised by").
+- `POST /rest/api/2/issueLink` names the issue that shows the **outward** phrase `inwardIssue` (verified live: `inwardIssue=HAR-2031, outwardIssue=HAR-2032` made HAR-2031 read "uses" HAR-2032). `JiraClient.createIssueLink(type, sourceKey, targetKey)` hides this: it creates "source <outward> target".
 - Fields must be on the issue type's screen or the REST API refuses the write (`Field 'X' cannot be set. It is not on the appropriate screen`).
 
 ### Jira Data Center gotchas learned the hard way
 - The **Epic Link field only accepts literal "Epic"-type issues** (GreenHopper). Cloud's configurable hierarchy does not exist on Data Center. That is why Assembly = renamed Epic, not a custom type. Do not try to make Assembly a custom type again.
-- JQL `linkedIssues()` does **not** filter by link direction. `RevisionService._getPreviousRevision` therefore reads the issue's `issuelinks` and checks `inwardIssue` instead.
+- JQL `linkedIssues()` does **not** filter by link direction. `RevisionService._getPreviousRevision` therefore reads the issue's `issuelinks`: on the newer ticket the Revises entry is `outwardIssue: <previous>`.
 - In JQL clauses use `cf[NNNNN]`; in REST `fields` params use `customfield_NNNNN`.
 - REST cannot create workflows or screens (405) — those were done by hand in the admin UI.
 - Changing an issue's type away from Epic silently nulls every Epic Link pointing at it. This happened once; 55 links were restored from changelogs.

@@ -153,7 +153,7 @@ describe('BuildService.linkPartToBuild', () => {
 
     await service.linkPartToBuild('VAL-50', 'VAL-11');
 
-    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'VAL-50', 'VAL-11');
+    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'VAL-11', 'VAL-50');
   });
 });
 
@@ -250,8 +250,8 @@ describe('BuildService.cloneBuildParts', () => {
     const result = await service.cloneBuildParts('VAL-10', 'VAL-11');
 
     expect(result).toEqual({ linked: ['VAL-50', 'VAL-51'], failed: [] });
-    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'VAL-50', 'VAL-11');
-    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'VAL-51', 'VAL-11');
+    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'VAL-11', 'VAL-50');
+    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'VAL-11', 'VAL-51');
   });
 
   it('links nothing when the source build has no parts', async () => {
@@ -353,7 +353,7 @@ describe('BuildService.recreateForBuild', () => {
         customfield_10206: 2,
       },
     });
-    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'VAL-51', 'VAL-11');
+    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'VAL-11', 'VAL-51');
   });
 
   it('carries forward powdercoat and thickness only when set', async () => {
@@ -632,7 +632,7 @@ describe('BuildService.saveBuildParts', () => {
       expect(partService.createStory).toHaveBeenCalledWith(expect.objectContaining({
         summary: 'VF27P-0004A Spacer', epic: 'HAR-2030', revision: 'A', ...VALUES,
       }));
-      expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-3000', 'HAR-2051');
+      expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2051', 'HAR-3000');
       expect(results).toEqual([expect.objectContaining({
         ref: 'VF27P-0004A', op: 'create', ok: true, key: 'HAR-3000', reused: false, linked: true, alreadyLinked: false,
       })]);
@@ -657,7 +657,7 @@ describe('BuildService.saveBuildParts', () => {
       const { service, partService, jiraClient } = setup({ issues: { 'HAR-3000': partIssue() } });
       const { results } = await service.saveBuildParts({ buildKey: 'HAR-2051', links: [{ ref: 'r', key: 'HAR-3000' }] });
       expect(partService.createStory).not.toHaveBeenCalled();
-      expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-3000', 'HAR-2051');
+      expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2051', 'HAR-3000');
       expect(results[0]).toMatchObject({ op: 'link', ok: true, linked: true });
     });
 
@@ -794,7 +794,7 @@ describe('BuildService.saveBuildParts', () => {
         updates: [{ ref: 'HAR-2031', key: 'HAR-2031', summary: 'VF27P-0099A Renamed', ...VALUES, link: true }],
       });
       expect(partService.updateStory).toHaveBeenCalledWith('HAR-2031', { ...VALUES, summary: 'VF27P-0001A Spacer' });
-      expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2031', 'HAR-2051');
+      expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2051', 'HAR-2031');
       expect(results[0]).toMatchObject({ op: 'update', ok: true, linked: true });
     });
 
@@ -854,7 +854,7 @@ describe('BuildService.saveBuildParts', () => {
       expect(jiraClient.getIssue).toHaveBeenCalledWith('HAR-3000', {
         fields: ['issuetype', 'summary', 'customfield_10110', 'issuelinks'],
       });
-      expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-3000', 'HAR-2051');
+      expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2051', 'HAR-3000');
       expect(results[0]).toMatchObject({ ok: true, linked: true, alreadyLinked: false });
     });
 
@@ -882,7 +882,7 @@ describe('BuildService.saveBuildParts', () => {
       });
       expect(results[0]).toMatchObject({ ok: false, error: "HAR-999 isn't a Part of this Assembly" });
       expect(results[1]).toMatchObject({ ok: true, linked: true });
-      expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2031', 'HAR-2051');
+      expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2051', 'HAR-2031');
     });
 
     it('a 503 from the key list still fails the request', async () => {
@@ -1008,7 +1008,7 @@ describe('BuildService.recreateForBuild guards (INC-4)', () => {
         project: expect.any(String),
       }),
     });
-    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2041', 'HAR-2052');
+    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2052', 'HAR-2041');
   });
 
   it('accepts a Revision A Part re-created into a Build of Revision B (chain [B, A])', async () => {

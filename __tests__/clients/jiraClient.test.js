@@ -194,16 +194,32 @@ describe('JiraClient', () => {
   });
 
   describe('createIssueLink', () => {
-    it('sends the type name and both issue keys on the correct sides', async () => {
+    it('sends the source (outward phrase) as inwardIssue', async () => {
+      // "Build VAL-200 uses Part VAL-100". Jira's POST /issueLink shows the
+      // outward phrase on `inwardIssue` (checked live, link 16601).
       const client = makeClient();
       mockCreateIssueLink.mockResolvedValueOnce({});
 
-      await client.createIssueLink('Used In', 'VAL-100', 'VAL-200');
+      await client.createIssueLink('Used In', 'VAL-200', 'VAL-100');
 
       expect(mockCreateIssueLink).toHaveBeenCalledWith({
         type: { name: 'Used In' },
-        inwardIssue: { key: 'VAL-100' },
-        outwardIssue: { key: 'VAL-200' },
+        inwardIssue: { key: 'VAL-200' },
+        outwardIssue: { key: 'VAL-100' },
+      });
+    });
+
+    it('matches the request body real jira.js linkIssues sends', async () => {
+      // Guards the body shape above against the library itself.
+      const { IssueLinks } = await import('jira.js/out/version2/issueLinks.js');
+      const sendRequest = jest.fn().mockResolvedValue(undefined);
+      await new IssueLinks({ sendRequest }).linkIssues({
+        type: { name: 'Used In' }, inwardIssue: { key: 'VAL-200' }, outwardIssue: { key: 'VAL-100' },
+      });
+      expect(sendRequest.mock.calls[0][0]).toMatchObject({
+        url: '/rest/api/2/issueLink',
+        method: 'POST',
+        data: { type: { name: 'Used In' }, inwardIssue: { key: 'VAL-200' }, outwardIssue: { key: 'VAL-100' } },
       });
     });
 
@@ -213,7 +229,7 @@ describe('JiraClient', () => {
       err.status = 400;
       mockCreateIssueLink.mockRejectedValue(err);
 
-      await expect(client.createIssueLink('Revises', 'VAL-1', 'VAL-2'))
+      await expect(client.createIssueLink('Revises', 'VAL-2', 'VAL-1'))
         .rejects.toThrow(JiraApiError);
     });
 

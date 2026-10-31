@@ -100,7 +100,8 @@ export class RevisionService {
 
     const result = await this.jiraClient.createIssue(fields);
     try {
-      await this.jiraClient.createIssueLink(LinkType.REVISES, previousKey, result.key);
+      // "new revises previous".
+      await this.jiraClient.createIssueLink(LinkType.REVISES, result.key, previousKey);
     } catch (err) {
       // The ticket exists now; say which one, so a caller can show it and
       // refuse a second revision instead of creating another.
@@ -124,8 +125,9 @@ export class RevisionService {
    * later one. JQL's `linkedIssues()` can't filter by direction (it returns
    * both the predecessor and successor if both exist), so this reads the
    * issue's own `issuelinks` and picks the specific entry where this ticket
-   * sits on the "revises" (outward) side: that entry's `inwardIssue` is the
-   * one it replaced.
+   * sits on the "revises" (outward) side. Jira lists that entry on this
+   * ticket as `outwardIssue: <the one it replaced>`; a later revision that
+   * revises this one appears as `inwardIssue` and is ignored.
    * @private
    */
   async _getPreviousRevision(key) {
@@ -133,8 +135,8 @@ export class RevisionService {
     const links = issue.fields?.issuelinks ?? [];
 
     const revisesLink = links.find(
-      (link) => link.type?.name === LinkType.REVISES && link.inwardIssue,
+      (link) => link.type?.name === LinkType.REVISES && link.outwardIssue,
     );
-    return revisesLink?.inwardIssue?.key ?? null;
+    return revisesLink?.outwardIssue?.key ?? null;
   }
 }

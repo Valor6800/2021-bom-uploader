@@ -12,9 +12,12 @@ function makeJiraClient(overrides = {}) {
   };
 }
 
-/** An issuelinks entry as it appears when THIS issue is on the outward ("revises") side. */
+/**
+ * An issuelinks entry as Jira returns it on the newer ticket, the one that
+ * "revises" previousKey: the other issue sits under `outwardIssue`.
+ */
 function revisesLinkEntry(previousKey) {
-  return { type: { name: LinkType.REVISES, inward: 'is revised by', outward: 'revises' }, inwardIssue: { key: previousKey } };
+  return { type: { name: LinkType.REVISES, inward: 'is revised by', outward: 'revises' }, outwardIssue: { key: previousKey } };
 }
 
 describe('nextRevisionLetter', () => {
@@ -60,15 +63,16 @@ describe('RevisionService.getRevisionChain', () => {
   });
 
   it('ignores a sibling Revises link in the forward direction', async () => {
-    // VAL-1B has both a predecessor (VAL-1, inwardIssue) and a successor
-    // (VAL-1C, outwardIssue on this entry) — only the predecessor should count.
+    // VAL-1B has both a predecessor (VAL-1, outwardIssue: "VAL-1B revises
+    // VAL-1") and a successor (VAL-1C, inwardIssue: "VAL-1B is revised by
+    // VAL-1C") — only the predecessor should count.
     const jiraClient = makeJiraClient({
       getIssue: jest.fn()
         .mockResolvedValueOnce({
           fields: {
             issuelinks: [
               revisesLinkEntry('VAL-1'),
-              { type: { name: LinkType.REVISES }, outwardIssue: { key: 'VAL-1C' } },
+              { type: { name: LinkType.REVISES }, inwardIssue: { key: 'VAL-1C' } },
             ],
           },
         })
@@ -114,7 +118,8 @@ describe('RevisionService.createRevision', () => {
     expect(fields.project).toEqual({ key: 'VAL' });
     expect(fields[RevisionField.REVISION]).toBe('B');
 
-    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.REVISES, 'VAL-10', 'VAL-50');
+    // "VAL-50 revises VAL-10": the new ticket is the link's source.
+    expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.REVISES, 'VAL-50', 'VAL-10');
   });
 
   it('treats a previous ticket with no Revision field as Revision A', async () => {
