@@ -110,17 +110,6 @@ async function request(url, options = {}) {
 // ---------------------------------------------------------------------------
 // Epics
 // ---------------------------------------------------------------------------
-export function fetchEpics(seasonType, year) {
-  return request(`/api/epics?seasonType=${encodeURIComponent(seasonType)}&year=${encodeURIComponent(year)}`);
-}
-
-export function createEpicFromURL(url) {
-  return request('/api/epics/from-url', {
-    method: 'POST',
-    body: JSON.stringify({ url }),
-  });
-}
-
 export function fetchEpicByKey(key) {
   return request(`/api/epics/${encodeURIComponent(key)}`);
 }
@@ -178,13 +167,6 @@ export function fetchChainParts(key) {
 
 export function fetchStoriesByPartNumber(partNumber) {
   return request(`/api/stories?partNumber=${encodeURIComponent(partNumber)}`);
-}
-
-export function createStory(payload) {
-  return request('/api/stories', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
 }
 
 export function updateStory(key, payload) {
@@ -307,7 +289,7 @@ export function fetchBOM(epicKey, documentId, workspaceId, elementId) {
 }
 
 // ---------------------------------------------------------------------------
-// Parts preview / upload
+// Parts preview
 // ---------------------------------------------------------------------------
 /**
  * @param {{ epicKey: string, documentId: string, workspaceId: string, elementId: string, fresh?: boolean }} params
@@ -317,13 +299,6 @@ export function previewParts(params) {
   return request('/api/parts/preview', {
     method: 'POST',
     body: JSON.stringify(params),
-  });
-}
-
-export function uploadSelectedParts(parts) {
-  return request('/api/parts/upload', {
-    method: 'POST',
-    body: JSON.stringify({ parts }),
   });
 }
 

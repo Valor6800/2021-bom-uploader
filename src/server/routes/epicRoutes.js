@@ -1,11 +1,10 @@
 /**
- * Epic Routes — GET /api/epics, GET /api/epics/search, GET /api/epics/:key,
- * POST /api/epics/onboard/preview, POST /api/epics/onboard,
- * POST /api/epics/from-url
+ * Epic Routes — GET /api/epics/search, GET /api/epics/:key,
+ * POST /api/epics/onboard/preview, POST /api/epics/onboard
  */
 
 import { Router } from 'express';
-import { sanitizeJQL, validateIssueKey } from '../utils/validators.js';
+import { validateIssueKey } from '../utils/validators.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { badRequest } from '../middleware/httpError.js';
 
@@ -28,25 +27,6 @@ function requireOnshapeUrl(body) {
  */
 export default function epicRoutes({ epicService }) {
   const router = Router();
-
-  /**
-   * GET /api/epics?seasonType&year
-   */
-  router.get('/', asyncHandler(async (req, res) => {
-    const { seasonType, year } = req.query;
-
-    if (!seasonType || !year) {
-      throw badRequest('Missing required query parameters: seasonType and year');
-    }
-
-    const safe = sanitizeJQL(seasonType);
-    if (safe !== 'R' && safe !== 'F') {
-      throw badRequest('seasonType must be "R" or "F"');
-    }
-
-    const epics = await epicService.getEpics(seasonType, year);
-    res.json(epics);
-  }));
 
   /**
    * GET /api/epics/search?q&limit&includeClosed=1 — Home's Assembly search.
@@ -119,20 +99,6 @@ export default function epicRoutes({ epicService }) {
       throw badRequest('expectedSummary is limited to 255 characters');
     }
     const result = await epicService.onboardAssembly({ url, expectedSummary });
-    res.json(result);
-  }));
-
-  /**
-   * POST /api/epics/from-url  { url: string }
-   */
-  router.post('/from-url', asyncHandler(async (req, res) => {
-    const { url } = req.body;
-
-    if (!url || typeof url !== 'string') {
-      throw badRequest('Missing required body parameter: url (string)');
-    }
-
-    const result = await epicService.generateEpicFromURL(url);
     res.json(result);
   }));
 

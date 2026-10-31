@@ -1,15 +1,16 @@
 /**
- * Part Routes — story CRUD + part preview/upload/export
+ * Part Routes — story reads and update, part preview/export
  *
  * GET  /api/stories
  * GET  /api/stories/:key
- * POST /api/stories
  * PUT  /api/stories/:key
  * GET  /api/parts/by-keys
  * POST /api/parts/:key/clone
  * POST /api/parts/preview
- * POST /api/parts/upload
  * POST /api/parts/auto-export
+ *
+ * Parts are created only through a Build save (POST /api/builds/:key/save),
+ * Clone and Re-create, so every new Part belongs to a Build or an Assembly.
  */
 
 import { Router } from 'express';
@@ -66,20 +67,6 @@ export default function partRoutes({ partService, exportService }) {
   router.get('/stories/:key', asyncHandler(async (req, res) => {
     const issue = await partService.getStory(req.params.key);
     res.json(issue);
-  }));
-
-  /**
-   * POST /api/stories  { summary, epic, material, machinery, ... }
-   */
-  router.post('/stories', asyncHandler(async (req, res) => {
-    const payload = req.body;
-
-    if (!payload || !payload.summary) {
-      throw badRequest('Missing required body parameter: summary');
-    }
-
-    const result = await partService.createStory(payload);
-    res.json(result);
   }));
 
   /**
@@ -167,20 +154,6 @@ export default function partRoutes({ partService, exportService }) {
       epicKey, documentId, workspaceId, elementId, fresh: fresh === true,
     });
     res.json(preview);
-  }));
-
-  /**
-   * POST /api/parts/upload  { parts: [...] }
-   */
-  router.post('/parts/upload', asyncHandler(async (req, res) => {
-    const { parts } = req.body;
-
-    if (!Array.isArray(parts) || parts.length === 0) {
-      throw badRequest('Missing required body parameter: parts (non-empty array)');
-    }
-
-    const result = await partService.uploadSelected(parts);
-    res.json(result);
   }));
 
   /**

@@ -18,8 +18,3 @@ export function isThicknessEnabled(material) {
         material.includes('SRPP')),
   );
 }
-
-/** A part that will trigger an automatic STEP export on save. */
-export function isStepAutoExport(story) {
-  return story._status === 'New' && story.machinery === '3D Printer';
-}

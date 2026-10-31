@@ -86,24 +86,6 @@ export class EpicService {
   }
 
   /**
-   * Retrieve all epics for a season type and year with full pagination.
-   *
-   * @param {string} seasonType  "R" or "F"
-   * @param {string} year        Two-digit year string
-   * @returns {Promise<object[]>}
-   */
-  async getEpics(seasonType, year) {
-    const safeSeasonType = sanitizeJQL(seasonType);
-    const safeYear = sanitizeJQL(year);
-    const jql =
-      `project = ${JIRA_PROJECT} AND issuetype = Assembly AND ` +
-      `"Epic Name" ~ "V${safeSeasonType}${safeYear}*" AND status not in (Closed, Finished)`;
-
-    const issues = await this.jiraClient.searchIssues(jql, { paginate: true });
-    return this._parseEpics(issues);
-  }
-
-  /**
    * Retrieve a single epic by its full part number.
    *
    * @param {string} fullPartNumber  e.g. "VR26A-0001"
@@ -244,26 +226,6 @@ export class EpicService {
   }
 
   /**
-   * Generate a Jira epic from an Onshape assembly URL (legacy, replaced by
-   * onboardAssembly; removed in INC-9).
-   *
-   * @param {string} onshapeURL
-   * @returns {Promise<{ key: string, summary: string }>}
-   */
-  async generateEpicFromURL(onshapeURL) {
-    const resolved = await this.resolveOnshapeAssembly(onshapeURL);
-    const { summary, revision, documentId, workspaceId, elementId } = resolved;
-    const result = await this.createEpic({
-      summary,
-      revision,
-      documentId,
-      workspaceId,
-      elementId,
-    });
-    return { ...result, summary };
-  }
-
-  /**
    * Parse a pasted OnShape workspace link into its three ids. Runs before
    * any network call.
    *
@@ -280,7 +242,7 @@ export class EpicService {
     if (!match) throw badRequest(INVALID_URL_MESSAGE);
     const [, documentId, workspaceId, elementId] = match;
     // The 24-character id check happens in findAssembliesForElement, before
-    // the ids reach JQL; the legacy from-url path never builds JQL from them.
+    // the ids reach JQL.
     return {
       documentId: documentId.toLowerCase(),
       workspaceId: workspaceId.toLowerCase(),

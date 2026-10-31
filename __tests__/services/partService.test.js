@@ -190,7 +190,7 @@ describe('PartService Revision on create (B1)', () => {
   });
   it('defaults the Revision to A when the summary has no letter', async () => {
     const { jiraClient, service } = setup();
-    await service.uploadSelected([{ ...base, summary: 'VR26P-0001 X' }]);
+    await service.createStory({ ...base, summary: 'VR26P-0001 X' });
     expect(jiraClient.createIssue.mock.calls[0][0].customfield_10500).toBe('A');
   });
   it('rejects a Revision that is not one capital letter with status 400', async () => {

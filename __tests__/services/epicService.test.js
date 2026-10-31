@@ -248,7 +248,7 @@ describe('EpicService.searchAssemblies', () => {
   });
 });
 
-describe('EpicService.generateEpicFromURL', () => {
+describe('EpicService.resolveOnshapeAssembly', () => {
   const URL = 'https://cad.onshape.com/documents/8c64dfdcb66184646a7a3f17/w/82f00d3cbea6901ac26040bd/e/faea62821490977c33bc8d7c';
 
   // Mirrors the live response shape of GET /api/metadata/d/{d}/w/{w}/e/{e}.
@@ -284,42 +284,41 @@ describe('EpicService.generateEpicFromURL', () => {
     return { jiraClient, onshapeClient, service: new EpicService({ jiraClient, onshapeClient }) };
   }
 
-  it('builds the summary and Epic Name from Project, Part number, Revision and Name', async () => {
+  it('builds the summary from Project, Part number, Revision and Name without writing', async () => {
     const { service, jiraClient, onshapeClient } = setup(metadata());
 
-    const result = await service.generateEpicFromURL(URL);
+    const result = await service.resolveOnshapeAssembly(URL);
 
     expect(onshapeClient.getElementMetadata).toHaveBeenCalledWith(
       '8c64dfdcb66184646a7a3f17', '82f00d3cbea6901ac26040bd', 'faea62821490977c33bc8d7c',
     );
-    expect(result).toEqual({ key: 'HAR-1', summary: 'VF27A-0000A Test Assembly' });
-    const fields = jiraClient.createIssue.mock.calls[0][0];
-    expect(fields).toEqual(expect.objectContaining({
+    expect(result).toEqual(expect.objectContaining({
       summary: 'VF27A-0000A Test Assembly',
-      customfield_10104: 'VF27A-0000A Test Assembly',
-      customfield_10500: 'A',
-      customfield_10300: '8c64dfdcb66184646a7a3f17',
-      customfield_10301: '82f00d3cbea6901ac26040bd',
-      customfield_10302: 'faea62821490977c33bc8d7c',
+      fullPartNumber: 'VF27A-0000A',
+      revision: 'A',
+      documentId: '8c64dfdcb66184646a7a3f17',
+      workspaceId: '82f00d3cbea6901ac26040bd',
+      elementId: 'faea62821490977c33bc8d7c',
     }));
+    expect(jiraClient.createIssue).not.toHaveBeenCalled();
   });
 
   it('falls back to the property name when the property id differs', async () => {
     const meta = metadata();
     meta.properties = meta.properties.map((p) => ({ ...p, propertyId: `other-${p.propertyId}` }));
-    const { service, jiraClient } = setup(meta);
+    const { service } = setup(meta);
 
-    await service.generateEpicFromURL(URL);
+    const result = await service.resolveOnshapeAssembly(URL);
 
-    expect(jiraClient.createIssue.mock.calls[0][0].summary).toBe('VF27A-0000A Test Assembly');
+    expect(result.summary).toBe('VF27A-0000A Test Assembly');
   });
 
   it('trims whitespace around property values', async () => {
-    const { service, jiraClient } = setup(metadata({ Project: ' VF27 ', Name: ' Test Assembly ' }));
+    const { service } = setup(metadata({ Project: ' VF27 ', Name: ' Test Assembly ' }));
 
-    await service.generateEpicFromURL(URL);
+    const result = await service.resolveOnshapeAssembly(URL);
 
-    expect(jiraClient.createIssue.mock.calls[0][0].summary).toBe('VF27A-0000A Test Assembly');
+    expect(result.summary).toBe('VF27A-0000A Test Assembly');
   });
 
   it.each([
@@ -330,7 +329,7 @@ describe('EpicService.generateEpicFromURL', () => {
   ])('rejects with 400 and creates nothing when %s is empty', async (prop, overrides) => {
     const { service, jiraClient } = setup(metadata(overrides));
 
-    await expect(service.generateEpicFromURL(URL)).rejects.toMatchObject({
+    await expect(service.resolveOnshapeAssembly(URL)).rejects.toMatchObject({
       status: 400,
       message: expect.stringContaining(`missing ${prop}`),
     });
@@ -340,7 +339,7 @@ describe('EpicService.generateEpicFromURL', () => {
   it('lists every missing property in one message', async () => {
     const { service } = setup(metadata({ Project: null, Revision: null }));
 
-    await expect(service.generateEpicFromURL(URL)).rejects.toThrow('missing Project, Revision');
+    await expect(service.resolveOnshapeAssembly(URL)).rejects.toThrow('missing Project, Revision');
   });
 
   it.each([
@@ -353,7 +352,7 @@ describe('EpicService.generateEpicFromURL', () => {
   ])('rejects a malformed %s', async (prop, overrides) => {
     const { service, jiraClient } = setup(metadata(overrides));
 
-    await expect(service.generateEpicFromURL(URL)).rejects.toMatchObject({
+    await expect(service.resolveOnshapeAssembly(URL)).rejects.toMatchObject({
       status: 400,
       message: expect.stringContaining(`invalid ${prop}`),
     });
@@ -363,7 +362,7 @@ describe('EpicService.generateEpicFromURL', () => {
   it('rejects a URL that points at a non-assembly tab', async () => {
     const { service, jiraClient } = setup({ ...metadata(), elementType: 0, mimeType: 'onshape/partstudio' });
 
-    await expect(service.generateEpicFromURL(URL)).rejects.toMatchObject({
+    await expect(service.resolveOnshapeAssembly(URL)).rejects.toMatchObject({
       status: 400,
       message: expect.stringContaining('not an assembly'),
     });
@@ -373,7 +372,7 @@ describe('EpicService.generateEpicFromURL', () => {
   it('rejects a malformed URL with 400 without calling OnShape', async () => {
     const { service, onshapeClient } = setup(metadata());
 
-    await expect(service.generateEpicFromURL('https://cad.onshape.com/nope')).rejects.toMatchObject({ status: 400 });
+    await expect(service.resolveOnshapeAssembly('https://cad.onshape.com/nope')).rejects.toMatchObject({ status: 400 });
     expect(onshapeClient.getElementMetadata).not.toHaveBeenCalled();
   });
 });

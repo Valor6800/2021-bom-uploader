@@ -378,6 +378,44 @@ describe('POST /api/builds/:key/save', () => {
   });
 });
 
+const { BuildService } = await import('../../src/server/services/buildService.js');
+const { PartService } = await import('../../src/server/services/partService.js');
+
+describe('POST /api/builds/:key/save validation through the real services (B1)', () => {
+  const VALUES = { quantity: 1, material: 'AL 6061', machinery: 'CNC Mill', powdercoat: 'None', thickness: 'None' };
+
+  function appWithRealServices() {
+    const jiraClient = {
+      getIssue: jest.fn().mockImplementation(async (key) => {
+        if (key === 'VAL-51') {
+          return { key, fields: { issuetype: { name: 'Build' }, customfield_10110: 'VAL-30', customfield_10501: 1 } };
+        }
+        throw new JiraApiError('Issue does not exist', 404, 'getIssue');
+      }),
+      searchIssues: jest.fn().mockResolvedValue([]),
+      createIssue: jest.fn().mockResolvedValue({ key: 'VAL-60' }),
+      createIssueLink: jest.fn().mockResolvedValue(undefined),
+    };
+    const partService = new PartService({ jiraClient });
+    const revisionService = { getRevisionChain: jest.fn().mockResolvedValue(['VAL-30']) };
+    const buildService = new BuildService({ jiraClient, partService, revisionService });
+    return { jiraClient, app: buildApp(buildService) };
+  }
+
+  it.each([
+    ['revision "AA"', { revision: 'AA' }, 'revision'],
+    ['material "Steel"', { material: 'Steel' }, 'material'],
+  ])('answers 200 with ok:false for %s and creates nothing', async (_, extra, field) => {
+    const { jiraClient, app } = appWithRealServices();
+    const res = await request(app).post('/api/builds/VAL-51/save').send({
+      creates: [{ ref: 'VF27P-0001A', summary: 'VF27P-0001A Plate', revision: 'A', ...VALUES, ...extra }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.results).toEqual([expect.objectContaining({ ref: 'VF27P-0001A', ok: false, field })]);
+    expect(jiraClient.createIssue).not.toHaveBeenCalled();
+  });
+});
+
 describe('GET /api/builds/status', () => {
   const okService = () => ({
     getBuildStatuses: jest.fn().mockResolvedValue({ builds: [{ key: 'VAL-1', status: 'Active' }], missing: [] }),

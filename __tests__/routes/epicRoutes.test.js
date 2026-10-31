@@ -199,39 +199,21 @@ describe('GET /api/epics/search', () => {
   });
 });
 
-describe('POST /api/epics/from-url', () => {
-  const URL = 'https://cad.onshape.com/documents/aaa/w/bbb/e/ccc';
-
-  it('returns the created key and summary', async () => {
-    const epicService = {
-      generateEpicFromURL: jest.fn().mockResolvedValue({ key: 'HAR-1', summary: 'VF27A-0000A Test Assembly' }),
-    };
-
-    const res = await request(buildApp(epicService)).post('/api/epics/from-url').send({ url: URL });
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ key: 'HAR-1', summary: 'VF27A-0000A Test Assembly' });
+describe('removed legacy Assembly routes (INC-9)', () => {
+  it('GET /api/epics?seasonType=R&year=26 answers 404', async () => {
+    const epicService = { getEpics: jest.fn(), getEpicByKey: jest.fn() };
+    const res = await request(buildApp(epicService)).get('/api/epics?seasonType=R&year=26');
+    expect(res.status).toBe(404);
+    expect(epicService.getEpics).not.toHaveBeenCalled();
   });
 
-  it('returns 400 with the list of missing OnShape properties', async () => {
-    const epicService = new EpicService({
-      jiraClient: { createIssue: jest.fn() },
-      onshapeClient: {
-        getElementMetadata: jest.fn().mockResolvedValue({
-          elementType: 1,
-          mimeType: 'onshape/assembly',
-          properties: [
-            { name: 'Name', propertyId: '57f3fb8efa3416c06701d60d', value: 'Test Assembly' },
-            { name: 'Part number', propertyId: '57f3fb8efa3416c06701d60f', value: '0000' },
-          ],
-        }),
-      },
-    });
-
-    const res = await request(buildApp(epicService)).post('/api/epics/from-url').send({ url: URL });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain('missing Project, Revision');
+  it('POST /api/epics/from-url answers 404 and creates nothing', async () => {
+    const epicService = { generateEpicFromURL: jest.fn(), createEpic: jest.fn() };
+    const res = await request(buildApp(epicService)).post('/api/epics/from-url')
+      .send({ url: 'https://cad.onshape.com/documents/aaa/w/bbb/e/ccc' });
+    expect(res.status).toBe(404);
+    expect(epicService.generateEpicFromURL).not.toHaveBeenCalled();
+    expect(epicService.createEpic).not.toHaveBeenCalled();
   });
 });
 

@@ -56,8 +56,8 @@ image build never downloads browsers.
 
 Scenarios on legacy, non-BOM screens may list `axeKnown` rule ids. Those are
 recorded in `axe.json` with `known: true` but don't fail the run. Today that is
-only `color-contrast` and `link-in-text-block` on the old Dashboard and on
-Parts Check-in, whose dim text and gold inline links keep their current
+only `color-contrast` and `link-in-text-block` on Parts Check-in, whose dim
+text and gold inline links keep their current
 colours on purpose (design section 4.2). BOM screens can't use `axeKnown`.
 
 ## Adding a scenario

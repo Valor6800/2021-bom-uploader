@@ -68,9 +68,9 @@ describe('GET /api/parts/by-keys', () => {
   });
 });
 const { PartService } = await import('../../src/server/services/partService.js');
-describe('POST /api/stories validation (B1)', () => {
+describe('PUT /api/stories/:key validation (B1)', () => {
   function appWithRealService() {
-    const jiraClient = { createIssue: jest.fn().mockResolvedValue({ key: 'HAR-3000' }) };
+    const jiraClient = { updateIssue: jest.fn().mockResolvedValue(undefined) };
     return { jiraClient, app: buildApp(new PartService({ jiraClient })) };
   }
   const body = {
@@ -78,16 +78,46 @@ describe('POST /api/stories validation (B1)', () => {
   };
   it('answers 400 for revision "AA"', async () => {
     const { jiraClient, app } = appWithRealService();
-    const res = await request(app).post('/api/stories').send({ ...body, revision: 'AA' });
+    const res = await request(app).put('/api/stories/HAR-3000').send({ ...body, revision: 'AA' });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/^Validation failed: /);
-    expect(jiraClient.createIssue).not.toHaveBeenCalled();
+    expect(jiraClient.updateIssue).not.toHaveBeenCalled();
   });
   it('answers 400 for material "Steel"', async () => {
     const { jiraClient, app } = appWithRealService();
-    const res = await request(app).post('/api/stories').send({ ...body, material: 'Steel' });
+    const res = await request(app).put('/api/stories/HAR-3000').send({ ...body, material: 'Steel' });
     expect(res.status).toBe(400);
-    expect(jiraClient.createIssue).not.toHaveBeenCalled();
+    expect(jiraClient.updateIssue).not.toHaveBeenCalled();
+  });
+  it('still updates a valid Part', async () => {
+    const { jiraClient, app } = appWithRealService();
+    const res = await request(app).put('/api/stories/HAR-3000').send(body);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
+    expect(jiraClient.updateIssue).toHaveBeenCalledWith('HAR-3000', expect.objectContaining({ summary: 'VF27P-0001A Plate' }));
+  });
+});
+
+describe('removed legacy create routes (INC-9)', () => {
+  it.each([
+    ['POST /api/stories', (app) => request(app).post('/api/stories').send({ summary: 'VF27P-0001A Plate' })],
+    ['POST /api/parts/upload', (app) => request(app).post('/api/parts/upload').send({ parts: [{ summary: 'VF27P-0001A Plate' }] })],
+  ])('%s answers 404 and creates nothing', async (_, send) => {
+    const partService = { createStory: jest.fn(), uploadSelected: jest.fn() };
+    const res = await send(buildApp(partService));
+    expect(res.status).toBe(404);
+    expect(partService.createStory).not.toHaveBeenCalled();
+    expect(partService.uploadSelected).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/stories?key=', () => {
+  it('still lists the Parts of an Assembly', async () => {
+    const partService = { getStoriesByEpic: jest.fn().mockResolvedValue([{ key: 'HAR-3000' }]) };
+    const res = await request(buildApp(partService)).get('/api/stories?key=HAR-2030');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([{ key: 'HAR-3000' }]);
+    expect(partService.getStoriesByEpic).toHaveBeenCalledWith('HAR-2030');
   });
 });
 

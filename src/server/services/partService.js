@@ -325,32 +325,6 @@ export class PartService {
   }
 
   /**
-   * Create Jira stories only for user-selected parts.
-   * Returns partial results — created parts and per-part errors.
-   *
-   * @param {object[]} parts  Array of part payloads to create
-   * @returns {Promise<{ created: object[], errors: object[] }>}
-   */
-  async uploadSelected(parts) {
-    const created = [];
-    const errors = [];
-
-    for (const part of parts) {
-      try {
-        const result = await this.createStory(part);
-        created.push(result);
-      } catch (err) {
-        errors.push({
-          fullPartNumber: part.fullPartNumber ?? part.summary,
-          error: err.message,
-        });
-      }
-    }
-
-    return { created, errors };
-  }
-
-  /**
    * Create a Jira story (Part) with proper field formatting.
    *
    * @param {object} payload
