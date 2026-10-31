@@ -38,7 +38,7 @@ export default function OnboardBox() {
   const [inline, setInline] = useState(null);
   /**
    * The open dialog:
-   * { kind: 'confirm', proposed, drifted, subAssemblies } | { kind: 'exists', assembly, matchedOn, subAssemblies }
+   * { kind: 'confirm', proposed, previous?, drifted, subAssemblies } | { kind: 'exists', assembly, matchedOn, subAssemblies }
    * | { kind: 'problems', problems, fallback } | { kind: 'conflict', assembly, number }
    */
   const [dialog, setDialog] = useState(null);
@@ -67,7 +67,7 @@ export default function OnboardBox() {
       return true;
     }
     if (err?.status === 409 && err.body?.proposed) {
-      setDialog({ kind: 'confirm', proposed: err.body.proposed, drifted: true });
+      setDialog({ kind: 'confirm', proposed: err.body.proposed, previous: err.body.previous ?? null, drifted: true });
       return true;
     }
     if (prefix === null) return false;
@@ -90,9 +90,11 @@ export default function OnboardBox() {
       const res = await previewOnboarding(sentUrl.current);
       const subs = { subAssemblies: res.subAssemblies ?? [], subAssembliesError: res.subAssembliesError ?? null };
       if (res.status === 'exists') {
-        setDialog({ kind: 'exists', assembly: res.assembly, matchedOn: res.matchedOn, ...subs });
+        setDialog({
+          kind: 'exists', assembly: res.assembly, matchedOn: res.matchedOn, branchMismatch: res.branchMismatch ?? null, ...subs,
+        });
       } else {
-        setDialog({ kind: 'confirm', proposed: res.proposed, drifted: false, ...subs });
+        setDialog({ kind: 'confirm', proposed: res.proposed, previous: res.previous ?? null, drifted: false, ...subs });
       }
     } catch (err) {
       showError(err, "Couldn't check that link");
@@ -101,7 +103,9 @@ export default function OnboardBox() {
     }
   };
 
-  const openDesigner = (assembly, { build = null, buildError = null, alreadyAdded = false, subAssemblies = [] } = {}) => {
+  const openDesigner = (assembly, {
+    build = null, buildError = null, alreadyAdded = false, subAssemblies = [], revisionOf = null, revisionLinkError = null,
+  } = {}) => {
     const base = `/a/${encodeURIComponent(assembly.key)}/design`;
     const onboard = { assemblySummary: assembly.summary };
     let to = base;
@@ -113,6 +117,8 @@ export default function OnboardBox() {
     if (buildError) onboard.buildError = buildError;
     if (alreadyAdded) onboard.alreadyAdded = true;
     if (subAssemblies.length) onboard.subAssemblies = subAssemblies;
+    if (revisionOf) onboard.revisionOf = revisionOf;
+    if (revisionLinkError) onboard.revisionLinkError = revisionLinkError;
     navigate(to, { state: { onboard } });
   };
 
@@ -127,6 +133,8 @@ export default function OnboardBox() {
           build: res.build,
           buildError: res.build ? null : res.buildError,
           subAssemblies: res.subAssemblies ?? [],
+          revisionOf: res.revisionOf ?? null,
+          revisionLinkError: res.revisionLinkError ?? null,
         });
       } else {
         // Another tab or a double submit won the race (design 3.3, B from the commit call).
@@ -222,6 +230,7 @@ export default function OnboardBox() {
         onCancel={closeDialog}
         returnFocusRef={inputRef}
         onConfirm={create}
+        previous={dialog?.kind === 'confirm' ? dialog.previous : null}
         subAssemblies={dialog?.kind === 'confirm' ? dialog.subAssemblies : []}
         subAssembliesError={dialog?.kind === 'confirm' ? dialog.subAssembliesError : null}
       />
@@ -237,6 +246,7 @@ export default function OnboardBox() {
         busy={creating}
         error={dialog?.kind === 'exists' ? createError : null}
         onCreateMissing={createMissing}
+        branchMismatch={dialog?.kind === 'exists' ? dialog.branchMismatch : null}
       />
       <PropertiesDialog
         open={dialog?.kind === 'problems'}

@@ -138,6 +138,27 @@ An assembly's BOM can list sub-assemblies (1000 with 1100, 1200, 1300). They are
 - **Names drop [bracketed] tags**: "[1300] Electrical" becomes "Electrical" (`utils/cleanName.js`, `stripBrackets`). Applied to Assembly names (pasted and sub-assemblies, so the summary is `VR27A-1300A Electrical`) and to BOM Part names. A name that is only brackets keeps the text inside. The "couldn't identify" list still shows the raw OnShape name so the row can be found.
 - Not built: following nested levels, and linking a sub-assembly to its parent in the tracker (there is no parent/child link between Assemblies).
 
+## New Revisions from an OnShape branch
+
+A new Revision of an Assembly starts as a **branch** (workspace) of the same OnShape document, where the Revision property is raised. The duplicate check used to match on document + tab only, so every branch looked like the Assembly already added.
+
+`EpicService._classify` now decides what a pasted link (or a sub-assembly) is:
+
+- **exists**: the same workspace, or a branch with the same number and the same (or a lower) Revision. If a branch carries a *different* number than the Assembly it came from, it is still `exists` but the response has `branchMismatch`, and the dialog tells the student to fix the Part number in OnShape.
+- **revision**: a branch of an element that is already an Assembly, with the **same number and a higher Revision letter**. Preview answers `status: 'revision'` with `previous`. Confirming creates a new Assembly at that Revision (OnShape's own letter, which can skip), links it to the earlier one with Revises (new revision "revises" the old; same direction as `RevisionService`), and makes its **Build 1**. If the link fails, the Assembly and Build 1 are kept and `revisionLinkError` is returned and shown as a Designer banner.
+- **conflict** / **new**: as before.
+- If the properties of a branch cannot be read, it stays `exists` (the old behaviour).
+
+Because the new Assembly is chained to the earlier one, the Designer reads Parts across the chain: unchanged Parts and sub-assemblies of the earlier Revision are reused, and anything OnShape bumps becomes new.
+
+**Sub-assemblies follow the same rule.** If 1000B's BOM still has 1100A, 1100A already exists and is reused (listed as "already exists", not created again). If OnShape raised it to 1100B, it is previewed as "will be created as the next Revision of 1100A" and created with its Revises link and Build 1.
+
+**Build numbers now count per Revision** (the user's decision): Revision B's first Build is Build 1 whatever Revision A has, and later Builds count on from B's own. `BuildService.createBuild` numbers from the one Assembly key; the Revision chain still scopes which Builds a new Build may copy Parts from. The Designer's default number comes from the selected Revision's Builds. This replaces the earlier "continuous across the chain" rule.
+
+Live check (read-only, 2026-11): document `76ec7a90…` has branches Main (Chassis 1000 A) and B1. B1 reads Part number **1100**, Revision B, so the tool answers `exists` with a number mismatch, not a new Revision. Set B1's Part number to 1000 and it should come back as `revision`.
+
+Not built: nothing unlinks or retires the earlier Revision's Assembly, and following nested sub-assemblies is still one level.
+
 ## Archived Builds are final
 
 ValorBOM has no un-archive action, and the Archive confirm says "This can't be undone from ValorBOM." The Build workflow has no transition out of Archived. A tracker admin can add one later; ValorBOM would then need a matching button and the new transition id in `buildConstants.js`.
@@ -192,7 +213,7 @@ Constants live in `src/server/utils/buildConstants.js`:
 
 1. **`onshapeClient.createBranch` request body is a best guess** (`branchedFrom: {vid}`), flagged in code. Unverified against OnShape's API. Phase 4 also needs OnShape metadata write endpoints (`updatePartMetadata`/`updateElementMetadata`) that have not been verified.
 2. **Live data mismatch:** older Jira tickets are off-season practice parts ("Myra-CLONE - 1101A Gearbox...") that don't match `partMask.js` naming (`V[RF]yy[AP]-NNNN`). Home search still finds them by key or name and labels unnumbered Assemblies "(No number)".
-3. ~~Build numbering across revisions not continuous in practice.~~ **Closed:** `createBuild` derives the Revision chain server-side, and both pages load Builds with the chain keys.
+3. ~~Build numbering across revisions not continuous in practice.~~ **Superseded:** numbering now counts per Revision (see "New Revisions from an OnShape branch"). `createBuild` still derives the chain, but only to validate a copy source.
 4. `RevisionService.getRevisionChain` only walks backward, so opening an old Revision won't list newer ones in the Revision selector.
 5. ~~Part save swallows per-row failures.~~ **Closed:** saves go through `POST /api/builds/:key/save`, which returns per-item results; both pages show the error on the row with a Retry that only re-links an already-created Part.
 6. `scripts/migrate-build-revision.mjs` (backfills Build 1 per existing Assembly, dry-run by default, `--execute` to write) has NOT been run against production.

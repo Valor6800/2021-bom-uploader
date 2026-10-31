@@ -5,7 +5,7 @@
 
 import { applyTitleMask, applyPartMask } from '../utils/partMask.js';
 import { sanitizeJQL, validateIssueKey } from '../utils/validators.js';
-import { RevisionField } from '../utils/buildConstants.js';
+import { RevisionField, LinkType } from '../utils/buildConstants.js';
 import { badRequest, conflict, HttpError } from '../middleware/httpError.js';
 import { describeUpstreamError } from '../utils/upstreamError.js';
 import { withKeyedLock } from '../utils/keyedLock.js';
@@ -396,26 +396,83 @@ export class EpicService {
    */
   async previewOnboarding(url) {
     const ids = this.parseOnshapeUrl(url);
-    const existing = await this._findExisting(ids);
-    if (existing) {
-      const season = existing.assembly.seasonType && existing.assembly.year
-        ? { seasonType: existing.assembly.seasonType, year: existing.assembly.year }
-        : null;
-      return { status: 'exists', ...existing, ...(await this._previewSubAssemblies(ids, season)) };
+    const found = await this._classify(ids);
+
+    if (found.kind === 'exists') {
+      const a = found.assembly;
+      const season = a.seasonType && a.year ? { seasonType: a.seasonType, year: a.year } : null;
+      return {
+        status: 'exists',
+        assembly: a,
+        matchedOn: found.matchedOn,
+        ...(found.branchMismatch ? { branchMismatch: found.branchMismatch } : {}),
+        ...(await this._previewSubAssemblies(ids, season)),
+      };
     }
-
-    const proposed = await this._readOnshapeAssembly(ids);
-
-    const clash = await this._findIssueByNumber(proposed.fullPartNumber);
-    if (clash) {
-      const assembly = this._toAssembly(clash);
+    if (found.kind === 'conflict') {
       throw conflict(
-        `${proposed.fullPartNumber} is already used by ${assembly.key}.`,
-        { assembly, proposed },
+        `${found.proposed.fullPartNumber} is already used by ${found.assembly.key}.`,
+        { assembly: found.assembly, proposed: found.proposed },
       );
     }
+
+    const { proposed } = found;
     const season = { seasonType: proposed.project[1], year: proposed.project.slice(2) };
-    return { status: 'new', proposed, ...(await this._previewSubAssemblies(ids, season)) };
+    return {
+      status: found.kind === 'revision' ? 'revision' : 'new',
+      proposed,
+      ...(found.previous ? { previous: found.previous } : {}),
+      ...(await this._previewSubAssemblies(ids, season)),
+    };
+  }
+
+  /**
+   * What a pasted (or sub-assembly) link is, given what the tracker already
+   * holds for its OnShape element:
+   *
+   * - `exists`: already an Assembly (same workspace, or a branch that is the
+   *   same Revision). `branchMismatch` is set when the branch carries a
+   *   different number than the Assembly it came from.
+   * - `revision`: a branch of an element that is already an Assembly, with the
+   *   same number and a higher Revision letter. It becomes a new Assembly,
+   *   linked to the earlier one (`previous`).
+   * - `conflict`: its number belongs to a different OnShape assembly.
+   * - `new`: not in the tracker yet.
+   *
+   * @private
+   */
+  async _classify(ids, { defaultProject = null } = {}) {
+    const found = await this._findExisting(ids);
+
+    if (found && found.matchedOn !== 'document') return { kind: 'exists', ...found };
+
+    if (found) {
+      // Another branch of an element already onboarded. Its own properties
+      // say whether it is a new Revision.
+      let proposed;
+      try {
+        proposed = await this._readOnshapeAssembly(ids, { defaultProject });
+      } catch (err) {
+        if (err?.status === 400) return { kind: 'exists', ...found };
+        throw err;
+      }
+      const previous = found.assembly;
+      const sameNumber = previous.seasonCode === proposed.project && previous.partNumber === proposed.partNumber;
+      if (!sameNumber) return { kind: 'exists', ...found, branchMismatch: { proposed } };
+
+      if (proposed.revision > (previous.revision || 'A')) {
+        // Revision B may already exist for another branch of the element.
+        const taken = await this._findIssueByNumber(proposed.fullPartNumber);
+        if (taken) return { kind: 'exists', assembly: this._toAssembly(taken), matchedOn: 'document' };
+        return { kind: 'revision', proposed, previous };
+      }
+      return { kind: 'exists', ...found };
+    }
+
+    const proposed = await this._readOnshapeAssembly(ids, { defaultProject });
+    const clash = await this._findIssueByNumber(proposed.fullPartNumber);
+    if (clash) return { kind: 'conflict', proposed, assembly: this._toAssembly(clash) };
+    return { kind: 'new', proposed };
   }
 
   // ---------------------------------------------------------------------------
@@ -474,15 +531,15 @@ export class EpicService {
       }
       const ids = { documentId, workspaceId, elementId };
 
-      const existing = await this._findExisting(ids);
-      if (existing) return { name, status: 'exists', assembly: existing.assembly, ids };
-
-      const proposed = await this._readOnshapeAssembly(ids, { defaultProject });
-      const clash = await this._findIssueByNumber(proposed.fullPartNumber);
-      if (clash) {
-        return { name, status: 'conflict', proposed, assembly: this._toAssembly(clash), ids };
+      const c = await this._classify(ids, { defaultProject });
+      if (c.kind === 'exists') return { name, status: 'exists', assembly: c.assembly, ids };
+      if (c.kind === 'conflict') {
+        return { name, status: 'conflict', proposed: c.proposed, assembly: c.assembly, ids };
       }
-      return { name: proposed.name, status: 'new', proposed, ids };
+      if (c.kind === 'revision') {
+        return { name: c.proposed.name, status: 'revision', proposed: c.proposed, previous: c.previous, ids };
+      }
+      return { name: c.proposed.name, status: 'new', proposed: c.proposed, ids };
     } catch (err) {
       if (err?.status === 400) {
         return { name, status: 'problems', problems: err.details?.problems ?? [], message: err.message };
@@ -538,7 +595,7 @@ export class EpicService {
     for (const sub of subs) {
       // eslint-disable-next-line no-await-in-loop
       const checked = await this._checkSubAssembly(sub, cache, defaultProject);
-      if (checked.status !== 'new') {
+      if (checked.status !== 'new' && checked.status !== 'revision') {
         results.push(this._publicSub(checked));
         continue;
       }
@@ -546,9 +603,10 @@ export class EpicService {
         // eslint-disable-next-line no-await-in-loop
         const outcome = await withKeyedLock(this._subLocks, checked.ids.elementId, async () => {
           // Another request may have created it while this one waited.
-          const again = await this._findExisting(checked.ids);
-          if (again) return { status: 'exists', assembly: again.assembly };
-          const made = await this._createAssemblyWithBuild(checked.proposed);
+          const again = await this._classify(checked.ids, { defaultProject });
+          if (again.kind === 'exists') return { status: 'exists', assembly: again.assembly };
+          if (again.kind === 'conflict') return { status: 'conflict', proposed: again.proposed, assembly: again.assembly };
+          const made = await this._createAssemblyWithBuild(again.proposed, again.previous ?? null);
           return { status: 'created', ...made };
         });
         results.push({ name: checked.name, ...outcome });
@@ -578,7 +636,10 @@ export class EpicService {
     if (recent.documentId !== documentId) return null;
     // A failed read propagates: answering "new" here would risk a duplicate.
     const issue = await this.jiraClient.getIssue(recent.key, { fields: ASSEMBLY_FIELDS });
-    return { assembly: this._toAssembly(issue), matchedOn: 'workspace' };
+    return {
+      assembly: this._toAssembly(issue),
+      matchedOn: !recent.workspaceId || recent.workspaceId === workspaceId ? 'workspace' : 'document',
+    };
   }
 
   /**
@@ -625,26 +686,24 @@ export class EpicService {
 
   /** @private */
   async _onboardOnce(ids, expectedSummary) {
-    const existing = await this._findExisting(ids);
-    if (existing) {
+    const found = await this._classify(ids);
+    if (found.kind === 'exists') {
       // The caller asked explicitly, so a sub-assembly added since is created too.
-      const a = existing.assembly;
+      const a = found.assembly;
       const season = a.seasonType && a.year ? { seasonType: a.seasonType, year: a.year } : null;
       const subs = await this._ensureSubAssemblies(ids, season);
-      return { response: { status: 'exists', assembly: existing.assembly, build: null, ...subs }, proposed: null };
+      return { response: { status: 'exists', assembly: found.assembly, build: null, ...subs }, proposed: null };
+    }
+    if (found.kind === 'conflict') {
+      throw conflict(`${found.proposed.fullPartNumber} is already used by ${found.assembly.key}.`, { assembly: found.assembly });
     }
 
-    const proposed = await this._readOnshapeAssembly(ids);
-    const clash = await this._findIssueByNumber(proposed.fullPartNumber);
-    if (clash) {
-      const assembly = this._toAssembly(clash);
-      throw conflict(`${proposed.fullPartNumber} is already used by ${assembly.key}.`, { assembly });
-    }
+    const { proposed } = found;
     if (proposed.summary !== expectedSummary) {
-      throw conflict(DRIFT_MESSAGE, { proposed });
+      throw conflict(DRIFT_MESSAGE, { proposed, ...(found.previous ? { previous: found.previous } : {}) });
     }
 
-    const made = await this._createAssemblyWithBuild(proposed);
+    const made = await this._createAssemblyWithBuild(proposed, found.previous ?? null);
     const season = { seasonType: proposed.project[1], year: proposed.project.slice(2) };
     const subs = await this._ensureSubAssemblies(ids, season);
     return { response: { status: 'created', ...made, ...subs }, proposed };
@@ -655,7 +714,7 @@ export class EpicService {
    * failing leaves the Assembly in place and is reported, not thrown.
    * @private
    */
-  async _createAssemblyWithBuild(proposed) {
+  async _createAssemblyWithBuild(proposed, previous = null) {
     const { key } = await this.createEpic({
       summary: proposed.summary,
       revision: proposed.revision,
@@ -679,8 +738,20 @@ export class EpicService {
       },
     });
     this._recentlyCreated.set(proposed.elementId, {
-      key, documentId: proposed.documentId, at: Date.now(),
+      key, documentId: proposed.documentId, workspaceId: proposed.workspaceId, at: Date.now(),
     });
+
+    // A new Revision is chained to the one it replaces, so Parts and Builds of
+    // the earlier Revision stay reachable from this one.
+    let revisionLinkError = null;
+    if (previous) {
+      try {
+        await this.jiraClient.createIssueLink(LinkType.REVISES, key, previous.key);
+      } catch (err) {
+        console.warn('[onboard] Revises link', key, '->', previous.key, 'failed:', err?.status, err?.message);
+        revisionLinkError = describeUpstreamError(err);
+      }
+    }
 
     let build = null;
     let buildError = null;
@@ -695,7 +766,12 @@ export class EpicService {
       buildError = describeUpstreamError(err);
     }
 
-    return { assembly, build, buildError };
+    return {
+      assembly,
+      build,
+      buildError,
+      ...(previous ? { revisionOf: previous, revisionLinkError } : {}),
+    };
   }
 
   // ---------------------------------------------------------------------------

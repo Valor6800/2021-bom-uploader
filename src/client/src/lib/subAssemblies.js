@@ -28,8 +28,10 @@ export function describeSubAssembly(sub, { preview = false } = {}) {
   switch (sub.status) {
     case 'new':
       return `${label}: will be created`;
+    case 'revision':
+      return `${label}: will be created as the next Revision of ${sub.previous?.summary ?? 'the earlier one'}`;
     case 'created':
-      return `${label}: created${sub.assembly?.key ? ` (${sub.assembly.key})` : ''}`;
+      return `${label}: created${sub.assembly?.key ? ` (${sub.assembly.key})` : ''}${sub.revisionOf ? `, next Revision of ${sub.revisionOf.key}` : ''}`;
     case 'exists':
       return `${label}: already exists${sub.assembly?.key ? ` (${sub.assembly.key})` : ''}${preview ? ', so it will not be created again' : ', not created again'}`;
     case 'conflict':
@@ -45,8 +47,7 @@ export function describeSubAssembly(sub, { preview = false } = {}) {
 
 /** How many of the sub-assemblies will be (preview) or were (result) created. */
 export function countCreated(subs, { preview = false } = {}) {
-  const wanted = preview ? 'new' : 'created';
-  return (subs ?? []).filter((s) => s.status === wanted).length;
+  return (subs ?? []).filter((s) => (preview ? s.status === 'new' || s.status === 'revision' : s.status === 'created')).length;
 }
 
 /** True when any sub-assembly is something the student should read about. */
