@@ -2,9 +2,9 @@ import { validateRowFields } from '../../src/client/src/lib/partValidation.js';
 import { validatePartPayload } from '../../src/server/utils/validators.js';
 import {
   MATERIALS as SERVER_MATERIALS, MACHINERY as SERVER_MACHINERY,
-  POWDERCOAT as SERVER_POWDERCOAT, THICKNESS as SERVER_THICKNESS,
+  POWDERCOAT as SERVER_POWDERCOAT, THICKNESS as SERVER_THICKNESS, PRIORITIES as SERVER_PRIORITIES,
 } from '../../src/server/utils/bomConstants.js';
-import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS } from '../../src/client/src/api/client.js';
+import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS, PRIORITIES } from '../../src/client/src/api/client.js';
 
 const valid = { material: 'PLA', machinery: '3D Printer', powdercoat: 'None', thickness: 'None', quantity: 1 };
 
@@ -22,6 +22,12 @@ const cases = [
   { ...valid, quantity: 1.5 },
   { ...valid, quantity: '2' },
   { ...valid, quantity: 12 },
+  ...SERVER_PRIORITIES.map((priority) => ({ ...valid, priority })),
+  { ...valid, priority: undefined },
+  { ...valid, priority: null },
+  { ...valid, priority: 'Urgent' },
+  { ...valid, priority: 'medium' },
+  { ...valid, priority: '' },
 ];
 
 describe('validateRowFields agrees with the server', () => {
@@ -36,13 +42,18 @@ describe('validateRowFields agrees with the server', () => {
     expect(MACHINERY).toEqual(SERVER_MACHINERY);
     expect(POWDERCOAT).toEqual(SERVER_POWDERCOAT);
     expect(THICKNESS).toEqual(SERVER_THICKNESS);
+    expect(PRIORITIES).toEqual(SERVER_PRIORITIES);
   });
 });
 
 describe('validateRowFields messages', () => {
   it('names an unlisted material', () => {
     expect(validateRowFields({ ...valid, material: 'Steel' }))
-      .toEqual({ field: 'material', error: '"Steel" isn\'t on the material list. Pick one.' });
+      .toEqual({ field: 'material', error: '"Steel" isn\'t on the material list. Change the material in OnShape.' });
+  });
+  it('names an unlisted priority', () => {
+    expect(validateRowFields({ ...valid, priority: 'Urgent' }))
+      .toEqual({ field: 'priority', error: "\"Urgent\" isn't on the priority list. Pick one." });
   });
   it('reports the first failing field in server order', () => {
     expect(validateRowFields({ ...valid, machinery: 'Laser', quantity: 0 }).field).toBe('machinery');

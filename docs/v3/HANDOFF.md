@@ -19,7 +19,7 @@ ValorBOM (Valor 6800, a FIRST Robotics team) is a Node/Express + React tool that
 | 0 Jira schema | Done, live on jira.valor6800.com |
 | 1 Backend services (BuildService, RevisionService, OnShape client additions, migration script) | Done |
 | 2 Designer | Done; rebuilt in the UX refactor as `/a/:key/design` |
-| 3 Assembly page: Build tabs, per-Build BOM, Move/Re-create, Archive, Clone a Part, Print, Compare Builds | Done; rebuilt in the UX refactor as `/a/:key/assemble` (Cut Version moved to the Designer only); now view-only for Parts, with Move and Re-create removed (Re-create lives in the Designer) |
+| 3 Assembly page: Build tabs, per-Build BOM, Move/Re-create, Archive, Create spare, Print, Compare Builds | Done; rebuilt in the UX refactor as `/a/:key/assemble` (Cut Version moved to the Designer only); now view-only for Parts, with Move and Re-create removed (Re-create lives in the Designer) |
 | UX refactor (Home search, chooser, OnShape onboarding that also creates Build 1, Build save endpoint, bug fixes B1 to B6) | Done (INC-1 to INC-9) |
 | 4 OnShape metadata round-trip | **Not started** |
 | 5 Guidance (teaching empty states beyond the glossary toggletips), instructions authoring (steps + images), activity log | **Not started** |
@@ -90,11 +90,53 @@ A cut Build is any Build that isn't a Draft (Active, Superseded, Archived). Its 
 - any `POST /api/builds/:key/save` on a cut Build (refused before any read of the Parts);
 - field updates to a Part that any cut Build uses, through the save (per-item result `{ ok: false, status: 409, locked: true, cutBuilds }`) and `PUT /api/stories/:key` (`PartService.updateStory`). The message names the cut Builds and says to Re-create the Part for the Draft.
 
-Still allowed: Archive, Cut Version on a Draft (and the Supersede it does), a new Build copying Parts from a cut Build, Re-create of a shared Part into a Draft (new revision linked only to the Draft), Clone a Part, and updates to Parts used only by Drafts.
+Still allowed: Archive, Cut Version on a Draft (and the Supersede it does), a new Build copying Parts from a cut Build, Re-create of a shared Part into a Draft (new revision linked only to the Draft), Create spare, and updates to Parts used only by Drafts.
 
-UI: the Designer shows a cut Build view-only (no Update from CAD, Save, Cut Version or add-existing-Part) with a "New Build from this one" button that opens + New Build with Copy Parts from preselected. On a Draft, a row whose Part a cut Build also uses is locked (plain text, "In cut Build N") with "Re-create for this Build". The Assembly page is view-only for Parts: no edits, Save bar, Move or Re-create; Clone, Print, Compare, Archive, the OnShape link and the two-Active repair stay.
+UI: the Designer shows a cut Build view-only (no Update from CAD, Save, Cut Version or add-existing-Part) with a "New Build from this one" button that opens + New Build with Copy Parts from preselected. On a Draft, a row whose Part a cut Build also uses is locked (plain text, "In cut Build N") with "Re-create for this Build". The Assembly page is view-only for Parts: no edits, Save bar, Move or Re-create; Create spare, Print, Compare, Archive, the OnShape link (the button is labelled "OnShape link") and the two-Active repair stay.
 
 Known gap: there is no "remove from Build". After Re-create of a shared Part that was already in the Draft, the Draft holds both the old and the new revision.
+
+## Part Revisions come from OnShape
+
+A BOM row is matched to a tracker Part by its **full number including the Revision letter** (`VF27P-0001A`, `BOMService.compareBOMWithJira`; save is find-or-create by that same string). So raising a Part's Revision in OnShape to B makes the CAD row `VF27P-0001B`, which matches nothing, shows under New from CAD, and Save creates a new Part with Revision B and CAD's values. Nothing is copied from the A Part, and no Revises link is written. No server change was needed for this; the Designer now says what is happening:
+
+- A New row whose number already exists at an earlier Revision shows "New Revision B, replaces VF27P-0001A" (plus ", which is still in the Build" when the A Part is in the selected Build).
+- A Part CAD no longer lists, whose number CAD now lists at a later letter, shows "CAD now has Revision B".
+- A Part whose Revision is ahead of CAD's (the result of Re-create) shows "CAD still has Revision A. Raise the Revision in OnShape to match".
+- These notes are `row.revisionNote` from `deriveDesignerRows` (`kind`: `new-revision`, `cad-ahead`, `cad-behind`). They appear only after Update from CAD has run.
+
+**Re-create for this Build stays**, for two Builds made at the same time (OnShape can only hold one Revision, so the tracker has to move ahead of it). It is the secondary path now: the locked row says "Design changed? Raise its Revision in OnShape, then Update from CAD.", the button's tooltip says it is for Builds made at the same time, and the confirmation message says OnShape still shows the old Revision. Re-create's server behavior is unchanged.
+
+**Material is locked everywhere.** The Designer no longer has a Material select; `LOCKED_FIELDS` in `lib/designerRows.js` drops any edit to it, while a CAD value still applies. A material that is not on the list (e.g. "Steel") shows "Not a listed material. Change it in OnShape" and the row is held back with the same wording. The server still accepts a material on save (it only ever receives CAD's or the stored value); lock it server-side too if another client is ever added.
+
+Open product question this exposes: **there is still no "remove from Build".** If a Draft was made with "Copy Parts from" a cut Build and OnShape then raises a Revision, the Draft holds the old Part as well as the new one (the old row says so, but cannot leave the Build). Same gap as after Re-create. Adding it needs a link delete in `JiraClient`, a Draft-only `DELETE /api/builds/:key/parts/:partKey`, and a row action.
+
+## Spares: repeated Part numbers
+
+A spare repeats its original's number, so several tickets can share one full number. **The original is the one with the lowest ticket number** (`isMoreOriginal`/`keyNumber` in `server/utils/partChain.js`; a matching copy in `lib/designerRows.js`). That rule decides which ticket CAD matches (`BOMService.compareBOMWithJira`), which one a save reuses (`preferNewestRevision`, tie-break within one Epic Link), and which one the Designer treats as the original. A spare keeps the source's Epic Link precisely so this tie-break always applies. Spares show the label "Spare". There is no tracker marker for a spare: Labels is not on the Part screen. If one is ever added, use it instead of the key rule.
+
+Which Parts the Designer lists: this Build's Parts, New from CAD, and **Parts in no Build** (spares). A Part that is in other Builds only is hidden, unless Update from CAD lists it (then it shows as "Also in Build N", so an unchanged Part can still be added to a Draft). The Assembly page's third group is now "Not in any Build".
+
+## Part priority
+
+Each Part has the tracker's built-in Priority (Highest, High, Medium, Low, Lowest; `PRIORITIES` in `bomConstants.js` and mirrored in `api/client.js`). The Designer has an editable Priority column ("Not set" when the tracker returns none), the Assembly page and Print show it as text. CAD never sets it.
+
+**Priority must be added to the Part screen before it can be saved.** On 2026-11 the tracker's createmeta for the Part type listed neither Priority nor Labels, so a write would be refused ("Field 'priority' cannot be set. It is not on the appropriate screen"). To keep every other save working until then, a priority is **sent only when it changed** (`valuesOf` in `lib/designerSave.js`; the server writes `priority` only when the payload has one). Reading needs nothing: search returns it already. Create spare copies a priority only when it isn't Medium, for the same reason.
+
+Tracker steps (by hand, decided with the user): in Jira admin, find the screen the Part issue type uses (`Hardware Part Screen` was used for the Build fields), add the built-in **Priority** field to a tab, and check Priority isn't hidden in the Part's field configuration. Then change one Part's priority in the Designer, Save, and confirm it in the tracker.
+
+Not built: Builds have no priority (the user chose Parts only), and nothing sorts or filters by priority yet.
+
+## Sub-assemblies
+
+An assembly's BOM can list sub-assemblies (1000 with 1100, 1200, 1300). They are **Assemblies, never Parts**.
+
+- **BOM parser** (`bomService.js`): a top-level row is a sub-assembly when it has an `itemSource` with an `elementId` and either nested rows ("2" with "2.1") or no `partId`. It is kept out of `parts` and `unidentified` and returned as `subAssemblies` (`getBOMReport`, and `previewParts` passes it on). A row with no `itemSource` is always a Part. **Checked live (read-only) on 2026-11 against the "Chassis" assembly** (doc `76ec7a90…`): its sub-assembly rows have `partId: ""`, nested rows and `bomBehavior` "Show Assembly and components", and are recognised. Nested sub-assemblies (a "Swerve" at `1.7`) are skipped as before. A vendor row like "Robot Battery" (`WCP-1492`, a `partId`, from another document) is still a Part row and still shows in the unidentified warning (the open COTS question).
+- **Onboarding** (`epicService.js`): `previewOnboarding` and `onboardAssembly` now also handle the sub-assemblies, one level down only (a sub-assembly's own sub-assemblies are not followed). For each, the ids come from the BOM row (workspace from `wvmId` when `wvmType` is `w`, otherwise the document's Main workspace), then it is checked (a sub-assembly with no Project of its own takes its parent's season, as BOM Parts do): `exists` (matched by OnShape element and document, as for the pasted link), `new`, `conflict` (its number belongs to a different OnShape assembly), `problems` (incomplete OnShape properties) or `error`. Only `new` ones are created, each with its Build 1; nothing that exists is created again. A failure on one never stops the others or the main assembly, and a BOM that cannot be read is reported as `subAssembliesError` while the main assembly is still added.
+- **Pasting an assembly that already exists** previews its sub-assemblies too, and the "already here" dialog offers "Create N missing sub-assemblies" (calls `POST /api/epics/onboard`, which for an existing assembly creates only the missing ones).
+- **UI**: the confirm and "already here" dialogs list each sub-assembly ("already exists (HAR-2000), so it will not be created again", "will be created", "skipped, fill in Part number in OnShape"). After creating, the Designer opens with the same list as a banner. Update from CAD shows a note naming the sub-assemblies instead of a Part warning. Wording lives in `lib/subAssemblies.js`.
+- **Names drop [bracketed] tags**: "[1300] Electrical" becomes "Electrical" (`utils/cleanName.js`, `stripBrackets`). Applied to Assembly names (pasted and sub-assemblies, so the summary is `VR27A-1300A Electrical`) and to BOM Part names. A name that is only brackets keeps the text inside. The "couldn't identify" list still shows the raw OnShape name so the row can be found.
+- Not built: following nested levels, and linking a sub-assembly to its parent in the tracker (there is no parent/child link between Assemblies).
 
 ## Archived Builds are final
 
@@ -135,7 +177,7 @@ Constants live in `src/server/utils/buildConstants.js`:
 
 - Anyone can create a Build or start a Revision (no lead gate). Every Assembly starts at Revision A. Parts never span Assemblies (same design under another Assembly = new Part number).
 - No separate database; Jira holds everything. Accepted trade-off: Part quantity is one number per ticket, not per Build.
-- **Clone a part: ValorBOM allocates the number.** `PartService.getNextPartNumber` = one past the highest `V{R|F}{yy}P-NNNN` in the season, raised by any Part this process just created. Flat per season, not per Assembly (the number carries no Assembly identity; only Epic Link does). Clone gets Revision A, no Build link, not a Revises chain.
+- **Create spare (was Clone a Part) is an exact copy.** Same summary, so same Part number, name and Revision; same BOM fields and the source's own Epic Link; optional quantity; in no Build. ValorBOM no longer allocates Part numbers (`getNextPartNumber` and the allocation floor are gone). The Assembly page button and dialog say "Create spare"; the dialog has no name field.
 - Move to this Build = plain Used In link. Re-create for this Build = new Part revision (next letter, Revises link, carries BOM fields, linked only to the target Build).
 - Creating an Assembly from OnShape also creates its Build 1.
 - Cut Version is on the Designer only.
@@ -144,6 +186,7 @@ Constants live in `src/server/utils/buildConstants.js`:
 - No glossary `?` buttons or teaching/helper text in the UI. Terms will be explained on a team Confluence page (URL TBD; no link in the app yet).
 - The Assembly page hides Draft Builds (tabs, Compare, Print, labels). A `?build=` pointing at a Draft falls back to the Active Build. The Designer still shows Drafts.
 - Cut Builds are immutable (server-enforced); shared Parts are locked until Re-created; the Assembly page is view-only for Parts. See "Cut Builds are immutable".
+- **OnShape owns Material and Part Revisions.** Material is plain text in the Designer, always; it changes only through Update from CAD. A Part's new Revision starts in OnShape: raise the Revision there, Update from CAD, and the row shows as New (the full number, letter included, no longer matches the old Part), so Save creates a fresh Part from CAD's values with that Revision. See "Part Revisions come from OnShape".
 
 ## Known gaps / open items
 
@@ -161,6 +204,7 @@ Constants live in `src/server/utils/buildConstants.js`:
 
 ## Manual follow-ups (tracker, by hand)
 
+- **Priority on the Part screen:** see "Part priority" above. Until it is added, changing a Part's priority fails on that row with the tracker's reason.
 - **HAR-2031 Revision:** set its Revision field (`customfield_10500`) to `A`. HAR-2031 was created by the removed Build-less path; ValorBOM never writes it back.
 - **Part screen fields:** a tracker admin should remove Build Number (`customfield_10501`), Onshape Version Link (`customfield_10502`) and Instructions Data (`customfield_10503`) from the Part screen. Until then they show, empty, on every Part. The "In Build" labels in ValorBOM are the source of truth.
 
@@ -195,7 +239,7 @@ The test Assembly HAR-2030 and its tickets (HAR-2031 to HAR-2035) were deleted a
 
 1. On Home, paste the OnShape link of an assembly whose Properties have Project, Part number, Revision and Name filled in. Confirm, and check that the Designer opens on Build 1 and runs Update from CAD.
 2. In the Designer, Save, then check in the tracker that each new Part has a Revision, is linked to Build 1, and has no Build fields set. Create a second Build with "What's different?", then Cut Version on one Build.
-3. Search for the Assembly on Home by number, name and key, open it in Assembly mode: Build tabs, Clone a Part, Compare Builds, Print, Archive. Back in the Designer, select the cut Build, use "New Build from this one", and Re-create a locked shared Part in the new Draft.
+3. Search for the Assembly on Home by number, name and key, open it in Assembly mode: Build tabs, Create spare, Compare Builds, Print, Archive. Back in the Designer, select the cut Build, use "New Build from this one", and Re-create a locked shared Part in the new Draft.
 4. Paste the same OnShape link again and check that Home offers to open the existing Assembly instead of creating a second one.
 5. Watch the browser console and the server log for errors; report anything odd.
 

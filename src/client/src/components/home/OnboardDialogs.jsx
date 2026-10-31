@@ -1,6 +1,8 @@
 import { useRef } from 'react';
 import Dialog from '../ui/Dialog.jsx';
 import Button from '../ui/Button.jsx';
+import SubAssemblyList from './SubAssemblyList.jsx';
+import { countCreated } from '../../lib/subAssemblies.js';
 
 /**
  * Dialogs A to D of the onboarding flow (design 3.3). Each is a ui/Dialog;
@@ -8,8 +10,12 @@ import Button from '../ui/Button.jsx';
  */
 
 /** A. Confirm a new Assembly. */
-export function ConfirmDialog({ open, proposed, drifted, busy, error, onCancel, onConfirm, returnFocusRef }) {
+export function ConfirmDialog({
+  open, proposed, drifted, busy, error, onCancel, onConfirm, returnFocusRef,
+  subAssemblies = [], subAssembliesError = null,
+}) {
   const confirmRef = useRef(null);
+  const newSubs = countCreated(subAssemblies, { preview: true });
   return (
     <Dialog
       open={open}
@@ -29,7 +35,9 @@ export function ConfirmDialog({ open, proposed, drifted, busy, error, onCancel, 
             disabled={busy}
             aria-describedby={error ? 'onboard-create-error' : undefined}
           >
-            {busy ? (<><span className="spinner" aria-hidden="true" /> Creating…</>) : 'Create Assembly and Build 1'}
+            {busy
+              ? (<><span className="spinner" aria-hidden="true" /> Creating…</>)
+              : newSubs > 0 ? `Create ${newSubs + 1} Assemblies` : 'Create Assembly and Build 1'}
           </Button>
         </>
       )}
@@ -43,7 +51,12 @@ export function ConfirmDialog({ open, proposed, drifted, busy, error, onCancel, 
             <span className="mono-key">{proposed.fullPartNumber}</span> {proposed.name}
           </p>
           <p className="text-muted">{[proposed.seasonLabel, `Revision ${proposed.revision}`].filter(Boolean).join(' · ')}</p>
-          <p>Creates this Assembly and its Build 1 (Draft), then opens the Designer.</p>
+          <p>
+            Creates this Assembly and its Build 1 (Draft)
+            {newSubs > 0 ? `, and ${newSubs === 1 ? 'the sub-assembly' : 'each sub-assembly'} below that doesn't exist yet` : ''}
+            , then opens the Designer.
+          </p>
+          <SubAssemblyList subAssemblies={subAssemblies} error={subAssembliesError} preview />
           {error && <p id="onboard-create-error" className="form-error" role="alert">{error}</p>}
         </div>
       )}
@@ -52,19 +65,29 @@ export function ConfirmDialog({ open, proposed, drifted, busy, error, onCancel, 
 }
 
 /** B. The OnShape assembly was onboarded before. */
-export function ExistsDialog({ open, assembly, matchedOn, onCancel, onOpen, returnFocusRef }) {
+export function ExistsDialog({
+  open, assembly, matchedOn, onCancel, onOpen, returnFocusRef,
+  subAssemblies = [], subAssembliesError = null, busy = false, error = null, onCreateMissing,
+}) {
   const openRef = useRef(null);
+  const missing = countCreated(subAssemblies, { preview: true });
   return (
     <Dialog
       open={open}
-      onClose={onCancel}
+      onClose={busy ? () => {} : onCancel}
+      closeDisabled={busy}
       title="This Assembly is already here"
       returnFocusRef={returnFocusRef}
       initialFocusRef={openRef}
       footer={(
         <>
-          <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-          <Button ref={openRef} variant="primary" onClick={onOpen}>Open in Designer</Button>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
+          {missing > 0 && onCreateMissing && (
+            <Button variant="secondary" onClick={onCreateMissing} disabled={busy}>
+              {busy ? 'Creating…' : `Create ${missing} missing sub-assembl${missing === 1 ? 'y' : 'ies'}`}
+            </Button>
+          )}
+          <Button ref={openRef} variant="primary" onClick={onOpen} disabled={busy}>Open in Designer</Button>
         </>
       )}
     >
@@ -76,8 +99,10 @@ export function ExistsDialog({ open, assembly, matchedOn, onCancel, onOpen, retu
           <p>
             {matchedOn === 'document'
               ? 'That OnShape assembly was added before from another branch of this document, so nothing new will be created.'
-              : 'That OnShape assembly was added before, so nothing new will be created.'}
+              : 'That OnShape assembly was added before, so it will not be created again.'}
           </p>
+          <SubAssemblyList subAssemblies={subAssemblies} error={subAssembliesError} preview />
+          {error && <p className="form-error" role="alert">{error}</p>}
         </div>
       )}
     </Dialog>

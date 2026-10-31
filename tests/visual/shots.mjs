@@ -264,7 +264,7 @@ const INC6_SCENARIOS = [
     waitFor: 'tbody.parts-group-in',
     async run(page) {
       await assertAttr(chip(page, 'Build 1'), 'aria-pressed', 'true');
-      await expectText(page, 'Also in Build 2');
+      await expectNoText(page, 'Also in Build 2');
       await expectText(page, 'Test Assembly Build 1');
       await expectNoText(page, 'Need a different combination');
     },
@@ -319,9 +319,10 @@ const INC6_SCENARIOS = [
       await page.locator('tbody.parts-group-new').waitFor({ state: 'visible' });
       await expectText(page, 'Changed in CAD: Qty 1→3');
       await expectText(page, '1 BOM row was not');
-      const steel = partRow(page, 'VF27P-0006A').getByLabel('Material for VF27P-0006A');
-      await assertAttr(steel, 'aria-invalid', 'true');
-      await expectText(page, '"Steel" isn\'t on the material list. Pick one.');
+      const steel = partRow(page, 'VF27P-0006A');
+      assertEqual(await steel.getByLabel('Material for VF27P-0006A').count(), 0, 'Material is text, not a control');
+      await expectText(page, 'Not a listed material. Change it in OnShape');
+      await expectText(page, '"Steel" isn\'t on the material list. Change the material in OnShape.');
       await expectText(page, '1 row needs a fix before it can save.');
       await ctx.shot('designer-after-cad');
 
@@ -860,7 +861,7 @@ const CUT_SCENARIOS = [
 
       await button(page, 'Update from CAD').click();
       await page.locator('tbody.parts-group-new').waitFor({ state: 'visible' });
-      assertTrue(await page.getByLabel('Material for VF27P-0004A').isEnabled(), 'a Part new from CAD stays editable');
+      assertTrue(await page.getByLabel('Machinery for VF27P-0004A').isEnabled(), 'a Part new from CAD stays editable');
       await ctx.shot('designer-draft-shared-after-cad');
 
       await re.click();
@@ -915,7 +916,7 @@ const INC7_SCENARIOS = [
     inc: 'INC-7',
     name: 'assembly-view-only',
     // Every Build here is cut, so its Parts are plain text: no inputs, no
-    // Save bar, no Move or Re-create. Clone, Print, Compare and Archive stay.
+    // Save bar, no Move or Re-create. Create spare, Print, Compare and Archive stay.
     url: ASSEMBLE_URL,
     bom: true,
     assemble: true,
@@ -928,7 +929,7 @@ const INC7_SCENARIOS = [
       assertEqual(await page.getByRole('button', { name: /^(Save|Discard|Move here|Re-create)/ }).count(), 0, 'no Save, Move or Re-create');
       const row = inBuildRow(page, 'HAR-2033');
       assertEqual((await row.locator('td[data-field="thickness"]').textContent()).trim(), '0.250', 'Thickness is text');
-      await button(page, 'Clone a Part').waitFor();
+      await button(page, 'Create spare').waitFor();
       await button(page, 'More actions for Build 2').waitFor();
       await page.getByRole('link', { name: /Print/ }).waitFor();
       await page.getByRole('link', { name: /Compare/ }).waitFor();
@@ -952,11 +953,11 @@ const INC7_SCENARIOS = [
       await inBuildRow(page, 'HAR-2031').waitFor();
       await inBuildRow(page, 'HAR-2033').waitFor();
       await expectText(page, 'Build 3 is newer');
-      await expectText(page, 'Parts in other Builds, not in Build 2');
-      assertEqual((await otherRow(page, 'HAR-2032').locator('.cell-where').textContent()).trim(), 'in Build 1', 'HAR-2032 location');
-      assertEqual((await otherRow(page, 'HAR-2035').locator('.cell-where').textContent()).trim(), 'in Build 3', 'HAR-2035 location');
+      await expectNoText(page, 'Parts in other Builds');
+      assertEqual(await otherRow(page, 'HAR-2032').count(), 0, 'a Part only in Build 1 is not listed');
+      assertEqual(await otherRow(page, 'HAR-2035').count(), 0, 'a Part only in Build 3 is not listed');
       assertEqual(await page.getByRole('button', { name: /^(Move|Re-create)/ }).count(), 0, 'no Move or Re-create');
-      await page.getByRole('link', { name: /OnShape version/ }).waitFor();
+      await page.getByRole('link', { name: /OnShape link/ }).waitFor();
     },
   },
   {
@@ -1029,20 +1030,20 @@ const INC7_SCENARIOS = [
     api: assemblyApi({ extra: [{ method: 'POST', path: '/api/parts/HAR-2032/clone', fixture: 'clone-HAR-2032-ok' }] }),
     waitFor: 'tbody.parts-group-in tr.part-row',
     async run(page, ctx) {
-      await button(page, 'Clone a Part').click();
+      await button(page, 'Create spare').click();
       const dialog = page.locator('dialog[open]');
       await dialog.waitFor({ state: 'visible' });
-      await dialog.getByLabel('Copy from').selectOption('HAR-2032');
-      await dialog.getByLabel('New Part name (optional)').fill('Plate spare');
-      await dialog.getByLabel('Quantity (optional)').fill('1');
+      await dialog.getByLabel('Spare of').selectOption('HAR-2032');
+      assertEqual(await dialog.getByLabel('New Part name').count(), 0, 'a spare keeps the name: no name field');
+      await dialog.getByLabel('Quantity (optional').fill('1');
       await ctx.shot('assembly-clone-dialog');
-      await dialog.getByRole('button', { name: 'Clone', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Create spare', exact: true }).click();
       const [req] = await waitForSent(ctx, 'POST', '/api/parts/HAR-2032/clone');
-      assertEqual(req.body, { epicKey: 'HAR-2030', name: 'Plate spare', quantity: 1 }, 'clone body');
-      await expectText(page, 'Cloned as HAR-2040 (VF27P-0004A).');
+      assertEqual(req.body, { epicKey: 'HAR-2030', quantity: 1 }, 'clone body');
+      await expectText(page, 'Created spare HAR-2040 (VF27P-0002A).');
       // The chain-Parts re-fetch is unchanged (search lag), yet the row shows.
       await otherRow(page, 'HAR-2040').waitFor({ state: 'visible' });
-      assertEqual((await otherRow(page, 'HAR-2040').locator('.cell-where').textContent()).trim(), 'Not in any Build', 'clone location');
+      assertEqual((await otherRow(page, 'HAR-2040').locator('.cell-where').textContent()).trim(), 'Spare', 'clone location');
       assertEqual(sent(ctx, 'POST', '/api/parts/HAR-2032/clone').length, 1, 'one clone request');
       await ctx.shot('assembly-after-clone');
     },
@@ -1084,7 +1085,7 @@ const INC7_SCENARIOS = [
       await button(page, 'Show archived (1)').waitFor();
       assertEqual(await page.getByRole('button', { name: 'More actions for Build 2' }).count(), 0, 'no Archive on an Archived Build');
       assertEqual(await page.locator('.parts-table input:enabled').count(), 0, 'an Archived Build is read-only');
-      const cloneButton = button(page, 'Clone a Part');
+      const cloneButton = button(page, 'Create spare');
       await assertAttr(cloneButton, 'aria-disabled', 'true');
       await assertAttr(cloneButton, 'title', "This Build is archived and can't be changed.");
       await cloneButton.click({ force: true });
@@ -1124,7 +1125,7 @@ const INC7_SCENARIOS = [
     async run(page, ctx) {
       await expectText(page, 'VF27A-0000A Test Assembly — Build 2 (Active)');
       await expectText(page, 'Printed 2026-10-30');
-      await expectText(page, 'OnShape version: https://cad.onshape.com/documents/');
+      await expectText(page, 'OnShape link: https://cad.onshape.com/documents/');
       assertEqual(await page.locator('.print-table tbody tr').count(), 2, 'two Parts in Build 2');
       assertEqual(await page.locator('.print-table input').count(), 0, 'the tick column is not interactive');
       await ctx.shot('print-preview');

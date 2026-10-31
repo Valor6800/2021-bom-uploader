@@ -3,7 +3,7 @@
  * All allowed-value checks reference the centralized BOM constants.
  */
 
-import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS } from './bomConstants.js';
+import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS, PRIORITIES } from './bomConstants.js';
 
 /**
  * @param {string} value
@@ -50,6 +50,19 @@ export function validateThickness(value) {
 }
 
 /**
+ * Priority is optional: absent is valid, anything else must be on the list.
+ * @param {string|null|undefined} value
+ * @returns {{ valid: boolean, error?: string }}
+ */
+export function validatePriority(value) {
+  if (value === undefined || value === null) return { valid: true };
+  if (!PRIORITIES.includes(value)) {
+    return { valid: false, error: `Invalid priority "${value}". Allowed: ${PRIORITIES.join(', ')}` };
+  }
+  return { valid: true };
+}
+
+/**
  * @param {*} value
  * @returns {{ valid: boolean, error?: string }}
  */
@@ -74,6 +87,7 @@ export function validatePartPayload(payload) {
     validatePowdercoat(payload.powdercoat),
     validateThickness(payload.thickness),
     validateQuantity(payload.quantity),
+    validatePriority(payload.priority),
   ];
 
   for (const result of checks) {

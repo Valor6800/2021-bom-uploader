@@ -8,6 +8,8 @@ import { sanitizeJQL, validateIssueKey } from '../utils/validators.js';
 import { RevisionField } from '../utils/buildConstants.js';
 import { badRequest, conflict, HttpError } from '../middleware/httpError.js';
 import { describeUpstreamError } from '../utils/upstreamError.js';
+import { withKeyedLock } from '../utils/keyedLock.js';
+import { stripBrackets } from '../utils/cleanName.js';
 import {
   ASSEMBLY_FIELDS, KEY_SHAPED_RE, isAssemblyIssue, searchAssemblyList, toAssembly,
 } from '../utils/assemblySearch.js';
@@ -74,11 +76,17 @@ export class EpicService {
    * @param {import('../clients/onshapeClient.js').OnshapeClient} deps.onshapeClient
    * @param {import('./buildService.js').BuildService} [deps.buildService]
    *   Only required for `onboardAssembly`, which creates Build 1.
+   * @param {import('./bomService.js').BOMService} [deps.bomService]
+   *   Reads the BOM to find sub-assemblies. Without it, onboarding handles
+   *   only the pasted assembly.
    */
-  constructor({ jiraClient, onshapeClient, buildService }) {
+  constructor({ jiraClient, onshapeClient, buildService, bomService }) {
     this.jiraClient = jiraClient;
     this.onshapeClient = onshapeClient;
     this.buildService = buildService;
+    this.bomService = bomService;
+    /** elementId -> lock, so one sub-assembly is created once at a time. */
+    this._subLocks = new Map();
     /** elementId → { assembly, at }: Assemblies this process created recently. */
     this._recentlyCreated = new Map();
     /** elementId → Promise of the running onboarding for that element. */
@@ -267,7 +275,7 @@ export class EpicService {
   }
 
   /** @private */
-  async _readOnshapeAssembly({ documentId, workspaceId, elementId }) {
+  async _readOnshapeAssembly({ documentId, workspaceId, elementId }, { defaultProject = null } = {}) {
     let metadata;
     try {
       metadata = await this.onshapeClient.getElementMetadata(documentId, workspaceId, elementId);
@@ -298,7 +306,10 @@ export class EpicService {
     const problems = [];
     const values = {};
     for (const { prop, pattern, hint } of REQUIRED_ASSEMBLY_PROPERTIES) {
-      const value = readProperty(properties, prop);
+      let value = readProperty(properties, prop);
+      // A sub-assembly with no Project of its own takes its parent's, the same
+      // way a BOM Part falls back to the Assembly's season.
+      if (!value && prop === ONSHAPE_PROPERTY.PROJECT && defaultProject) value = defaultProject;
       values[prop.name] = value;
       if (!value) {
         missing.push(prop.name);
@@ -323,7 +334,7 @@ export class EpicService {
     const project = values[ONSHAPE_PROPERTY.PROJECT.name];
     const partNumber = values[ONSHAPE_PROPERTY.PART_NUMBER.name];
     const revision = values[ONSHAPE_PROPERTY.REVISION.name];
-    const name = values[ONSHAPE_PROPERTY.NAME.name];
+    const name = stripBrackets(values[ONSHAPE_PROPERTY.NAME.name]);
     const fullPartNumber = `${project}A-${partNumber}${revision}`;
     const seasonType = project[1];
     return {
@@ -386,7 +397,12 @@ export class EpicService {
   async previewOnboarding(url) {
     const ids = this.parseOnshapeUrl(url);
     const existing = await this._findExisting(ids);
-    if (existing) return { status: 'exists', ...existing };
+    if (existing) {
+      const season = existing.assembly.seasonType && existing.assembly.year
+        ? { seasonType: existing.assembly.seasonType, year: existing.assembly.year }
+        : null;
+      return { status: 'exists', ...existing, ...(await this._previewSubAssemblies(ids, season)) };
+    }
 
     const proposed = await this._readOnshapeAssembly(ids);
 
@@ -398,7 +414,150 @@ export class EpicService {
         { assembly, proposed },
       );
     }
-    return { status: 'new', proposed };
+    const season = { seasonType: proposed.project[1], year: proposed.project.slice(2) };
+    return { status: 'new', proposed, ...(await this._previewSubAssemblies(ids, season)) };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sub-assemblies
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The sub-assemblies listed in an assembly's BOM.
+   * @private
+   */
+  async _listSubAssemblies({ documentId, workspaceId, elementId }, season) {
+    if (!this.bomService) return [];
+    const report = await this.bomService.getBOMReport(
+      null, documentId, workspaceId, elementId, season, { fresh: true },
+    );
+    return report.subAssemblies ?? [];
+  }
+
+  /**
+   * The workspace to store for a sub-assembly: the one the BOM names when it
+   * points at a workspace, otherwise the document's Main workspace (a
+   * sub-assembly can be referenced by version from another document).
+   * @private
+   */
+  async _workspaceFor(sub, documentId, cache) {
+    if (sub.wvmType === 'w' && ONSHAPE_ID_RE.test(String(sub.wvmId ?? ''))) {
+      return String(sub.wvmId).toLowerCase();
+    }
+    if (!cache.has(documentId)) {
+      const list = await this.onshapeClient.getWorkspaces(documentId);
+      const workspaces = Array.isArray(list) ? list : [];
+      const main = workspaces.find((w) => w.name === 'Main') ?? workspaces[0];
+      cache.set(documentId, main?.id ? String(main.id).toLowerCase() : null);
+    }
+    return cache.get(documentId);
+  }
+
+  /**
+   * What would happen to one sub-assembly, without writing anything:
+   * `exists` (already an Assembly), `new`, `conflict` (its number belongs to a
+   * different OnShape assembly), `problems` (its properties are incomplete) or
+   * `error` (could not check).
+   * @private
+   */
+  async _checkSubAssembly(sub, cache, defaultProject = null) {
+    const name = stripBrackets(sub.name) || sub.partNumber || 'Sub-assembly';
+    const documentId = String(sub.documentId ?? '').toLowerCase();
+    const elementId = String(sub.elementId ?? '').toLowerCase();
+    if (!ONSHAPE_ID_RE.test(documentId) || !ONSHAPE_ID_RE.test(elementId)) {
+      return { name, status: 'error', message: 'OnShape did not say where this sub-assembly lives.' };
+    }
+    try {
+      const workspaceId = await this._workspaceFor(sub, documentId, cache);
+      if (!workspaceId) {
+        return { name, status: 'error', message: 'Could not find the document workspace.' };
+      }
+      const ids = { documentId, workspaceId, elementId };
+
+      const existing = await this._findExisting(ids);
+      if (existing) return { name, status: 'exists', assembly: existing.assembly, ids };
+
+      const proposed = await this._readOnshapeAssembly(ids, { defaultProject });
+      const clash = await this._findIssueByNumber(proposed.fullPartNumber);
+      if (clash) {
+        return { name, status: 'conflict', proposed, assembly: this._toAssembly(clash), ids };
+      }
+      return { name: proposed.name, status: 'new', proposed, ids };
+    } catch (err) {
+      if (err?.status === 400) {
+        return { name, status: 'problems', problems: err.details?.problems ?? [], message: err.message };
+      }
+      return { name, status: 'error', message: describeUpstreamError(err) };
+    }
+  }
+
+  /** A check result without server-only fields, for the client. @private */
+  _publicSub({ ids, ...rest }) {
+    return rest;
+  }
+
+  /**
+   * Read-only: the sub-assemblies of a pasted assembly and what each would
+   * do. A failure here never blocks the main onboarding; it is reported
+   * instead.
+   * @private
+   */
+  async _previewSubAssemblies(ids, season) {
+    let subs;
+    try {
+      subs = await this._listSubAssemblies(ids, season);
+    } catch (err) {
+      return { subAssemblies: [], subAssembliesError: describeUpstreamError(err) };
+    }
+    const cache = new Map();
+    const defaultProject = season ? `V${season.seasonType}${season.year}` : null;
+    const checked = [];
+    for (const sub of subs) {
+      // eslint-disable-next-line no-await-in-loop
+      checked.push(this._publicSub(await this._checkSubAssembly(sub, cache, defaultProject)));
+    }
+    return { subAssemblies: checked };
+  }
+
+  /**
+   * Create each missing sub-assembly (with its Build 1) and report every
+   * one: created, already existing, skipped or failed. Nothing that exists is
+   * created again.
+   * @private
+   */
+  async _ensureSubAssemblies(ids, season) {
+    let subs;
+    try {
+      subs = await this._listSubAssemblies(ids, season);
+    } catch (err) {
+      return { subAssemblies: [], subAssembliesError: describeUpstreamError(err) };
+    }
+    const cache = new Map();
+    const defaultProject = season ? `V${season.seasonType}${season.year}` : null;
+    const results = [];
+    for (const sub of subs) {
+      // eslint-disable-next-line no-await-in-loop
+      const checked = await this._checkSubAssembly(sub, cache, defaultProject);
+      if (checked.status !== 'new') {
+        results.push(this._publicSub(checked));
+        continue;
+      }
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const outcome = await withKeyedLock(this._subLocks, checked.ids.elementId, async () => {
+          // Another request may have created it while this one waited.
+          const again = await this._findExisting(checked.ids);
+          if (again) return { status: 'exists', assembly: again.assembly };
+          const made = await this._createAssemblyWithBuild(checked.proposed);
+          return { status: 'created', ...made };
+        });
+        results.push({ name: checked.name, ...outcome });
+      } catch (err) {
+        console.warn('[onboard] sub-assembly', checked.proposed.fullPartNumber, 'failed:', err?.status, err?.message);
+        results.push({ name: checked.name, status: 'error', message: describeUpstreamError(err) });
+      }
+    }
+    return { subAssemblies: results };
   }
 
   /**
@@ -468,7 +627,11 @@ export class EpicService {
   async _onboardOnce(ids, expectedSummary) {
     const existing = await this._findExisting(ids);
     if (existing) {
-      return { response: { status: 'exists', assembly: existing.assembly, build: null }, proposed: null };
+      // The caller asked explicitly, so a sub-assembly added since is created too.
+      const a = existing.assembly;
+      const season = a.seasonType && a.year ? { seasonType: a.seasonType, year: a.year } : null;
+      const subs = await this._ensureSubAssemblies(ids, season);
+      return { response: { status: 'exists', assembly: existing.assembly, build: null, ...subs }, proposed: null };
     }
 
     const proposed = await this._readOnshapeAssembly(ids);
@@ -481,6 +644,18 @@ export class EpicService {
       throw conflict(DRIFT_MESSAGE, { proposed });
     }
 
+    const made = await this._createAssemblyWithBuild(proposed);
+    const season = { seasonType: proposed.project[1], year: proposed.project.slice(2) };
+    const subs = await this._ensureSubAssemblies(ids, season);
+    return { response: { status: 'created', ...made, ...subs }, proposed };
+  }
+
+  /**
+   * Create an Assembly and its Build 1 from a validated proposal. Build 1
+   * failing leaves the Assembly in place and is reported, not thrown.
+   * @private
+   */
+  async _createAssemblyWithBuild(proposed) {
     const { key } = await this.createEpic({
       summary: proposed.summary,
       revision: proposed.revision,
@@ -520,7 +695,7 @@ export class EpicService {
       buildError = describeUpstreamError(err);
     }
 
-    return { response: { status: 'created', assembly, build, buildError }, proposed };
+    return { assembly, build, buildError };
   }
 
   // ---------------------------------------------------------------------------

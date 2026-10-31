@@ -676,6 +676,23 @@ describe('BuildService.saveBuildParts', () => {
       expect(results[0]).toMatchObject({ ok: true, key: 'HAR-2031', reused: true, updated: false });
     });
 
+    it('creates a new Part for Revision B from CAD values when only Revision A of that number exists', async () => {
+      const { service, partService, jiraClient } = setup({
+        chainParts: [story('HAR-2031', 'VF27P-0001A', 'HAR-2030', { quantity: 1, material: 'PLA' })],
+      });
+      const { results } = await service.saveBuildParts({
+        buildKey: 'HAR-2051',
+        creates: [create('VF27P-0001B', { quantity: 3, material: 'PETG-CF' })],
+      });
+      expect(partService.createStory).toHaveBeenCalledTimes(1);
+      expect(partService.createStory).toHaveBeenCalledWith(expect.objectContaining({
+        summary: 'VF27P-0001B Spacer', revision: 'B', quantity: 3, material: 'PETG-CF', epic: 'HAR-2030',
+      }));
+      expect(partService.updateStory).not.toHaveBeenCalled();
+      expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2051', 'HAR-3000');
+      expect(results[0]).toMatchObject({ ok: true, key: 'HAR-3000', reused: false, linked: true });
+    });
+
     it('reuses a number held by a Revision A Part on a Revision B Build (chain-wide)', async () => {
       const { service, partService, revisionService } = setup({
         chain: ['HAR-2030B', 'HAR-2030'],

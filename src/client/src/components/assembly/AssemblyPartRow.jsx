@@ -1,10 +1,10 @@
 import Badge from '../ui/Badge.jsx';
 import { TrackerKey } from '../assembly-shared/AssemblyHeader.jsx';
 
-export const COLUMN_COUNT = 7;
+export const COLUMN_COUNT = 8;
 
 /** Every Part field, shown as text: a cut Build's Parts never change. */
-const TEXT_FIELDS = ['quantity', 'material', 'machinery', 'powdercoat', 'thickness'];
+const TEXT_FIELDS = ['quantity', 'material', 'machinery', 'powdercoat', 'thickness', 'priority'];
 
 function PartCell({ row }) {
   return (
@@ -29,7 +29,9 @@ function PartCell({ row }) {
  */
 export default function AssemblyPartRow({ row, inBuild, current }) {
   if (!inBuild) {
-    const where = row.otherBuildKeys.length ? row.label.replace(/^Also in /, 'in ') : 'Not in any Build';
+    const where = row.isSpare
+      ? 'Spare'
+      : row.otherBuildKeys.length ? row.label.replace(/^Also in /, 'in ') : 'Not in any Build';
     return (
       <tr className={`part-row part-row-candidate${row.readOnly ? ' part-row-readonly' : ''}`}>
         <PartCell row={row} />

@@ -13,6 +13,12 @@ export const SAVE_BATCH = 25;
 function valuesOf(row) {
   const out = {};
   for (const f of PART_FIELDS) out[f] = row.values[f];
+  // Priority goes only when it changed: it has to be on the Part screen in the
+  // tracker to be written, and every other save must work without it.
+  const priority = row.values.priority;
+  if (priority !== undefined && priority !== null && priority !== (row.stored?.priority ?? null)) {
+    out.priority = priority;
+  }
   return out;
 }
 
@@ -119,6 +125,7 @@ export function applySaveResults(state, results, buildKey, { body, buildName = '
     if (!item || item.material === undefined) return undefined;
     const out = {};
     for (const f of PART_FIELDS) out[f] = item[f];
+    if (item.priority !== undefined) out.priority = item.priority;
     return out;
   };
 

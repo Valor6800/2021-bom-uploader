@@ -6,7 +6,7 @@
  * Uses the constants mirrored in api/client.js; a Jest parity test compares
  * it with the server's validatePartPayload so the two lists can't drift.
  */
-import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS } from '../api/client.js';
+import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS, PRIORITIES } from '../api/client.js';
 
 const LISTS = [
   ['material', 'material', MATERIALS],
@@ -20,7 +20,7 @@ const PART_NUMBER_RE = /^V[RF]\d{2}P-\d{4}([A-Z])/;
 /**
  * The first field that fails, as `{ field, error }`, or null.
  * Checked in the server's order: material, machinery, powdercoat,
- * thickness, quantity, then (creates) revision.
+ * thickness, quantity, priority, then (creates) revision.
  *
  * @param {{ material: string, machinery: string, powdercoat?: string, thickness?: string,
  *   quantity: number, revision?: string, summary?: string }} row
@@ -33,11 +33,16 @@ export function validateRowFields(row) {
   };
   for (const [field, label, list] of LISTS) {
     if (!list.includes(values[field])) {
-      return { field, error: `"${values[field] ?? ''}" isn't on the ${label} list. Pick one.` };
+      // OnShape sets Material, so it is fixed there, not picked in ValorBOM.
+      const fix = field === 'material' ? 'Change the material in OnShape.' : 'Pick one.';
+      return { field, error: `"${values[field] ?? ''}" isn't on the ${label} list. ${fix}` };
     }
   }
   if (!Number.isInteger(values.quantity) || values.quantity < 1) {
     return { field: 'quantity', error: 'Quantity must be a whole number of 1 or more.' };
+  }
+  if (values.priority !== undefined && values.priority !== null && !PRIORITIES.includes(values.priority)) {
+    return { field: 'priority', error: `"${values.priority}" isn't on the priority list. Pick one.` };
   }
   if (values.revision !== undefined && values.revision !== null) {
     if (typeof values.revision !== 'string' || !/^[A-Z]$/.test(values.revision)) {

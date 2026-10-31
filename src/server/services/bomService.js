@@ -5,6 +5,8 @@
 
 import { MATERIAL_MACHINERY_MAP, Material, Machinery, Powdercoat, Thickness } from '../utils/bomConstants.js';
 import { applyPartMask } from '../utils/partMask.js';
+import { isMoreOriginal } from '../utils/partChain.js';
+import { stripBrackets } from '../utils/cleanName.js';
 
 const REQUIRED_COLUMNS = ['quantity', 'partNumber', 'material', 'name'];
 
@@ -37,6 +39,39 @@ function readValue(item, key) {
   if (typeof value === 'string') return value.trim();
   if (typeof value === 'number') return String(value);
   return '';
+}
+
+/**
+ * A top-level BOM row that is a sub-assembly, not a Part. OnShape lists a
+ * sub-assembly with its own rows nested under it ("1" with "1.1", "1.2"),
+ * and its source is an assembly element, which has no `partId` (a Part has
+ * one). Either signal is enough. A row with no `itemSource` at all (legacy or
+ * hand-made BOM shapes) is never treated as one.
+ *
+ * Not yet confirmed against a live BOM that contains a sub-assembly.
+ */
+function isSubAssemblyRow(item, items) {
+  const source = item?.itemSource;
+  if (!source || typeof source !== 'object') return false;
+  const path = String(item.item ?? '');
+  const hasChildren = path !== '' && items.some((other) => String(other.item ?? '').startsWith(`${path}.`));
+  return !!source.elementId && (hasChildren || !source.partId);
+}
+
+/** What a sub-assembly row tells us before its own metadata is read. */
+function describeSubAssembly(item, keys) {
+  const source = item.itemSource;
+  return {
+    item: item.item ?? null,
+    name: stripBrackets(readValue(item, keys.name)),
+    partNumber: readValue(item, keys.partNumber),
+    revision: readValue(item, keys.revision),
+    project: readValue(item, keys.project),
+    documentId: source.documentId ?? null,
+    elementId: source.elementId,
+    wvmType: source.wvmType ?? null,
+    wvmId: source.wvmId ?? null,
+  };
 }
 
 // In-memory cache for Onshape BOM responses to minimize API calls.
@@ -76,7 +111,7 @@ export class BOMService {
    *   own Project property is empty.
    * @param {{ fresh?: boolean }} [options]  `fresh` skips the cache read
    *   (the fetched BOM is still cached).
-   * @returns {Promise<{ parts: object[], unidentified: object[] }>}
+   * @returns {Promise<{ parts: object[], unidentified: object[], subAssemblies: object[] }>}
    */
   async getBOMReport(epicKey, documentId, workspaceId, elementId, assembly, { fresh = false } = {}) {
     const cacheKey = `${documentId}:${workspaceId}:${elementId}`;
@@ -102,7 +137,8 @@ export class BOMService {
   compareBOMWithJira(bomItems, existingStories) {
     const storyMap = new Map();
     for (const story of existingStories) {
-      if (story.fullPartNumber) {
+      // A spare repeats its original's number; CAD matches the original.
+      if (story.fullPartNumber && isMoreOriginal(story, storyMap.get(story.fullPartNumber))) {
         storyMap.set(story.fullPartNumber, story);
       }
     }
@@ -172,7 +208,10 @@ export class BOMService {
     const partNumber = readValue(item, keys.partNumber);
     const revision = readValue(item, keys.revision).toUpperCase();
     const project = readValue(item, keys.project).toUpperCase();
-    const name = readValue(item, keys.name);
+    // The legacy path below reads a full number out of the raw name, so only
+    // the name that is kept drops its [bracketed] tags.
+    const rawName = readValue(item, keys.name);
+    const name = stripBrackets(rawName);
 
     if (PART_NUMBER_PATTERN.test(partNumber)) {
       const problems = [];
@@ -196,8 +235,8 @@ export class BOMService {
     const fromPartNumber = applyPartMask(partNumber);
     if (fromPartNumber) return { parsed: fromPartNumber, name };
 
-    const fromName = applyPartMask(name);
-    if (fromName) return { parsed: fromName, name: fromName.name };
+    const fromName = applyPartMask(rawName);
+    if (fromName) return { parsed: fromName, name: stripBrackets(fromName.name) };
 
     return {
       problems: [partNumber
@@ -212,7 +251,7 @@ export class BOMService {
    * @param {object} results       Raw OnShape BOM response
    * @param {string} epicKey
    * @param {{ seasonType?: string, year?: string }} [assembly]
-   * @returns {{ parts: object[], unidentified: object[] }}
+   * @returns {{ parts: object[], unidentified: object[], subAssemblies: object[] }}
    * @private
    */
   _parseBOM(results, epicKey, assembly = {}) {
@@ -231,6 +270,8 @@ export class BOMService {
     const items = results.bomTable.items ?? [];
     const bom = {};
     const unidentified = [];
+    const subAssemblies = [];
+    const seenSubAssemblies = new Set();
 
     const keys = {
       name: resolveItemKey(headers, BOM_PROPERTY.NAME),
@@ -248,6 +289,17 @@ export class BOMService {
       if (item.item && String(item.item).lastIndexOf('.') >= 0) continue;
       // Skip rows OnShape marks "Exclude from all BOMs" (a boolean in the response)
       if (item.excludeFromBom === true) continue;
+
+      // A sub-assembly is an Assembly of its own, never a Part.
+      if (isSubAssemblyRow(item, items)) {
+        const sub = describeSubAssembly(item, keys);
+        const id = `${sub.documentId}:${sub.elementId}`;
+        if (!seenSubAssemblies.has(id)) {
+          seenSubAssemblies.add(id);
+          subAssemblies.push(sub);
+        }
+        continue;
+      }
 
       const identified = this._identifyRow(item, keys, assemblyPrefix);
       if (!identified.parsed) {
@@ -302,6 +354,6 @@ export class BOMService {
       }
     }
 
-    return { parts: Object.values(bom), unidentified };
+    return { parts: Object.values(bom), unidentified, subAssemblies };
   }
 }

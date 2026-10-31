@@ -31,18 +31,18 @@ describe('POST /api/parts/:key/clone', () => {
 
   it('clones the part under the given epic', async () => {
     const partService = {
-      clonePart: jest.fn().mockResolvedValue({ key: 'VAL-99', fullPartNumber: 'VR26P-0002A Spare' }),
+      clonePart: jest.fn().mockResolvedValue({ key: 'VAL-99', fullPartNumber: 'VR26P-0001A' }),
     };
     const app = buildApp(partService);
 
     const res = await request(app).post('/api/parts/VAL-50/clone').send({
-      epicKey: 'VAL-1', name: 'Spare', quantity: 1,
+      epicKey: 'VAL-1', quantity: 1,
     });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ key: 'VAL-99', fullPartNumber: 'VR26P-0002A Spare' });
+    expect(res.body).toEqual({ key: 'VAL-99', fullPartNumber: 'VR26P-0001A' });
     expect(partService.clonePart).toHaveBeenCalledWith({
-      sourceKey: 'VAL-50', epicKey: 'VAL-1', name: 'Spare', quantity: 1,
+      sourceKey: 'VAL-50', epicKey: 'VAL-1', quantity: 1,
     });
   });
 });
@@ -216,8 +216,6 @@ describe('POST /api/parts/:key/clone validation', () => {
   it.each([
     ['a bad source key', '/api/parts/HAR-50/clone', { epicKey: 'VAL-1' }],
     ['a bad epicKey', '/api/parts/VAL-50/clone', { epicKey: 'val-1' }],
-    ['an empty name', '/api/parts/VAL-50/clone', { epicKey: 'VAL-1', name: '   ' }],
-    ['a name over 80 characters', '/api/parts/VAL-50/clone', { epicKey: 'VAL-1', name: 'x'.repeat(81) }],
     ['a quantity of 0', '/api/parts/VAL-50/clone', { epicKey: 'VAL-1', quantity: 0 }],
   ])('answers 400 for %s', async (_, url, body) => {
     const partService = { clonePart: jest.fn() };
@@ -227,10 +225,10 @@ describe('POST /api/parts/:key/clone validation', () => {
   });
 
   it('returns key, fullPartNumber and part', async () => {
-    const part = { key: 'VAL-99', fullPartNumber: 'VR26P-0002A' };
-    const partService = { clonePart: jest.fn().mockResolvedValue({ key: 'VAL-99', fullPartNumber: 'VR26P-0002A Spare', part }) };
-    const res = await request(buildApp(partService)).post('/api/parts/VAL-50/clone').send({ epicKey: 'VAL-1', name: ' Spare ' });
-    expect(res.body).toEqual({ key: 'VAL-99', fullPartNumber: 'VR26P-0002A Spare', part });
-    expect(partService.clonePart).toHaveBeenCalledWith({ sourceKey: 'VAL-50', epicKey: 'VAL-1', name: 'Spare', quantity: undefined });
+    const part = { key: 'VAL-99', fullPartNumber: 'VR26P-0001A' };
+    const partService = { clonePart: jest.fn().mockResolvedValue({ key: 'VAL-99', fullPartNumber: 'VR26P-0001A', part }) };
+    const res = await request(buildApp(partService)).post('/api/parts/VAL-50/clone').send({ epicKey: 'VAL-1', name: 'Ignored' });
+    expect(res.body).toEqual({ key: 'VAL-99', fullPartNumber: 'VR26P-0001A', part });
+    expect(partService.clonePart).toHaveBeenCalledWith({ sourceKey: 'VAL-50', epicKey: 'VAL-1', quantity: undefined });
   });
 });

@@ -14,6 +14,7 @@ import CutVersionDialog from '../components/builds/CutVersionDialog.jsx';
 import TwoActiveWarning from '../components/builds/TwoActiveWarning.jsx';
 import DesignerPartsTable from '../components/designer/DesignerPartsTable.jsx';
 import UnidentifiedPartsWarning from '../components/parts/UnidentifiedPartsWarning.jsx';
+import SubAssemblyList from '../components/home/SubAssemblyList.jsx';
 import Alert from '../components/ui/Alert.jsx';
 import Badge from '../components/ui/Badge.jsx';
 import Button from '../components/ui/Button.jsx';
@@ -297,7 +298,7 @@ function DesignerPage({ assemblyKey: key }) {
       setCreatedParts((prev) => withPart(prev, res.part));
       setWork((w) => ({ ...w, linkedThisSession: addSessionLinks(w.linkedThisSession, target, [res.key]) }));
       setRecreated((prev) => new Map(prev).set(row.key, res.key));
-      setActionMsg({ variant: 'info', text: `Re-created ${row.key} as ${res.key} (Revision ${res.revision}) in ${name}.` });
+      setActionMsg({ variant: 'info', text: `Re-created ${row.key} as ${res.key} (Revision ${res.revision}) in ${name}. OnShape still shows Revision ${row.version ?? 'A'}; raise it there to match.` });
       data.refresh();
     } catch (err) {
       const body = err?.body ?? {};
@@ -538,6 +539,16 @@ function DesignerPage({ assemblyKey: key }) {
       )}
 
 
+      {onboard?.subAssemblies?.length > 0 && (
+        <Alert
+          variant={onboard.subAssemblies.some((s) => s.status === 'error' || s.status === 'conflict' || s.status === 'problems') ? 'warning' : 'info'}
+          role="status"
+          className="onboard-banner"
+        >
+          <SubAssemblyList subAssemblies={onboard.subAssemblies} />
+        </Alert>
+      )}
+
       {data.ready && !selectedBuild && !loadFailed && (
         onboard?.buildError ? (
           <Alert variant="warning" role="alert" className="onboard-banner">
@@ -650,6 +661,13 @@ function DesignerPage({ assemblyKey: key }) {
           onResolved={() => { setCutFailedKey(null); data.refresh(); }}
         />
 
+        {!viewOnly && preview?.subAssemblies?.length > 0 && (
+          <Alert variant="info" role="status" className="sub-assembly-note">
+            {preview.subAssemblies.length === 1 ? '1 sub-assembly is' : `${preview.subAssemblies.length} sub-assemblies are`} an
+            Assembly, not Parts: {preview.subAssemblies.map((s) => s.name || s.partNumber).join(', ')}.
+            Paste this assembly&apos;s OnShape link on Home to add any that are missing.
+          </Alert>
+        )}
         {!viewOnly && preview?.unidentified?.length > 0 && <UnidentifiedPartsWarning parts={preview.unidentified} />}
 
         {!selectedBuild && hasAnyParts && data.ready && (

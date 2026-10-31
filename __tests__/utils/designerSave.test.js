@@ -75,7 +75,7 @@ describe('planSave', () => {
     const { body, heldBack } = planSave(rows({ preview }), new Set(['VF27P-0004A', 'VF27P-0006A']));
     expect(body.creates.map((c) => c.ref)).toEqual(['VF27P-0004A']);
     expect(body.creates[0]).toMatchObject({ summary: 'VF27P-0004A Spacer', revision: 'A', quantity: 4, material: 'PETG-CF' });
-    expect(heldBack).toEqual([{ rowId: 'VF27P-0006A', field: 'material', error: '"Steel" isn\'t on the material list. Pick one.' }]);
+    expect(heldBack).toEqual([{ rowId: 'VF27P-0006A', field: 'material', error: '"Steel" isn\'t on the material list. Change the material in OnShape.' }]);
   });
 
   it('holds back a Revision that disagrees with the number', () => {
@@ -168,5 +168,46 @@ describe('planSave with a Part a cut Build uses', () => {
     };
     const { body } = planSave({ newFromCad: [], inBuild: [], other: [row] }, new Set(['HAR-2033']));
     expect(body).toEqual({ creates: [], updates: [], links: [{ ref: 'HAR-2033', key: 'HAR-2033' }] });
+  });
+});
+
+describe('Priority in a save', () => {
+  const P31p = { ...P31, priority: 'High' };
+
+  it('sends no priority when it is untouched, so saves work before the field is on the tracker screen', () => {
+    const groups = rows({ parts: [P31p, P32], linked: ['HAR-2031', 'HAR-2032'], edits: { 'HAR-2031': { quantity: 3 } } });
+    const { body } = planSave(groups, new Set());
+    expect(body.updates).toHaveLength(1);
+    expect(body.updates[0]).toMatchObject({ key: 'HAR-2031', quantity: 3 });
+    expect(body.updates[0]).not.toHaveProperty('priority');
+  });
+
+  it('sends the priority when it changed', () => {
+    const groups = rows({ parts: [P31p, P32], linked: ['HAR-2031', 'HAR-2032'], edits: { 'HAR-2031': { priority: 'Low' } } });
+    const { body } = planSave(groups, new Set());
+    expect(body.updates[0]).toMatchObject({ key: 'HAR-2031', priority: 'Low' });
+  });
+
+  it('sends a priority picked on a New row, and none otherwise', () => {
+    const preview = { newParts: [bomItem('VF27P-0004A', 'Spacer'), bomItem('VF27P-0005A', 'Gusset')], existingParts: [] };
+    const groups = rows({ preview, edits: { 'VF27P-0004A': { priority: 'Highest' } } });
+    const { body } = planSave(groups, new Set(['VF27P-0004A', 'VF27P-0005A']));
+    const byRef = Object.fromEntries(body.creates.map((c) => [c.ref, c]));
+    expect(byRef['VF27P-0004A'].priority).toBe('Highest');
+    expect(byRef['VF27P-0005A']).not.toHaveProperty('priority');
+  });
+
+  it('holds back an unlisted priority before Save', () => {
+    const groups = rows({ parts: [P31p, P32], linked: ['HAR-2031'], edits: { 'HAR-2031': { priority: 'Urgent' } } });
+    const { body, heldBack } = planSave(groups, new Set());
+    expect(body.updates).toEqual([]);
+    expect(heldBack[0]).toMatchObject({ rowId: 'HAR-2031', field: 'priority' });
+  });
+
+  it('remembers the written priority after a save', () => {
+    const state = emptyState();
+    const body = { creates: [], updates: [{ ref: 'HAR-2031', key: 'HAR-2031', quantity: 1, material: 'PLA', machinery: '3D Printer', powdercoat: 'None', thickness: 'None', priority: 'Low' }], links: [] };
+    const next = applySaveResults(state, [{ ref: 'HAR-2031', op: 'update', ok: true, key: 'HAR-2031' }], 'HAR-2051', { body });
+    expect(next.rowResults['HAR-2031'].values.priority).toBe('Low');
   });
 });

@@ -207,7 +207,6 @@ function buildIssue(key, number, status, { link = null, epic = 'HAR-2030', descr
 const isBuildList = (jql) => /issuetype = Build AND "Epic Link" in/.test(jql);
 const isPartList = (jql) => /issuetype = Part AND "Epic Link" in/.test(jql);
 const linkedTo = (key) => (jql) => jql.includes(`linkedIssues(${key},`);
-const isSeasonList = (jql) => /issuetype = Part AND summary ~ "V[RF]\d{2}P-\*"/.test(jql);
 const isKeyList = (jql) => /issuetype = Part AND key in/.test(jql) || /key in \(/.test(jql);
 
 function jiraFor({ parts = [P2031, P2032, P2033], builds = [], links = {}, extraIssues = {}, fail = {}, nextKeys = [] } = {}) {
@@ -233,8 +232,6 @@ function jiraFor({ parts = [P2031, P2032, P2033], builds = [], links = {}, extra
           return parts.filter((p) => named.has(p.key));
         },
       },
-      // getNextPartNumber (Clone): every Part of the season.
-      { match: isSeasonList, issues: () => parts },
     ],
   });
 }
@@ -489,7 +486,7 @@ export async function makeBomFixtures() {
   {
     const s = services(jiraFor({ parts: fourParts, builds: threeBuilds, links: threeLinks, nextKeys: ['HAR-2040'] }));
     f['clone-HAR-2032-ok'] = await capture(() => s.partService.clonePart({
-      sourceKey: 'HAR-2032', epicKey: 'HAR-2030', name: 'Plate spare', quantity: 1,
+      sourceKey: 'HAR-2032', epicKey: 'HAR-2030', quantity: 1,
     }));
   }
 
