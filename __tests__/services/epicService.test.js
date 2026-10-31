@@ -521,6 +521,7 @@ describe('EpicService onboarding (B5)', () => {
       const result = await service.previewOnboarding(URL);
       expect(result).toEqual({
         status: 'new',
+        subAssemblies: [],
         proposed: expect.objectContaining({
           summary: SUMMARY,
           fullPartNumber: 'VF27A-0000A',

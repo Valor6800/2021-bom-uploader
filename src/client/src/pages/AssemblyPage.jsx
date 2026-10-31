@@ -47,7 +47,7 @@ function compareDefault(builds, selectedKey) {
  * Assembly page `/a/:key/assemble` (design 3.5): what an assembly student
  * needs for one Assembly. One tab per cut Build, the Build's Parts as
  * plain text (a cut Build never changes; the Designer makes a new Build),
- * Parts in other Builds, Clone, Archive, Compare and Print. No Cut Version
+ * Parts in no Build, Create spare, Archive, Compare and Print. No Cut Version
  * here: that is a CAD decision (Q3).
  *
  * Keyed by the Assembly key, so switching Revision starts clean, and its
@@ -176,18 +176,18 @@ function AssemblyPage({ assemblyKey: key }) {
       .sort((a, b) => (a.fullPartNumber ?? a.summary).localeCompare(b.fullPartNumber ?? b.summary));
   }, [allParts, data.chain]);
 
-  const clone = async ({ sourceKey, name, quantity }) => {
+  const clone = async ({ sourceKey, quantity }) => {
     setCloneBusy(true);
     setCloneError(null);
     try {
-      const res = await clonePart(sourceKey, { epicKey: key, name, quantity });
+      const res = await clonePart(sourceKey, { epicKey: key, quantity });
       setCreatedParts((prev) => withPart(prev, res.part));
       const number = res.part?.fullPartNumber ?? res.fullPartNumber;
-      setActionMsg({ variant: 'info', text: `Cloned as ${res.key} (${number}).` });
+      setActionMsg({ variant: 'info', text: `Created spare ${res.key} (${number}).` });
       setCloneOpen(false);
       data.refresh();
     } catch (err) {
-      setCloneError(`Couldn't clone the Part: ${friendlyClause(err)}`);
+      setCloneError(`Couldn't create the spare: ${friendlyClause(err)}`);
     } finally {
       setCloneBusy(false);
     }
@@ -290,7 +290,7 @@ function AssemblyPage({ assemblyKey: key }) {
                     rel="noopener noreferrer"
                     className="btn btn-secondary"
                   >
-                    OnShape version <span aria-hidden="true">↗</span>
+                    OnShape link <span aria-hidden="true">↗</span>
                   </a>
                 )}
                 {builds.length > 1 && (
@@ -308,7 +308,7 @@ function AssemblyPage({ assemblyKey: key }) {
                   disabled={loadFailed || cloneSources.length === 0}
                   title={selectedBuild.status === 'Archived' ? "This Build is archived and can't be changed." : undefined}
                 >
-                  Clone a Part
+                  Create spare
                 </Button>
                 {selectedBuild.status !== 'Archived' && (
                   <DisclosureMenu label={`More actions for ${buildName}`}>
@@ -356,6 +356,7 @@ function AssemblyPage({ assemblyKey: key }) {
                     <th scope="col">Machinery</th>
                     <th scope="col">Powdercoat</th>
                     <th scope="col">Thickness</th>
+                    <th scope="col">Priority</th>
                     <th scope="col">Current?</th>
                   </tr>
                 </thead>
@@ -387,7 +388,7 @@ function AssemblyPage({ assemblyKey: key }) {
                   <tbody className="parts-group parts-group-other">
                     <tr className="group-row">
                       <th scope="colgroup" colSpan={COLUMN_COUNT}>
-                        <span className="group-title">Parts in other Builds, not in {buildName}</span>
+                        <span className="group-title">Not in any Build</span>
                         <span className="group-count">{groups.other.length}</span>
                       </th>
                     </tr>

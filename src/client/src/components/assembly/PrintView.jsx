@@ -34,7 +34,7 @@ export default function PrintView({ assembly, build, parts, backTo }) {
         </h2>
         <p className="print-meta">
           Revision {assembly.revision ?? 'A'}
-          {build.onshapeVersionLink ? <> · OnShape version: {build.onshapeVersionLink}</> : null}
+          {build.onshapeVersionLink ? <> · OnShape link: {build.onshapeVersionLink}</> : null}
         </p>
         <p className="print-meta">Printed {printed}</p>
         <table className="print-table">
@@ -48,11 +48,12 @@ export default function PrintView({ assembly, build, parts, backTo }) {
               <th scope="col">Machinery</th>
               <th scope="col">Powdercoat</th>
               <th scope="col">Thickness</th>
+              <th scope="col">Priority</th>
             </tr>
           </thead>
           <tbody>
             {parts.length === 0 && (
-              <tr><td colSpan={7}>No Parts in {buildLabel(build)} yet.</td></tr>
+              <tr><td colSpan={8}>No Parts in {buildLabel(build)} yet.</td></tr>
             )}
             {parts.map((part) => (
               <tr key={part.key}>
@@ -63,6 +64,7 @@ export default function PrintView({ assembly, build, parts, backTo }) {
                 <td>{dash(part.machinery)}</td>
                 <td>{dash(part.powdercoat)}</td>
                 <td>{dash(part.thickness)}</td>
+                <td>{dash(part.priority)}</td>
               </tr>
             ))}
           </tbody>

@@ -208,3 +208,85 @@ describe('BOMService.getBOMReport fresh option (INC-4)', () => {
     expect(onshapeClient.getAssemblyBOM).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('BOMService._parseBOM — sub-assemblies', () => {
+  const service = new BOMService({ onshapeClient: {} });
+  const DOC = 'a'.repeat(24);
+  const WS = 'b'.repeat(24);
+  const EL = 'c'.repeat(24);
+  const source = (over = {}) => ({
+    documentId: DOC, wvmType: 'w', wvmId: WS, elementId: EL, configuration: 'default', ...over,
+  });
+  const partRow = (over = {}) => row({ itemSource: source({ partId: 'JHD' }), ...over });
+  const subRow = (over = {}) => row({
+    item: '2', partNumber: '1100', name: 'Intake', itemSource: source({ elementId: 'd'.repeat(24) }), ...over,
+  });
+
+  it('lists a row with no partId as a sub-assembly, not a Part', () => {
+    const { parts, unidentified, subAssemblies } = service._parseBOM(bom([partRow(), subRow()]), 'HAR-1', VF27);
+    expect(parts.map((p) => p.fullPartNumber)).toEqual(['VF27P-0001A']);
+    expect(unidentified).toEqual([]);
+    expect(subAssemblies).toEqual([{
+      item: '2', name: 'Intake', partNumber: '1100', revision: 'A', project: '',
+      documentId: DOC, elementId: 'd'.repeat(24), wvmType: 'w', wvmId: WS,
+    }]);
+  });
+
+  it('lists a row that has nested rows as a sub-assembly even when it carries a partId', () => {
+    const { parts, subAssemblies } = service._parseBOM(bom([
+      partRow({ item: '2', partNumber: '1100', name: 'Intake' }),
+      partRow({ item: '2.1', partNumber: '', name: 'Plate' }),
+    ]), 'HAR-1', VF27);
+    expect(parts).toEqual([]);
+    expect(subAssemblies.map((s) => s.name)).toEqual(['Intake']);
+  });
+
+  it('keeps nested rows out of both lists', () => {
+    const { parts, unidentified, subAssemblies } = service._parseBOM(bom([
+      subRow(), row({ item: '2.1', partNumber: '', name: 'Plate', itemSource: source({ partId: 'X' }) }),
+    ]), 'HAR-1', VF27);
+    expect(parts).toEqual([]);
+    expect(unidentified).toEqual([]);
+    expect(subAssemblies).toHaveLength(1);
+  });
+
+  it('treats a row with a partId and no children as a Part', () => {
+    const { parts, subAssemblies } = service._parseBOM(bom([partRow()]), 'HAR-1', VF27);
+    expect(parts).toHaveLength(1);
+    expect(subAssemblies).toEqual([]);
+  });
+
+  it('treats a row with no itemSource as a Part', () => {
+    const { parts, subAssemblies } = service._parseBOM(bom([row()]), 'HAR-1', VF27);
+    expect(parts).toHaveLength(1);
+    expect(subAssemblies).toEqual([]);
+  });
+
+  it('lists a sub-assembly once however many times it is used', () => {
+    const { subAssemblies } = service._parseBOM(bom([subRow({ item: '2' }), subRow({ item: '3' })]), 'HAR-1', VF27);
+    expect(subAssemblies).toHaveLength(1);
+  });
+
+  it('skips an excluded sub-assembly row', () => {
+    const { subAssemblies } = service._parseBOM(bom([subRow({ excludeFromBom: true })]), 'HAR-1', VF27);
+    expect(subAssemblies).toEqual([]);
+  });
+});
+
+describe('BOMService._parseBOM — [bracketed] names', () => {
+  const service = new BOMService({ onshapeClient: {} });
+
+  it('drops the brackets from a Part name, in the name and the summary', () => {
+    const { parts } = service._parseBOM(bom([row({ name: '[0001] Side Plate' })]), 'HAR-1', VF27);
+    expect(parts[0]).toMatchObject({ name: 'Side Plate', summary: 'VF27P-0001A Side Plate', fullPartNumber: 'VF27P-0001A' });
+  });
+
+  it('drops the brackets from a sub-assembly name', () => {
+    const { subAssemblies } = service._parseBOM(bom([row({
+      item: '3', partNumber: '', name: '[1300] Electrical',
+      itemSource: { documentId: 'a'.repeat(24), elementId: 'b'.repeat(24), wvmType: 'w', wvmId: 'c'.repeat(24), partId: '' },
+    })]), 'HAR-1', VF27);
+    expect(subAssemblies[0].name).toBe('Electrical');
+  });
+});
+

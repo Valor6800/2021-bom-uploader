@@ -3,8 +3,8 @@ import Button from '../ui/Button.jsx';
 import Dialog from '../ui/Dialog.jsx';
 
 /**
- * "Clone a part" (design 3.5): a fresh Part with its own number, copying
- * another Part's fields. The Clone button stays disabled from the click
+ * "Create spare": an exact copy of a Part (same number, name and Revision) as
+ * a new ticket that is in no Build. The button stays disabled from the click
  * until the response, so one dialog can't send two requests.
  *
  * @param {object} props
@@ -13,32 +13,28 @@ import Dialog from '../ui/Dialog.jsx';
  * @param {string|null} [props.defaultSourceKey]
  * @param {boolean} props.busy
  * @param {string|null} props.error
- * @param {(values: { sourceKey: string, name?: string, quantity?: number }) => void} props.onClone
+ * @param {(values: { sourceKey: string, quantity?: number }) => void} props.onClone
  * @param {() => void} props.onClose
  */
 export default function CloneDialog({ open, parts, defaultSourceKey, busy, error, onClone, onClose }) {
   const [sourceKey, setSourceKey] = useState('');
-  const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('');
   const firstRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
     setSourceKey(defaultSourceKey ?? parts[0]?.key ?? '');
-    setName('');
     setQuantity('');
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const qty = quantity === '' ? undefined : Number(quantity);
   const qtyBad = qty !== undefined && (!Number.isInteger(qty) || qty < 1);
-  const nameBad = name.trim().length > 80;
 
   const submit = (e) => {
     e.preventDefault();
-    if (busy || !sourceKey || qtyBad || nameBad) return;
+    if (busy || !sourceKey || qtyBad) return;
     onClone({
       sourceKey,
-      ...(name.trim() ? { name: name.trim() } : {}),
       ...(qty !== undefined ? { quantity: qty } : {}),
     });
   };
@@ -47,8 +43,8 @@ export default function CloneDialog({ open, parts, defaultSourceKey, busy, error
     <Dialog
       open={open}
       onClose={() => { if (!busy) onClose(); }}
-      title="Clone a Part"
-      description="Makes a new Part with its own number and the same Material and Machinery. It isn't in any Build until you Move it here."
+      title="Create spare"
+      description="Makes an exact copy of a Part, with the same number and name. The copy isn't in any Build."
       initialFocusRef={firstRef}
       footer={(
         <>
@@ -57,17 +53,17 @@ export default function CloneDialog({ open, parts, defaultSourceKey, busy, error
             variant="primary"
             type="submit"
             form="clone-form"
-            disabled={busy || !sourceKey || qtyBad || nameBad}
+            disabled={busy || !sourceKey || qtyBad}
             aria-describedby={error ? 'clone-error' : undefined}
           >
-            {busy ? 'Cloning…' : 'Clone'}
+            {busy ? 'Creating…' : 'Create spare'}
           </Button>
         </>
       )}
     >
       <form id="clone-form" className="dialog-form" onSubmit={submit}>
         <div className="form-row">
-          <label className="form-label" htmlFor="clone-source">Copy from</label>
+          <label className="form-label" htmlFor="clone-source">Spare of</label>
           <select
             id="clone-source"
             ref={firstRef}
@@ -82,21 +78,7 @@ export default function CloneDialog({ open, parts, defaultSourceKey, busy, error
           </select>
         </div>
         <div className="form-row">
-          <label className="form-label" htmlFor="clone-name">New Part name (optional)</label>
-          <input
-            id="clone-name"
-            type="text"
-            className="text-input"
-            maxLength={80}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={busy}
-            aria-describedby="clone-name-help"
-          />
-          <p id="clone-name-help" className="form-help">Leave blank to keep the same name.</p>
-        </div>
-        <div className="form-row">
-          <label className="form-label" htmlFor="clone-qty">Quantity (optional)</label>
+          <label className="form-label" htmlFor="clone-qty">Quantity (optional, same as the Part if blank)</label>
           <input
             id="clone-qty"
             type="number"

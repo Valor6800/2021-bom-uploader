@@ -7,8 +7,14 @@
  * No imports from React or the API, so the server-side Jest suite tests it.
  */
 
-/** The BOM fields a row edits and a save writes. */
+/** The BOM fields CAD sets and a row can differ on. Priority is separate (tracker-only). */
 export const PART_FIELDS = ['quantity', 'material', 'machinery', 'powdercoat', 'thickness'];
+
+/**
+ * Fields the student can't edit: OnShape sets them. A CAD value still
+ * applies on Update from CAD; an edit to one is dropped.
+ */
+export const LOCKED_FIELDS = ['material'];
 
 const FIELD_LABELS = {
   quantity: 'Qty',
@@ -23,6 +29,9 @@ function pickValues(source) {
   for (const f of PART_FIELDS) {
     if (source && source[f] !== undefined) out[f] = source[f];
   }
+  // Priority comes from the tracker, not CAD: a stored Part has one (or null),
+  // a CAD row has none.
+  if (source && source.priority !== undefined) out.priority = source.priority;
   return out;
 }
 
@@ -168,6 +177,53 @@ export function describeChanges(changes) {
   return parts.length ? `Changed in CAD: ${parts.join(', ')}` : '';
 }
 
+/** "HAR-2031" -> 2031. */
+function keyNumber(key) {
+  const match = /-(\d+)$/.exec(key ?? '');
+  return match ? Number(match[1]) : Infinity;
+}
+
+/**
+ * The original of each full number: the Part created first (lowest ticket
+ * number). Create spare repeats a number, so the rest are spares.
+ * Same rule as isMoreOriginal in the server's utils/partChain.js.
+ */
+function originalsByNumber(parts) {
+  const out = new Map();
+  for (const part of parts) {
+    if (!part.fullPartNumber) continue;
+    const current = out.get(part.fullPartNumber);
+    if (!current || keyNumber(part.key) < keyNumber(current.key)) out.set(part.fullPartNumber, part);
+  }
+  return out;
+}
+
+function withoutLocked(edit) {
+  if (!edit) return {};
+  const out = { ...edit };
+  for (const f of LOCKED_FIELDS) delete out[f];
+  return out;
+}
+
+/** "VF27-0001": the Part number without its Revision letter. */
+function numberOf(part) {
+  return part?.seasonType && part?.year && part?.partNumber
+    ? `${part.seasonType}${part.year}-${part.partNumber}`
+    : null;
+}
+
+/** The newest Part in `parts` with this one's number and an earlier Revision letter. */
+function previousRevisionIn(item, parts) {
+  const number = numberOf(item);
+  if (!number || !item.version) return null;
+  let found = null;
+  for (const other of parts) {
+    if (numberOf(other) !== number || !other.version || other.version >= item.version) continue;
+    if (!found || other.version > found.version) found = other;
+  }
+  return found;
+}
+
 function diff(stored, next) {
   const changes = {};
   for (const f of PART_FIELDS) {
@@ -220,14 +276,21 @@ export function deriveDesignerRows({
   const byNumber = new Map();
   for (const part of all) {
     byKey.set(part.key, part);
-    if (part.fullPartNumber && !byNumber.has(part.fullPartNumber)) byNumber.set(part.fullPartNumber, part);
   }
+  for (const [number, original] of originalsByNumber(all)) byNumber.set(number, original);
 
   // CAD values for existing Parts, by key.
   const cadByKey = new Map();
   for (const ex of preview?.existingParts ?? []) {
     if (ex?.story?.key) cadByKey.set(ex.story.key, ex.bomItem);
   }
+
+  // Every row CAD returned, to compare Revisions by number.
+  const cadItems = [
+    ...(preview?.existingParts ?? []).map((ex) => ex?.bomItem).filter(Boolean),
+    ...(preview?.newParts ?? []),
+  ];
+  const previewLoaded = !!preview;
 
   const newItems = [];
   const synthetic = new Map();
@@ -252,6 +315,7 @@ export function deriveDesignerRows({
   const pendingOps = [];
 
   const existing = [...all, ...synthetic.values()];
+  const originals = originalsByNumber(existing);
   for (const part of existing) {
     const rowId = part.key;
     const result = rowResults[rowId];
@@ -266,13 +330,41 @@ export function deriveDesignerRows({
     const sharedLocked = !readOnly && cutBuildKeys.length > 0;
     const values = sharedLocked
       ? stored
-      : { ...stored, ...(cadValues ?? {}), ...(edits[rowId] ?? {}) };
-    const dirty = PART_FIELDS.some((f) => values[f] !== stored[f]);
+      : { ...stored, ...(cadValues ?? {}), ...withoutLocked(edits[rowId]) };
+    const dirty = PART_FIELDS.some((f) => values[f] !== stored[f]) || (values.priority ?? null) !== (stored.priority ?? null);
     const inBuild = !!buildKey && partBuilds.has(buildKey);
     const otherBuildKeys = [...partBuilds].filter((k) => k !== buildKey && buildLabels.has(k));
-    const label = otherBuildKeys.length
-      ? `Also in ${otherBuildKeys.map((k) => buildLabels.get(k)).join(', ')}`
-      : 'Not in any Build';
+    const isSpare = !!part.fullPartNumber && originals.get(part.fullPartNumber)?.key !== part.key;
+    const label = isSpare
+      ? 'Spare'
+      : otherBuildKeys.length
+        ? `Also in ${otherBuildKeys.map((k) => buildLabels.get(k)).join(', ')}`
+        : 'Not in any Build';
+
+    // A Part that belongs to other Builds only is not this Build's business:
+    // hide it unless CAD lists it (a candidate to add) or there is work on it.
+    // A Part in no Build at all (a spare) always shows.
+    if (!inBuild && partBuilds.size > 0 && !cad && !result && !edits[rowId]) continue;
+
+    // CAD and the tracker disagree about this Part's Revision. Only for a Part
+    // CAD doesn't list itself: a match by full number is the same Revision.
+    let revisionNote = null;
+    if (previewLoaded && !cad && !readOnly) {
+      const sameNumber = cadItems.filter((c) => numberOf(c) === numberOf(part) && c.version && part.version);
+      const ahead = sameNumber.find((c) => c.version > part.version);
+      const behind = sameNumber.find((c) => c.version < part.version);
+      if (ahead) {
+        revisionNote = {
+          kind: 'cad-ahead',
+          text: `CAD now has Revision ${ahead.version}${inBuild ? '; this Revision is still in the Build' : ''}`,
+        };
+      } else if (behind) {
+        revisionNote = {
+          kind: 'cad-behind',
+          text: `CAD still has Revision ${behind.version}. Raise the Revision in OnShape to match`,
+        };
+      }
+    }
 
     let status;
     if (result && result.ok === false) status = 'Error';
@@ -299,9 +391,11 @@ export function deriveDesignerRows({
       readOnlyLabel: readOnly ? 'From another Assembly' : null,
       sharedLocked,
       lockedLabel: sharedLocked ? `In cut ${cutBuildKeys.map((k) => buildLabels.get(k)).join(', ')}` : null,
+      revisionNote,
       group: inBuild ? 'inBuild' : 'other',
       buildKeys: [...partBuilds],
       otherBuildKeys,
+      isSpare,
       label,
       status,
       result: result ?? null,
@@ -313,7 +407,10 @@ export function deriveDesignerRows({
   for (const item of newItems) {
     const rowId = item.fullPartNumber;
     const result = rowResults[rowId];
-    const values = { ...pickValues(item), ...(edits[rowId] ?? {}) };
+    // OnShape's Revision was raised: a new Part from CAD's values, not the old one reused.
+    const previous = previousRevisionIn(item, existing.filter((p) => !(chain.size > 0 && !chain.has(p.epic))));
+    const previousInBuild = !!previous && !!buildKey && (links.get(previous.key) ?? new Set()).has(buildKey);
+    const values = { ...pickValues(item), ...withoutLocked(edits[rowId]) };
     groups.newFromCad.push({
       rowId,
       key: null,
@@ -334,6 +431,13 @@ export function deriveDesignerRows({
       readOnlyLabel: null,
       sharedLocked: false,
       lockedLabel: null,
+      revisionNote: previous
+        ? {
+          kind: 'new-revision',
+          text: `New Revision ${item.version}, replaces ${previous.fullPartNumber}${previousInBuild ? ', which is still in the Build' : ''}`,
+          replaces: previous.key,
+        }
+        : null,
       group: 'new',
       buildKeys: [],
       otherBuildKeys: [],

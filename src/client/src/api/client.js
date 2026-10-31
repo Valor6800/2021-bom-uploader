@@ -43,6 +43,9 @@ export const ThicknessEnum = Object.freeze({
   T_0250: '0.250',
 });
 
+/** Mirrors PRIORITIES in the server's bomConstants.js, highest first. */
+export const PRIORITIES = Object.freeze(['Highest', 'High', 'Medium', 'Low', 'Lowest']);
+
 export const MATERIALS = Object.values(Material);
 export const MACHINERY = Object.values(MachineryEnum);
 export const POWDERCOAT = Object.values(PowdercoatEnum);
@@ -204,7 +207,7 @@ export function fetchPartsByKeys(keys) {
   return request(`/api/parts/by-keys?keys=${encodeURIComponent(keys.join(','))}`);
 }
 
-/** "Clone a part": a fresh, self-numbered ticket under epicKey, not a revision of sourceKey. */
+/** "Create spare": an exact copy of sourceKey (same number and name) under epicKey, in no Build. */
 export function clonePart(sourceKey, payload) {
   return request(`/api/parts/${encodeURIComponent(sourceKey)}/clone`, {
     method: 'POST',

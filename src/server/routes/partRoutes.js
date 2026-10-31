@@ -102,31 +102,25 @@ export default function partRoutes({ partService, exportService }) {
   }));
 
   /**
-   * POST /api/parts/:key/clone  { epicKey, name?, quantity? }
-   * "Clone a part" (Sheet 06) — a fresh, unrelated ticket, not a revision.
+   * POST /api/parts/:key/clone  { epicKey, quantity? }
+   * "Create spare": an exact copy (same number, name and Revision) as a
+   * fresh, unrelated ticket, not a revision. Nothing is renumbered.
    * → { key, fullPartNumber, part }
    */
   router.post('/parts/:key/clone', asyncHandler(async (req, res) => {
     const { epicKey, quantity } = req.body ?? {};
-    let { name } = req.body ?? {};
 
     if (!epicKey) {
       throw badRequest('Missing required body parameter: epicKey');
     }
     requireKey('key', req.params.key);
     requireKey('epicKey', epicKey);
-    if (name !== undefined) {
-      if (typeof name !== 'string' || name.trim().length < 1 || name.trim().length > 80) {
-        throw badRequest('name must be 1 to 80 characters');
-      }
-      name = name.trim();
-    }
     if (quantity !== undefined) {
       const check = validateQuantity(quantity);
       if (!check.valid) throw badRequest(`quantity: ${check.error}`);
     }
 
-    const result = await partService.clonePart({ sourceKey: req.params.key, epicKey, name, quantity });
+    const result = await partService.clonePart({ sourceKey: req.params.key, epicKey, quantity });
     res.json(result);
   }));
 

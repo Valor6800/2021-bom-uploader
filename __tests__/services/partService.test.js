@@ -23,56 +23,59 @@ function partIssue(key, partNumber) {
   };
 }
 
-describe('PartService.getNextPartNumber', () => {
-  it('returns 0001 when the season has no Parts yet', async () => {
-    const jiraClient = makeJiraClient();
-    const service = new PartService({ jiraClient });
-
-    const result = await service.getNextPartNumber('R', '26');
-
-    expect(result).toBe('0001');
-    const [jql] = jiraClient.searchIssues.mock.calls[0];
-    expect(jql).toContain('summary ~ "VR26P-*"');
-  });
-
-  it('returns one past the highest existing number in the season', async () => {
-    const jiraClient = makeJiraClient({
-      searchIssues: jest.fn().mockResolvedValue([
-        partIssue('VAL-50', 'VR26P-0001A'),
-        partIssue('VAL-51', 'VR26P-0007A'),
-        partIssue('VAL-52', 'VR26P-0003A'),
-      ]),
-    });
-    const service = new PartService({ jiraClient });
-
-    const result = await service.getNextPartNumber('R', '26');
-
-    expect(result).toBe('0008');
-  });
-});
-
-describe('PartService.clonePart', () => {
-  it('allocates the next number and copies the source Part\'s BOM fields', async () => {
-    const jiraClient = makeJiraClient({
-      searchIssues: jest.fn()
-        .mockResolvedValueOnce([partIssue('VAL-50', 'VR26P-0001A')]) // getStoriesByKeys([sourceKey])
-        .mockResolvedValueOnce([partIssue('VAL-50', 'VR26P-0001A')]), // getNextPartNumber
+describe('PartService.clonePart (Create spare)', () => {
+  function cloneClient(overrides = {}) {
+    return makeJiraClient({
+      searchIssues: jest.fn().mockResolvedValue([partIssue('VAL-50', 'VR26P-0001C')]),
       createIssue: jest.fn().mockResolvedValue({ key: 'VAL-99' }),
+      ...overrides,
     });
+  }
+
+  it('copies the summary, so number, name and Revision are unchanged', async () => {
+    const jiraClient = cloneClient();
     const service = new PartService({ jiraClient });
 
     const result = await service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
 
-    // The part number alone, not the whole summary (live check F6).
-    expect(result).toMatchObject({ key: 'VAL-99', fullPartNumber: 'VR26P-0002A' });
-    expect(result.part).toMatchObject({ key: 'VAL-99', fullPartNumber: 'VR26P-0002A', epic: 'VAL-1', quantity: 2 });
+    expect(result).toMatchObject({ key: 'VAL-99', fullPartNumber: 'VR26P-0001C' });
+    expect(result.part).toMatchObject({ key: 'VAL-99', fullPartNumber: 'VR26P-0001C', name: 'Side Plate', epic: 'VAL-1', quantity: 2 });
     const [fields] = jiraClient.createIssue.mock.calls[0];
     expect(fields).toMatchObject({
-      summary: 'VR26P-0002A Side Plate',
+      summary: 'VR26P-0001C Side Plate',
+      customfield_10500: 'C',
       customfield_10110: 'VAL-1',
       customfield_10206: 2,
       customfield_10202: { value: 'AL 6061' },
     });
+  });
+
+  it('reads the source once and allocates nothing', async () => {
+    const jiraClient = cloneClient();
+    await new PartService({ jiraClient }).clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
+    expect(jiraClient.searchIssues).toHaveBeenCalledTimes(1);
+    expect(jiraClient.searchIssues.mock.calls[0][0]).toContain('key in (VAL-50)');
+  });
+
+  it('keeps the same number across repeated spares', async () => {
+    const jiraClient = cloneClient();
+    const service = new PartService({ jiraClient });
+    const a = await service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
+    const b = await service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
+    expect([a.fullPartNumber, b.fullPartNumber]).toEqual(['VR26P-0001C', 'VR26P-0001C']);
+  });
+
+  it('keeps the source Assembly link, not the one passed in', async () => {
+    const jiraClient = cloneClient();
+    const result = await new PartService({ jiraClient }).clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-7' });
+    expect(jiraClient.createIssue.mock.calls[0][0].customfield_10110).toBe('VAL-1');
+    expect(result.part.epic).toBe('VAL-1');
+  });
+
+  it('takes an optional quantity', async () => {
+    const jiraClient = cloneClient();
+    await new PartService({ jiraClient }).clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1', quantity: 1 });
+    expect(jiraClient.createIssue.mock.calls[0][0].customfield_10206).toBe(1);
   });
 
   it('throws when the source key is not a Part', async () => {
@@ -207,7 +210,7 @@ describe('PartService Revision on create (B1)', () => {
     await expect(service.createStory({ ...base, summary: 'VF27P-0001A Plate', material: 'Steel' }))
       .rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Validation failed: /) });
   });
-  it('clonePart writes Revision A', async () => {
+  it('clonePart writes the source Revision', async () => {
     const jiraClient = makeJiraClient({
       searchIssues: jest.fn()
         .mockResolvedValueOnce([partIssue('VAL-50', 'VR26P-0001C')])
@@ -216,7 +219,7 @@ describe('PartService Revision on create (B1)', () => {
     });
     const service = new PartService({ jiraClient });
     await service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
-    expect(jiraClient.createIssue.mock.calls[0][0].customfield_10500).toBe('A');
+    expect(jiraClient.createIssue.mock.calls[0][0].customfield_10500).toBe('C');
   });
   it('updateStory does not write the Revision', async () => {
     const jiraClient = makeJiraClient({ updateIssue: jest.fn().mockResolvedValue(undefined) });
@@ -408,60 +411,6 @@ describe('partFromWritten', () => {
   });
 });
 
-describe('PartService.clonePart allocation (INC-4)', () => {
-  function cloneClient(max = 'VR26P-0006A') {
-    let next = 99;
-    return makeJiraClient({
-      searchIssues: jest.fn().mockImplementation(async (jql) => (jql.includes('key in')
-        ? [partIssue('VAL-50', 'VR26P-0001A')]
-        : [partIssue('VAL-60', max)])),
-      createIssue: jest.fn().mockImplementation(async () => ({ key: `VAL-${next++}` })),
-      getIssue: jest.fn(),
-    });
-  }
-
-  it('returns the Part object and makes no read after the create', async () => {
-    const jiraClient = cloneClient();
-    const service = new PartService({ jiraClient });
-    const result = await service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
-    expect(result.part).toMatchObject({ key: 'VAL-99', fullPartNumber: 'VR26P-0007A', epic: 'VAL-1', quantity: 2 });
-    expect(jiraClient.searchIssues).toHaveBeenCalledTimes(2);
-    expect(jiraClient.getIssue).not.toHaveBeenCalled();
-  });
-
-  it('two sequential clones with the same search max get 0007 and 0008', async () => {
-    const service = new PartService({ jiraClient: cloneClient() });
-    const a = await service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
-    const b = await service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
-    expect([a.part.partNumber, b.part.partNumber]).toEqual(['0007', '0008']);
-  });
-
-  it('two concurrent clones get different numbers', async () => {
-    const service = new PartService({ jiraClient: cloneClient() });
-    const results = await Promise.all([
-      service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' }),
-      service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' }),
-    ]);
-    expect(results.map((r) => r.part.partNumber).sort()).toEqual(['0007', '0008']);
-  });
-
-  it('a createStory of VR26P-0008A raises the floor so the next clone gets 0009', async () => {
-    const jiraClient = cloneClient('VR26P-0007A');
-    const service = new PartService({ jiraClient });
-    await service.createStory({ summary: 'VR26P-0008A Spacer', epic: 'VAL-1', material: 'PLA', machinery: '3D Printer', quantity: 1 });
-    const result = await service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
-    expect(result.part.partNumber).toBe('0009');
-  });
-
-  it('a createStory whose summary is not a Part leaves the floor unchanged', async () => {
-    const jiraClient = cloneClient('VR26P-0007A');
-    const service = new PartService({ jiraClient });
-    await service.createStory({ summary: 'VR26P-0050 Legacy', epic: 'VAL-1', material: 'PLA', machinery: '3D Printer', quantity: 1 });
-    const result = await service.clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
-    expect(result.part.partNumber).toBe('0008');
-  });
-});
-
 describe('PartService.updateStory clears Powdercoat and Thickness on None (B2)', () => {
   const base = { summary: 'VF27P-0001A Plate', material: 'AL 6061', machinery: 'CNC Mill', quantity: 1 };
 
@@ -485,5 +434,70 @@ describe('PartService.updateStory clears Powdercoat and Thickness on None (B2)',
     const [fields] = jiraClient.createIssue.mock.calls[0];
     expect(fields).not.toHaveProperty('customfield_10204');
     expect(fields).not.toHaveProperty('customfield_10207');
+  });
+});
+
+describe('PartService priority', () => {
+  const base = { summary: 'VF27P-0001A Plate', epic: 'HAR-2030', material: 'AL 6061', machinery: 'CNC Mill', quantity: 1 };
+
+  it('createStory writes Priority only when given', async () => {
+    const jiraClient = makeJiraClient({ createIssue: jest.fn().mockResolvedValue({ key: 'HAR-3000' }) });
+    const service = new PartService({ jiraClient });
+    await service.createStory(base);
+    expect(jiraClient.createIssue.mock.calls[0][0]).not.toHaveProperty('priority');
+    await service.createStory({ ...base, priority: 'High' });
+    expect(jiraClient.createIssue.mock.calls[1][0].priority).toEqual({ name: 'High' });
+  });
+
+  it('updateStory writes Priority only when given', async () => {
+    const jiraClient = makeJiraClient({ updateIssue: jest.fn().mockResolvedValue(undefined) });
+    const service = new PartService({ jiraClient });
+    await service.updateStory('HAR-1', base);
+    expect(jiraClient.updateIssue.mock.calls[0][1]).not.toHaveProperty('priority');
+    await service.updateStory('HAR-1', { ...base, priority: 'Lowest' });
+    expect(jiraClient.updateIssue.mock.calls[1][1].priority).toEqual({ name: 'Lowest' });
+  });
+
+  it('rejects an unlisted priority with a 400 before writing', async () => {
+    const jiraClient = makeJiraClient({ createIssue: jest.fn() });
+    await expect(new PartService({ jiraClient }).createStory({ ...base, priority: 'Urgent' }))
+      .rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Validation failed: /) });
+    expect(jiraClient.createIssue).not.toHaveBeenCalled();
+  });
+
+  it('reads priority from the issue, null when absent', () => {
+    const service = new PartService({ jiraClient: makeJiraClient() });
+    const withPriority = { key: 'HAR-1', fields: { ...partIssue('HAR-1', 'VF27P-0001A').fields, priority: { name: 'High' } } };
+    const without = partIssue('HAR-2', 'VF27P-0002A');
+    expect(service._parseStories([withPriority, without]).map((p) => p.priority)).toEqual(['High', null]);
+  });
+
+  it('Create spare copies a non-default priority and skips the default', async () => {
+    const issue = (priority) => ({ key: 'VAL-50', fields: { ...partIssue('VAL-50', 'VR26P-0001C').fields, priority } });
+    for (const [priority, expected] of [[{ name: 'High' }, { name: 'High' }], [{ name: 'Medium' }, undefined], [undefined, undefined]]) {
+      const jiraClient = makeJiraClient({
+        searchIssues: jest.fn().mockResolvedValue([issue(priority)]),
+        createIssue: jest.fn().mockResolvedValue({ key: 'VAL-99' }),
+      });
+      await new PartService({ jiraClient }).clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
+      expect(jiraClient.createIssue.mock.calls[0][0].priority).toEqual(expected);
+    }
+  });
+});
+
+describe('PartService.previewParts sub-assemblies', () => {
+  it('returns the BOM sub-assemblies and keeps them out of new Parts', async () => {
+    const jiraClient = makeJiraClient({
+      getIssue: jest.fn().mockResolvedValue({ fields: { summary: 'VF27A-1000A Robot', issuetype: { name: 'Epic' } } }),
+    });
+    const subAssemblies = [{ name: 'Intake', partNumber: '1100', elementId: 'e'.repeat(24) }];
+    const bomService = {
+      getBOMReport: jest.fn().mockResolvedValue({ parts: [], unidentified: [], subAssemblies }),
+      compareBOMWithJira: jest.fn().mockReturnValue({ matched: [], unmatched: [] }),
+    };
+    const preview = await new PartService({ jiraClient, bomService })
+      .previewParts({ epicKey: 'HAR-1', documentId: 'd', workspaceId: 'w', elementId: 'e' });
+    expect(preview.subAssemblies).toEqual(subAssemblies);
+    expect(preview.newParts).toEqual([]);
   });
 });

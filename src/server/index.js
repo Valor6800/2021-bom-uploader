@@ -80,7 +80,7 @@ const partService = new PartService({ jiraClient, bomService, revisionService })
 const exportService = new ExportService({ onshapeClient });
 // Built before EpicService, which creates Build 1 when onboarding an Assembly.
 const buildService = new BuildService({ jiraClient, onshapeClient, revisionService, partService });
-const epicService = new EpicService({ jiraClient, onshapeClient, buildService });
+const epicService = new EpicService({ jiraClient, onshapeClient, buildService, bomService });
 
 const orderSheetService = sheetsClient ? new OrderSheetService({ sheetsClient }) : null;
 const purchasingService = orderSheetService

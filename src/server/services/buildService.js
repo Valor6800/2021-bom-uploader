@@ -6,7 +6,7 @@
  */
 
 import {
-  sanitizeJQL, validateMaterial, validateMachinery, validatePowdercoat, validateThickness, validateQuantity,
+  sanitizeJQL, validateMaterial, validateMachinery, validatePowdercoat, validateThickness, validateQuantity, validatePriority,
 } from '../utils/validators.js';
 import {
   BuildField, BuildStatus, BuildTransition, LinkType, RevisionField, usedInLinkedClause,
@@ -72,7 +72,10 @@ function hasUsedInLink(issuelinks, buildKey) {
     && (link.outwardIssue?.key === buildKey || link.inwardIssue?.key === buildKey));
 }
 
-/** The BOM values a save writes, with None for an absent Powdercoat/Thickness. */
+/**
+ * The BOM values a save writes, with None for an absent Powdercoat/Thickness.
+ * Priority is included only when the item carries one.
+ */
 function bomValues(item) {
   return {
     quantity: item.quantity,
@@ -80,6 +83,7 @@ function bomValues(item) {
     machinery: item.machinery,
     powdercoat: item.powdercoat ?? Powdercoat.NONE,
     thickness: item.thickness ?? Thickness.NONE,
+    ...(item.priority !== undefined && item.priority !== null ? { priority: item.priority } : {}),
   };
 }
 
@@ -96,6 +100,9 @@ function fieldProblem(item) {
   }
   if (!validateQuantity(values.quantity).valid) {
     return { field: 'quantity', error: 'Quantity must be a whole number of 1 or more.' };
+  }
+  if (!validatePriority(values.priority).valid) {
+    return { field: 'priority', error: `Priority "${values.priority}" isn't on the list. Pick one.` };
   }
   return null;
 }

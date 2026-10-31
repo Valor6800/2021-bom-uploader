@@ -4,12 +4,11 @@
  */
 
 import { badRequest, HttpError } from '../middleware/httpError.js';
-import { applyPartMask, applyTitleMask, formatPartNumber } from '../utils/partMask.js';
+import { applyPartMask, applyTitleMask } from '../utils/partMask.js';
 import { validatePartPayload, sanitizeJQL } from '../utils/validators.js';
 import { Powdercoat, Thickness, Material, Machinery } from '../utils/bomConstants.js';
 import { RevisionField } from '../utils/buildConstants.js';
 import { preferNewestRevision } from '../utils/partChain.js';
-import { withKeyedLock } from '../utils/keyedLock.js';
 import { cutBuildsAmong, sharedPartConflict, usedInKeys } from '../utils/cutBuilds.js';
 
 const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL';
@@ -39,6 +38,7 @@ export function partFromWritten(key, summary, fields = {}) {
     thickness: fields.customfield_10207?.value ?? Thickness.NONE,
     project: fields.project?.key ?? JIRA_PROJECT,
     revision: fields[RevisionField.REVISION] ?? null,
+    priority: fields.priority?.name ?? null,
   };
 }
 
@@ -55,10 +55,6 @@ export class PartService {
     this.jiraClient = jiraClient;
     this.bomService = bomService;
     this.revisionService = revisionService;
-    /** Highest Part number this process created, per season ("VF27" -> 7). */
-    this._allocFloor = new Map();
-    /** Per-season lock so concurrent Clones allocate different numbers. */
-    this._allocLock = new Map();
   }
 
   /**
@@ -152,79 +148,45 @@ export class PartService {
   }
 
   /**
-   * The next unused Part number for a season — one past whatever the
-   * highest existing `V{seasonType}{year}P-NNNN` number is. ValorBOM has
-   * never allocated its own Part numbers before (every one up to now came
-   * from Onshape's own BOM export); this is only for "Clone a part" (Sheet
-   * 06), where a fresh ticket never touches CAD at all.
+   * "Create spare": an exact copy of an existing Part as a new, unrelated
+   * ticket, for something the assembly side needs that never touched CAD (a
+   * spare, a second copy of a fastener plate). Same summary (so same Part
+   * number, name and Revision) and same BOM fields; nothing is renumbered.
+   * Unlike Re-create it isn't a revision of anything, and it isn't linked to
+   * any Build.
    *
-   * Numbers are flat across the whole season, not scoped per Assembly — the
-   * number itself carries no Assembly identity, only "Epic Link" does.
-   *
-   * @param {string} seasonType  "R" or "F"
-   * @param {string} year        Two-digit year string
-   * @returns {Promise<string>} Four-digit, zero-padded
-   */
-  async getNextPartNumber(seasonType, year) {
-    const safeSeasonType = sanitizeJQL(seasonType);
-    const safeYear = sanitizeJQL(year);
-    const jql =
-      `project = ${JIRA_PROJECT} AND issuetype = Part AND summary ~ "V${safeSeasonType}${safeYear}P-*"`;
-
-    const issues = await this.jiraClient.searchIssues(jql, { paginate: true, fields: ['summary'] });
-    const stories = this._parseStories(issues);
-    const searchMax = stories.reduce((acc, s) => Math.max(acc, parseInt(s.partNumber, 10) || 0), 0);
-    // Search lags a create, so a number this process just wrote counts too.
-    const floor = this._allocFloor.get(`V${seasonType}${year}`) ?? 0;
-    return String(Math.max(searchMax, floor) + 1).padStart(4, '0');
-  }
-
-  /**
-   * "Clone a part" (Sheet 06): duplicate an existing Part's BOM fields into
-   * a brand-new, unrelated ticket with a self-allocated number — for
-   * something the assembly side needs that never touched CAD (a spare, a
-   * second copy of a fastener plate). Unlike Re-create, this isn't a
-   * revision of anything and isn't linked to any Build.
+   * Because the number repeats, the original is the Part with the lowest
+   * ticket number; see `preferOriginal` in utils/partChain.js.
    *
    * @param {object} params
-   * @param {string} params.sourceKey  The Part being duplicated
-   * @param {string} params.epicKey    The Assembly the new ticket belongs to
-   * @param {string} [params.name]     Defaults to the source Part's own name
+   * @param {string} params.sourceKey  The Part being copied
+   * @param {string} params.epicKey    The Assembly, used only when the source has no Epic Link
    * @param {number} [params.quantity] Defaults to the source Part's quantity
    * @returns {Promise<{ key: string, fullPartNumber: string, part: object }>}
    */
-  async clonePart({ sourceKey, epicKey, name, quantity }) {
+  async clonePart({ sourceKey, epicKey, quantity }) {
     const [source] = await this.getStoriesByKeys([sourceKey]);
     if (!source) {
       throw badRequest(`"${sourceKey}" is not a Part`);
     }
 
-    // Allocation and create run one at a time per season, so two Clones
-    // inside the search lag window can't take the same number.
-    const season = `V${source.seasonType}${source.year}`;
-    return withKeyedLock(this._allocLock, season, async () => {
-      const nextNumber = await this.getNextPartNumber(source.seasonType, source.year);
-      const summary = formatPartNumber({
-        seasonType: source.seasonType,
-        year: source.year,
-        isEpic: false,
-        partNumber: nextNumber,
-        version: 'A',
-        name: name ?? source.name,
-      });
-
-      const { key, fields } = await this._createPart({
-        summary,
-        epic: epicKey,
-        quantity: quantity ?? source.quantity,
-        material: source.material,
-        machinery: source.machinery,
-        powdercoat: source.powdercoat,
-        thickness: source.thickness,
-      });
-      const part = partFromWritten(key, summary, fields);
-      return { key, fullPartNumber: part.fullPartNumber, part };
+    const { key, fields } = await this._createPart({
+      summary: source.summary,
+      revision: source.version ?? undefined,
+      // The source's own ticket, so the spare and its original always share
+      // one Epic Link; `epicKey` only covers a source without one.
+      epic: source.epic ?? epicKey,
+      quantity: quantity ?? source.quantity,
+      material: source.material,
+      machinery: source.machinery,
+      powdercoat: source.powdercoat,
+      thickness: source.thickness,
+      // Only a non-default priority is copied: a Part made without one gets
+      // the tracker's default, and writing Priority needs it on the screen.
+      priority: source.priority && source.priority !== 'Medium' ? source.priority : undefined,
     });
+    const part = partFromWritten(key, source.summary, fields);
+    return { key, fullPartNumber: part.fullPartNumber, part };
   }
 
   /**
@@ -278,7 +240,7 @@ export class PartService {
     // rows that only carry a bare 4-digit Part number and no Project.
     // Existing Parts are read across the whole Revision chain, so a CAD row
     // whose number belongs to a Revision A Part counts as existing.
-    const [{ parts: bomItems, unidentified }, { stories: existingStories }] = await Promise.all([
+    const [{ parts: bomItems, unidentified, subAssemblies }, { stories: existingStories }] = await Promise.all([
       this._getAssemblySeason(epicKey).then((assembly) =>
         this.bomService.getBOMReport(
           epicKey, documentId, workspaceId, elementId, assembly, { fresh: fresh === true },
@@ -298,6 +260,7 @@ export class PartService {
       existingParts: matched,
       duplicates,
       unidentified,
+      subAssemblies: subAssemblies ?? [],
     };
   }
 
@@ -338,8 +301,7 @@ export class PartService {
   }
 
   /**
-   * Validate, write and record one Part. Every Part create passes through
-   * here, so a number written by a Save raises the Clone floor too.
+   * Validate and write one Part. Every Part create passes through here.
    *
    * @returns {Promise<{ key: string, fields: object }>}
    * @private
@@ -349,17 +311,7 @@ export class PartService {
 
     const fields = this._buildJiraFields(payload);
     const result = await this.jiraClient.createIssue(fields);
-    this._raiseAllocFloor(fields.summary);
     return { key: result.key, fields };
-  }
-
-  /** @private */
-  _raiseAllocFloor(summary) {
-    const parsed = applyPartMask(summary ?? '');
-    if (!parsed || parsed.isEpic) return;
-    const season = `V${parsed.seasonType}${parsed.year}`;
-    const number = parseInt(parsed.partNumber, 10);
-    this._allocFloor.set(season, Math.max(this._allocFloor.get(season) ?? 0, number));
   }
 
   /**
@@ -395,6 +347,7 @@ export class PartService {
     } else if (payload.thickness) {
       fields.customfield_10207 = { value: payload.thickness };
     }
+    if (payload.priority) fields.priority = { name: payload.priority };
 
     await this.jiraClient.updateIssue(key, fields);
   }
@@ -454,6 +407,7 @@ export class PartService {
       powdercoat: payload.powdercoat ?? Powdercoat.NONE,
       thickness: payload.thickness ?? Thickness.NONE,
       quantity: payload.quantity,
+      priority: payload.priority,
     });
 
     if (!valid) {
@@ -493,6 +447,9 @@ export class PartService {
     if (payload.thickness && payload.thickness !== Thickness.NONE) {
       fields.customfield_10207 = { value: payload.thickness };
     }
+    // Only when given: Priority has to be on the Part screen to be written,
+    // and a Part made without one gets the tracker's default.
+    if (payload.priority) fields.priority = { name: payload.priority };
 
     return fields;
   }
@@ -517,6 +474,7 @@ export class PartService {
         powdercoat: issue.fields?.customfield_10204?.value ?? Powdercoat.NONE,
         quantity: issue.fields?.customfield_10206 ?? 0,
         thickness: issue.fields?.customfield_10207?.value ?? Thickness.NONE,
+        priority: issue.fields?.priority?.name ?? null,
         project: issue.fields?.project?.key ?? JIRA_PROJECT,
       });
     }

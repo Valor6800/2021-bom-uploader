@@ -41,6 +41,12 @@ export const Thickness = Object.freeze({
   T_0250: '0.250',
 });
 
+/**
+ * The tracker's built-in Priority names, highest first. Priority is optional
+ * on a Part: a save sends it only when it changed (see designerSave.js).
+ */
+export const PRIORITIES = Object.freeze(['Highest', 'High', 'Medium', 'Low', 'Lowest']);
+
 /** Value arrays derived from the enums for validators and dropdowns. */
 export const MATERIALS = Object.values(Material);
 export const MACHINERY = Object.values(Machinery);

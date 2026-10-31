@@ -52,11 +52,10 @@ const base = (over = {}) => deriveDesignerRows({
 });
 
 describe('deriveDesignerRows grouping', () => {
-  it('splits In Build and Other with labels', () => {
+  it('lists the selected Build Parts and hides Parts that are only in other Builds', () => {
     const { groups, pendingOps } = base();
     expect(groups.inBuild.map((r) => r.key)).toEqual(['HAR-2031', 'HAR-2032']);
-    expect(groups.other.map((r) => r.key)).toEqual(['HAR-2033']);
-    expect(groups.other[0].label).toBe('Also in Build 2');
+    expect(groups.other).toEqual([]);
     expect(groups.inBuild[0].status).toBe('In Build');
     expect(groups.newFromCad).toEqual([]);
     expect(pendingOps).toEqual([]);
@@ -280,5 +279,203 @@ describe('deriveDesignerRows locks Parts a cut Build uses', () => {
   it('does not lock a Part whose other Builds are all Drafts', () => {
     const { groups } = shared({ builds: builds.map((b) => ({ ...b, status: 'Draft' })) });
     expect(row(groups, 'HAR-2033').sharedLocked).toBe(false);
+  });
+});
+
+describe('Material is locked', () => {
+  it('ignores an edit to material and keeps the stored value', () => {
+    const { groups } = base({ edits: { 'HAR-2031': { material: 'AL 6061', quantity: 5 } } });
+    const row = groups.inBuild.find((r) => r.key === 'HAR-2031');
+    expect(row.values.material).toBe('PLA');
+    expect(row.values.quantity).toBe(5);
+  });
+
+  it('ignores a material edit on a New row but keeps the CAD material', () => {
+    const preview = { newParts: [bomItem('VF27P-0004A', 'Spacer', { material: 'PETG-CF' })], existingParts: [] };
+    const { groups } = base({ preview, edits: { 'VF27P-0004A': { material: 'PLA' } } });
+    expect(groups.newFromCad[0].values.material).toBe('PETG-CF');
+  });
+
+  it('still applies a changed material from CAD', () => {
+    const preview = {
+      newParts: [],
+      existingParts: [{ story: P31, bomItem: bomItem('VF27P-0001A', 'Test Part', { material: 'PETG-CF' }), changes: { count: 1 } }],
+    };
+    const row = base({ preview }).groups.inBuild.find((r) => r.key === 'HAR-2031');
+    expect(row.values.material).toBe('PETG-CF');
+    expect(row.changeText).toContain('Material PLA→PETG-CF');
+  });
+});
+
+describe('Revision raised in OnShape', () => {
+  const previewWithB = {
+    newParts: [bomItem('VF27P-0001B', 'Test Part')],
+    existingParts: [],
+  };
+
+  it('marks the B row as a new Revision that replaces the A Part', () => {
+    const { groups } = base({ preview: previewWithB });
+    const row = groups.newFromCad[0];
+    expect(row.isNew).toBe(true);
+    expect(row.key).toBeNull();
+    expect(row.revisionNote).toMatchObject({ kind: 'new-revision', replaces: 'HAR-2031' });
+    expect(row.revisionNote.text).toBe('New Revision B, replaces VF27P-0001A, which is still in the Build');
+  });
+
+  it('does not say the A Part is in the Build when it is not', () => {
+    const { groups } = base({ preview: previewWithB, buildKey: 'HAR-2052' });
+    expect(groups.newFromCad[0].revisionNote.text).toBe('New Revision B, replaces VF27P-0001A');
+  });
+
+  it('tells the A Part that CAD moved on, and that it is still in the Build', () => {
+    const { groups } = base({ preview: previewWithB });
+    const a = groups.inBuild.find((r) => r.key === 'HAR-2031');
+    expect(a.revisionNote).toEqual({ kind: 'cad-ahead', text: 'CAD now has Revision B; this Revision is still in the Build' });
+  });
+
+  it('leaves a brand-new number without a revision note', () => {
+    const preview = { newParts: [bomItem('VF27P-0009A', 'Gusset')], existingParts: [] };
+    expect(base({ preview }).groups.newFromCad[0].revisionNote).toBeNull();
+  });
+
+  it('does not treat a Part of another Assembly as the previous Revision', () => {
+    const foreign = part('HAR-9000', 'VF27P-0001A', 'Test Part', { epic: 'HAR-9999' });
+    const { groups } = base({ parts: [foreign], preview: previewWithB, linkedByPart: new Map() });
+    expect(groups.newFromCad[0].revisionNote).toBeNull();
+  });
+
+  it('keeps notes off every row until Update from CAD has run', () => {
+    const { groups } = base();
+    expect([...groups.inBuild, ...groups.other].every((r) => r.revisionNote === null)).toBe(true);
+  });
+});
+
+describe('Part re-created in the tracker while CAD still has the old Revision', () => {
+  const P31B = part('HAR-2041', 'VF27P-0001B', 'Test Part');
+  const preview = { newParts: [], existingParts: [{ story: P31, bomItem: bomItem('VF27P-0001A', 'Test Part'), changes: { count: 0 } }] };
+
+  it('tells the B Part that CAD still has Revision A', () => {
+    const { groups } = base({
+      parts: [P31, P31B, P32, P33],
+      linkedByPart: linksFromBuildParts(new Map([['HAR-2051', ['HAR-2041', 'HAR-2032']]])),
+      preview,
+    });
+    const b = groups.inBuild.find((r) => r.key === 'HAR-2041');
+    expect(b.revisionNote).toEqual({ kind: 'cad-behind', text: 'CAD still has Revision A. Raise the Revision in OnShape to match' });
+  });
+
+  it('is aligned once CAD also has B', () => {
+    const aligned = {
+      newParts: [],
+      existingParts: [{ story: P31B, bomItem: bomItem('VF27P-0001B', 'Test Part'), changes: { count: 0 } }],
+    };
+    const { groups } = base({
+      parts: [P31, P31B],
+      linkedByPart: linksFromBuildParts(new Map([['HAR-2051', ['HAR-2041']]])),
+      preview: aligned,
+    });
+    expect(groups.inBuild.find((r) => r.key === 'HAR-2041').revisionNote).toBeNull();
+  });
+});
+
+describe('Parts in other Builds are hidden; Parts in no Build show', () => {
+  const SPARE_OF_31 = part('HAR-2040', 'VF27P-0001A', 'Test Part');
+  const FREE = part('HAR-2041', 'VF27P-0009A', 'Fastener plate');
+
+  it('shows a Part that is in no Build at all', () => {
+    const { groups } = base({ parts: [P31, P32, P33, FREE] });
+    expect(groups.other.map((r) => r.key)).toEqual(['HAR-2041']);
+    expect(groups.other[0].label).toBe('Not in any Build');
+  });
+
+  it('shows a Part from another Build once CAD lists it, labelled with that Build', () => {
+    const preview = {
+      newParts: [],
+      existingParts: [{ story: P33, bomItem: bomItem('VF27P-0003A', 'Bash bar 2"'), changes: { count: 0 } }],
+    };
+    const { groups } = base({ preview });
+    expect(groups.other.map((r) => r.key)).toEqual(['HAR-2033']);
+    expect(groups.other[0].label).toBe('Also in Build 2');
+  });
+
+  it('keeps a hidden Part out of the way of a Build with nothing selected', () => {
+    const { groups, pendingOps } = base({ buildKey: 'HAR-2052' });
+    expect(groups.inBuild.map((r) => r.key)).toEqual(['HAR-2033']);
+    expect(groups.other.map((r) => r.key)).toEqual([]);
+    expect(pendingOps).toEqual([]);
+  });
+
+  it('labels a copy of an existing number as a Spare and the lowest key as the original', () => {
+    const { groups } = base({ parts: [P31, P32, P33, SPARE_OF_31] });
+    const spare = groups.other.find((r) => r.key === 'HAR-2040');
+    expect(spare).toMatchObject({ isSpare: true, label: 'Spare', status: 'Spare', fullPartNumber: 'VF27P-0001A' });
+    expect(groups.inBuild.find((r) => r.key === 'HAR-2031').isSpare).toBe(false);
+  });
+
+  it('lets CAD update the original, never the spare', () => {
+    const preview = {
+      newParts: [],
+      existingParts: [{ story: P31, bomItem: bomItem('VF27P-0001A', 'Test Part', { quantity: 4 }), changes: { count: 1 } }],
+    };
+    const { groups } = base({ parts: [P31, P32, P33, SPARE_OF_31], preview });
+    expect(groups.inBuild.find((r) => r.key === 'HAR-2031').values.quantity).toBe(4);
+    expect(groups.other.find((r) => r.key === 'HAR-2040').values.quantity).toBe(1);
+  });
+
+  it('does not offer a New row for a number a spare repeats when the original is saved', () => {
+    const preview = { newParts: [bomItem('VF27P-0009A', 'Fastener plate')], existingParts: [] };
+    const { groups } = base({ parts: [P31, P32, P33, FREE], preview, createdKeys: {} });
+    expect(groups.newFromCad).toEqual([]);
+    expect(groups.other.map((r) => r.key)).toEqual(['HAR-2041']);
+  });
+});
+
+describe('Priority', () => {
+  const withPriority = (p, priority) => ({ ...p, priority });
+
+  it('shows the stored priority and is not dirty until it changes', () => {
+    const { groups, pendingOps } = base({ parts: [withPriority(P31, 'High'), P32, P33] });
+    const row = groups.inBuild.find((r) => r.key === 'HAR-2031');
+    expect(row.values.priority).toBe('High');
+    expect(row.dirty).toBe(false);
+    expect(pendingOps).toEqual([]);
+  });
+
+  it('is dirty once an edit changes it, and the row becomes Changed', () => {
+    const { groups, pendingOps } = base({
+      parts: [withPriority(P31, 'High'), P32, P33],
+      edits: { 'HAR-2031': { priority: 'Low' } },
+    });
+    const row = groups.inBuild.find((r) => r.key === 'HAR-2031');
+    expect(row.values.priority).toBe('Low');
+    expect(row.stored.priority).toBe('High');
+    expect(row.dirty).toBe(true);
+    expect(row.status).toBe('Changed');
+    expect(pendingOps).toEqual(['HAR-2031']);
+  });
+
+  it('treats a Part with no priority as not set, and setting one as a change', () => {
+    const unset = base({ parts: [withPriority(P31, null), P32, P33] }).groups.inBuild[0];
+    expect(unset.values.priority).toBeNull();
+    expect(unset.dirty).toBe(false);
+    const set = base({ parts: [withPriority(P31, null), P32, P33], edits: { 'HAR-2031': { priority: 'Medium' } } })
+      .groups.inBuild[0];
+    expect(set.dirty).toBe(true);
+  });
+
+  it('is not touched by CAD', () => {
+    const preview = {
+      newParts: [],
+      existingParts: [{ story: P31, bomItem: bomItem('VF27P-0001A', 'Test Part', { quantity: 9 }), changes: { count: 1 } }],
+    };
+    const row = base({ parts: [withPriority(P31, 'High'), P32, P33], preview }).groups.inBuild[0];
+    expect(row.values.priority).toBe('High');
+    expect(row.values.quantity).toBe(9);
+  });
+
+  it('lets a New row carry a priority picked before saving', () => {
+    const preview = { newParts: [bomItem('VF27P-0004A', 'Spacer')], existingParts: [] };
+    const row = base({ preview, edits: { 'VF27P-0004A': { priority: 'Highest' } } }).groups.newFromCad[0];
+    expect(row.values.priority).toBe('Highest');
   });
 });

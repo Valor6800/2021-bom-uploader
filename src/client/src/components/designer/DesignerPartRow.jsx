@@ -2,16 +2,26 @@ import InlineSelect from '../ui/InlineSelect.jsx';
 import Badge from '../ui/Badge.jsx';
 import Button from '../ui/Button.jsx';
 import { TrackerKey } from '../assembly-shared/AssemblyHeader.jsx';
-import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS } from '../../api/client.js';
+import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS, PRIORITIES } from '../../api/client.js';
 
+/** Material from OnShape as text; one that isn't on the list says where to fix it. */
+function MaterialCell({ value, invalid }) {
+  return (
+    <td className="cell-text" data-field="material">
+      {value || '—'}
+      {invalid && <span className="status-detail">Not a listed material. Change it in OnShape</span>}
+    </td>
+  );
+}
+
+// Material is not here: OnShape sets it, so it is always plain text.
 const SELECTS = [
-  ['material', 'Material', MATERIALS],
   ['machinery', 'Machinery', MACHINERY],
   ['powdercoat', 'Powdercoat', POWDERCOAT],
   ['thickness', 'Thickness', THICKNESS],
 ];
 
-export const COLUMN_COUNT = 8;
+export const COLUMN_COUNT = 9;
 
 const BADGE_WORDS = new Set(['New', 'Changed', 'In Build', 'Saved', 'Error', 'Not in any Build']);
 
@@ -22,8 +32,9 @@ const BADGE_WORDS = new Set(['New', 'Changed', 'In Build', 'Saved', 'Error', 'No
  * Fields show as plain text on a cut Build (`viewOnly`) and on a Part a cut
  * Build uses (`row.sharedLocked`); the latter offers "Re-create for this Build".
  *
- * A CAD value that isn't on a list (e.g. material "Steel") shows as itself
- * ("Steel — pick a material") and marks the select aria-invalid.
+ * Material is always text: OnShape sets it. A material that isn't on the list
+ * (e.g. "Steel") says to change it in OnShape. Another CAD value that isn't on
+ * its list shows as itself ("— pick a machinery") and marks the select aria-invalid.
  *
  * @param {object} props
  * @param {object} props.row               From deriveDesignerRows
@@ -78,9 +89,11 @@ export default function DesignerPartRow({
         {asText ? (
           <>
             <td className="cell-text" data-field="quantity">{row.values.quantity ?? '—'}</td>
+            <MaterialCell value={row.values.material} invalid={false} />
             {SELECTS.map(([field]) => (
               <td key={field} className="cell-text" data-field={field}>{row.values[field] || '—'}</td>
             ))}
+            <td className="cell-text" data-field="priority">{row.values.priority || '—'}</td>
           </>
         ) : (
           <>
@@ -101,6 +114,10 @@ export default function DesignerPartRow({
                 }}
               />
             </td>
+            <MaterialCell
+              value={row.values.material}
+              invalid={!!row.values.material && !MATERIALS.includes(row.values.material)}
+            />
             {SELECTS.map(([field, fieldLabel, options]) => {
               const value = row.values[field] ?? 'None';
               const unlisted = !options.includes(value);
@@ -119,6 +136,18 @@ export default function DesignerPartRow({
                 </td>
               );
             })}
+            <td className="cell-select">
+              <InlineSelect
+                value={row.values.priority ?? ''}
+                options={PRIORITIES}
+                extraOption={row.values.priority ? undefined : { value: '', label: 'Not set' }}
+                disabled={!editable || busy}
+                aria-label={`Priority for ${label}`}
+                aria-invalid={invalidField === 'priority' ? 'true' : undefined}
+                aria-describedby={invalidField === 'priority' && message ? errorId : undefined}
+                onChange={(e) => { if (e.target.value) onEdit('priority', e.target.value); }}
+              />
+            </td>
           </>
         )}
         <td className="cell-status">
@@ -126,16 +155,20 @@ export default function DesignerPartRow({
           {row.readOnlyLabel && <span className="status-detail">{row.readOnlyLabel}</span>}
           {row.lockedLabel && <span className="status-detail">{row.lockedLabel}</span>}
           {row.changeText && <span className="status-detail">{row.changeText}</span>}
+          {row.revisionNote && (
+            <span className="status-detail" data-revision-note={row.revisionNote.kind}>{row.revisionNote.text}</span>
+          )}
           {row.result?.note && <span className="status-detail">{row.result.note}</span>}
           {row.sharedLocked && !viewOnly && onRecreate && (
             <>
+              <span className="status-detail">Design changed? Raise its Revision in OnShape, then Update from CAD.</span>
               <Button
                 variant="secondary"
                 className="row-recreate"
                 onClick={onRecreate}
                 ariaDisabled={!!recreateBlocked}
                 disabled={recreateBusy || actionsLocked || busy}
-                title={recreateBlocked ?? undefined}
+                title={recreateBlocked ?? 'For Builds made at the same time. Makes the next Revision here only; OnShape keeps showing the old one.'}
                 aria-describedby={recreateBlocked ? tipId : undefined}
                 aria-label={`Re-create for this Build: ${label}`}
               >

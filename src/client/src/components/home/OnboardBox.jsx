@@ -4,6 +4,7 @@ import Alert from '../ui/Alert.jsx';
 import Button from '../ui/Button.jsx';
 import { previewOnboarding, onboardAssembly } from '../../api/client.js';
 import { friendlyClause, friendlyError } from '../../lib/friendlyError.js';
+import SubAssemblyList from './SubAssemblyList.jsx';
 import { ConfirmDialog, ConflictDialog, ExistsDialog, PropertiesDialog } from './OnboardDialogs.jsx';
 
 const WORKSPACE_LINK_RE = /\/documents\/[a-f0-9]{24}\/w\/[a-f0-9]{24}\/e\/[a-f0-9]{24}/i;
@@ -37,12 +38,14 @@ export default function OnboardBox() {
   const [inline, setInline] = useState(null);
   /**
    * The open dialog:
-   * { kind: 'confirm', proposed, drifted } | { kind: 'exists', assembly, matchedOn }
+   * { kind: 'confirm', proposed, drifted, subAssemblies } | { kind: 'exists', assembly, matchedOn, subAssemblies }
    * | { kind: 'problems', problems, fallback } | { kind: 'conflict', assembly, number }
    */
   const [dialog, setDialog] = useState(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
+  /** After adding sub-assemblies to an Assembly that already existed. */
+  const [subResult, setSubResult] = useState(null);
   const sentUrl = useRef('');
 
   const closeDialog = () => {
@@ -85,10 +88,11 @@ export default function OnboardBox() {
     sentUrl.current = url.trim();
     try {
       const res = await previewOnboarding(sentUrl.current);
+      const subs = { subAssemblies: res.subAssemblies ?? [], subAssembliesError: res.subAssembliesError ?? null };
       if (res.status === 'exists') {
-        setDialog({ kind: 'exists', assembly: res.assembly, matchedOn: res.matchedOn });
+        setDialog({ kind: 'exists', assembly: res.assembly, matchedOn: res.matchedOn, ...subs });
       } else {
-        setDialog({ kind: 'confirm', proposed: res.proposed, drifted: false });
+        setDialog({ kind: 'confirm', proposed: res.proposed, drifted: false, ...subs });
       }
     } catch (err) {
       showError(err, "Couldn't check that link");
@@ -97,7 +101,7 @@ export default function OnboardBox() {
     }
   };
 
-  const openDesigner = (assembly, { build = null, buildError = null, alreadyAdded = false } = {}) => {
+  const openDesigner = (assembly, { build = null, buildError = null, alreadyAdded = false, subAssemblies = [] } = {}) => {
     const base = `/a/${encodeURIComponent(assembly.key)}/design`;
     const onboard = { assemblySummary: assembly.summary };
     let to = base;
@@ -108,6 +112,7 @@ export default function OnboardBox() {
     }
     if (buildError) onboard.buildError = buildError;
     if (alreadyAdded) onboard.alreadyAdded = true;
+    if (subAssemblies.length) onboard.subAssemblies = subAssemblies;
     navigate(to, { state: { onboard } });
   };
 
@@ -118,7 +123,11 @@ export default function OnboardBox() {
     try {
       const res = await onboardAssembly({ url: sentUrl.current, expectedSummary: dialog.proposed.summary });
       if (res.status === 'created') {
-        openDesigner(res.assembly, { build: res.build, buildError: res.build ? null : res.buildError });
+        openDesigner(res.assembly, {
+          build: res.build,
+          buildError: res.build ? null : res.buildError,
+          subAssemblies: res.subAssemblies ?? [],
+        });
       } else {
         // Another tab or a double submit won the race (design 3.3, B from the commit call).
         openDesigner(res.assembly, { build: res.build, alreadyAdded: true });
@@ -127,6 +136,22 @@ export default function OnboardBox() {
       if (!showError(err, null)) {
         setCreateError(`Couldn't create the Assembly: ${friendlyError(err)} Nothing was saved. Try again.`);
       }
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  /** The Assembly already exists: create only its missing sub-assemblies. */
+  const createMissing = async () => {
+    if (dialog?.kind !== 'exists') return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const res = await onboardAssembly({ url: sentUrl.current, expectedSummary: dialog.assembly.summary });
+      setSubResult({ assembly: res.assembly, subAssemblies: res.subAssemblies ?? [], error: res.subAssembliesError ?? null });
+      setDialog(null);
+    } catch (err) {
+      setCreateError(`Couldn't create the sub-assemblies: ${friendlyError(err)} Try again.`);
     } finally {
       setCreating(false);
     }
@@ -164,6 +189,19 @@ export default function OnboardBox() {
           {checking ? 'Checking…' : 'Continue'}
         </Button>
       </form>
+      {subResult && (
+        <Alert
+          variant="info"
+          role="status"
+          actions={(
+            <Button variant="secondary" onClick={() => navigate(`/a/${encodeURIComponent(subResult.assembly.key)}/design`)}>
+              Open {subResult.assembly.key}
+            </Button>
+          )}
+        >
+          <SubAssemblyList subAssemblies={subResult.subAssemblies} error={subResult.error} />
+        </Alert>
+      )}
       {inline && (
         <Alert
           variant="error"
@@ -184,6 +222,8 @@ export default function OnboardBox() {
         onCancel={closeDialog}
         returnFocusRef={inputRef}
         onConfirm={create}
+        subAssemblies={dialog?.kind === 'confirm' ? dialog.subAssemblies : []}
+        subAssembliesError={dialog?.kind === 'confirm' ? dialog.subAssembliesError : null}
       />
       <ExistsDialog
         open={dialog?.kind === 'exists'}
@@ -192,6 +232,11 @@ export default function OnboardBox() {
         onCancel={closeDialog}
         returnFocusRef={inputRef}
         onOpen={() => navigate(`/a/${encodeURIComponent(dialog.assembly.key)}/design`)}
+        subAssemblies={dialog?.kind === 'exists' ? dialog.subAssemblies : []}
+        subAssembliesError={dialog?.kind === 'exists' ? dialog.subAssembliesError : null}
+        busy={creating}
+        error={dialog?.kind === 'exists' ? createError : null}
+        onCreateMissing={createMissing}
       />
       <PropertiesDialog
         open={dialog?.kind === 'problems'}
