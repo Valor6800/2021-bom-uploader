@@ -135,7 +135,6 @@ describe('BOMService._parseBOM — unidentifiable rows are reported', () => {
   it('names each missing or malformed property', () => {
     const { parts, unidentified } = service._parseBOM(bom([
       row({ item: '1', name: 'No Number', partNumber: '' }),
-      row({ item: '2', name: 'No Revision', revision: '' }),
       row({ item: '3', name: 'Bad Project', project: 'FOO' }),
       row({ item: '4', name: 'Bad Number', partNumber: '12' }),
       row({ item: '5', name: 'Good' }),
@@ -143,8 +142,7 @@ describe('BOMService._parseBOM — unidentifiable rows are reported', () => {
 
     expect(parts.map((p) => p.fullPartNumber)).toEqual(['VF27P-0001A']);
     expect(unidentified.map((u) => [u.name, u.problems])).toEqual([
-      ['No Number', ['missing Part number']],
-      ['No Revision', ['missing Revision']],
+      ['No Number', [expect.stringMatching(/missing Part number/)]],
       ['Bad Project', [expect.stringMatching(/invalid Project "FOO"/)]],
       ['Bad Number', [expect.stringMatching(/invalid Part number "12"/)]],
     ]);
@@ -161,7 +159,7 @@ describe('BOMService.getBOM / getBOMReport', () => {
   });
 
   it('getBOMReport returns parts and unidentified rows', async () => {
-    const onshapeClient = { getAssemblyBOM: jest.fn().mockResolvedValue(bom([row(), row({ item: '2', name: 'X', revision: '' })])) };
+    const onshapeClient = { getAssemblyBOM: jest.fn().mockResolvedValue(bom([row(), row({ item: '2', name: 'X', project: 'FOO' })])) };
     const service = new BOMService({ onshapeClient });
     const report = await service.getBOMReport('HAR-1', 'd-report', 'w', 'e', VF27);
     expect(report.parts).toHaveLength(1);
@@ -228,7 +226,7 @@ describe('BOMService._parseBOM — sub-assemblies', () => {
     expect(unidentified).toEqual([]);
     expect(subAssemblies).toEqual([{
       item: '2', name: 'Intake', partNumber: '1100', revision: 'A', project: '',
-      documentId: DOC, elementId: 'd'.repeat(24), wvmType: 'w', wvmId: WS,
+      documentId: DOC, elementId: 'd'.repeat(24), wvmType: 'w', wvmId: WS, configuration: null,
     }]);
   });
 

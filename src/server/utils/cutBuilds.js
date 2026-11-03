@@ -35,8 +35,7 @@ export function cutBuildConflict(label, status) {
 export function sharedPartConflict(partLabel, cutBuilds) {
   const labels = cutBuilds.map((b) => buildLabelOf(b.buildNumber, b.key));
   return conflict(
-    `${partLabel} is used in cut ${labels.join(', ')}, so it can't be changed. `
-      + 'Re-create it for the Draft Build instead.',
+    `${partLabel} is used in cut ${labels.join(', ')}, so it can't be changed.`,
     { cutBuilds: cutBuilds.map(({ key, buildNumber, status }) => ({ key, buildNumber, status })) },
   );
 }

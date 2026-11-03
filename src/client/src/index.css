@@ -1978,3 +1978,28 @@ a { color: inherit; text-decoration: none; }
 .sub-assembly-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
 .sub-assembly-link { color: var(--color-gold); text-decoration: underline; text-underline-offset: 2px; }
 .sub-assemblies-note { color: var(--color-text-muted); font-size: 0.875rem; }
+
+/* ===== Pictures: the Build's Assembly, and Parts in the table ===== */
+.build-image {
+  align-self: flex-start;
+  max-width: min(100%, 32rem);
+  margin: 0;
+  background-color: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.build-image img { display: block; width: 100%; height: auto; max-height: 20rem; object-fit: contain; }
+.build-image-loading { min-height: 12rem; width: min(100%, 32rem); background-color: var(--surface-2); }
+.build-image-loading img { opacity: 0; }
+
+.part-cell { display: flex; align-items: center; gap: var(--space-3); }
+.part-thumb {
+  flex: none;
+  width: 4.5rem;
+  height: 3.25rem;
+  object-fit: contain;
+  background-color: #fff;
+  border-radius: var(--r-sm);
+}
+.part-thumb-empty { background-color: transparent; }

@@ -4,12 +4,16 @@
  */
 
 import { badRequest, HttpError } from '../middleware/httpError.js';
-import { applyPartMask, applyTitleMask } from '../utils/partMask.js';
+import { applyPartMask, applyTitleMask, formatPartNumber } from '../utils/partMask.js';
 import { validatePartPayload, sanitizeJQL } from '../utils/validators.js';
 import { Powdercoat, Thickness, Material, Machinery } from '../utils/bomConstants.js';
 import { RevisionField } from '../utils/buildConstants.js';
 import { preferNewestRevision } from '../utils/partChain.js';
+import { blockOf } from './partNumbers.js';
+import { configurationFrom } from '../utils/onshapeConfiguration.js';
+import { nextRevisionLetter } from './revisionService.js';
 import { cutBuildsAmong, sharedPartConflict, usedInKeys } from '../utils/cutBuilds.js';
+import { baseNumber } from '../utils/partChain.js';
 
 const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL';
 
@@ -50,11 +54,25 @@ export class PartService {
    * @param {import('./revisionService.js').RevisionService} [deps.revisionService]
    *   Used to scope Part reads to an Assembly's Revision chain. Without it
    *   the chain is just the key itself.
+   * @param {import('./partNumbers.js').PartNumbers} [deps.partNumbers]
+   *   Proposes numbers for CAD rows that have none.
+   * @param {import('./partDiff.js').PartDiff} [deps.partDiff]
+   *   Finds Parts that changed since the last cut Build.
+   * @param {import('./partFiles.js').PartFiles} [deps.partFiles]
+   *   Measures new Parts for their Thickness.
+   * @param {import('./fileJobs.js').FileJobs} [deps.fileJobs]
+   *   Attaches files to Parts that are missing them.
    */
-  constructor({ jiraClient, bomService, revisionService }) {
+  constructor({
+    jiraClient, bomService, revisionService, partNumbers, partDiff, partFiles, fileJobs,
+  }) {
     this.jiraClient = jiraClient;
     this.bomService = bomService;
     this.revisionService = revisionService;
+    this.partNumbers = partNumbers;
+    this.partDiff = partDiff;
+    this.partFiles = partFiles;
+    this.fileJobs = fileJobs;
   }
 
   /**
@@ -72,7 +90,8 @@ export class PartService {
     const safeKeys = keys.map((k) => sanitizeJQL(k)).join(', ');
     const jql =
       `project = ${JIRA_PROJECT} AND issuetype = Part AND "Epic Link" in (${safeKeys})`;
-    const issues = await this.jiraClient.searchIssues(jql, { paginate: true });
+    // A default search leaves attachments out; the files a Part has are read from them.
+    const issues = await this.jiraClient.searchIssues(jql, { paginate: true, fields: ['*navigable', 'attachment'] });
     return this._parseStories(issues);
   }
 
@@ -240,28 +259,192 @@ export class PartService {
     // rows that only carry a bare 4-digit Part number and no Project.
     // Existing Parts are read across the whole Revision chain, so a CAD row
     // whose number belongs to a Revision A Part counts as existing.
-    const [{ parts: bomItems, unidentified, subAssemblies }, { stories: existingStories }] = await Promise.all([
-      this._getAssemblySeason(epicKey).then((assembly) =>
-        this.bomService.getBOMReport(
+    let assemblyNumber = null;
+    let season = null;
+    const [{ parts: bomItems, unidentified: unreadable, subAssemblies }, { stories: existingStories, chain }] = await Promise.all([
+      this._getAssemblySeason(epicKey).then((assembly) => {
+        assemblyNumber = assembly?.partNumber ?? null;
+        season = assembly;
+        return this.bomService.getBOMReport(
           epicKey, documentId, workspaceId, elementId, assembly, { fresh: fresh === true },
-        )),
+        );
+      }),
       this.getStoriesForChain(epicKey),
     ]);
 
-    const { matched, unmatched } = this.bomService.compareBOMWithJira(
-      bomItems,
-      existingStories,
-    );
+    const compared = this.bomService.compareBOMWithJira(bomItems, existingStories);
+    const { matched, unmatched } = compared;
+    this._catchUpOnFiles(matched);
+
+    // A Part whose design changed since the last cut Build is a new Revision,
+    // made from scratch. One a cut Build doesn't use is a Draft's own and
+    // simply follows CAD.
+    const { baseline, revisions } = await this._detectNewRevisions(chain, bomItems, matched, season);
+    unmatched.push(...revisions);
+    const kept = matched.filter((m) => !revisions.some((r) => r.revises === m.story.key));
+
+    // A new Part needs a name, description and material before the tool will
+    // make it. They are set in OnShape, so the rest of the BOM isn't held up.
+    const unidentified = [...unreadable];
+    const newParts = [];
+    for (const item of unmatched) {
+      if (item.missing?.length) {
+        unidentified.push({
+          item: null,
+          name: item.name,
+          partNumber: item.fullPartNumber ?? '',
+          revision: '',
+          project: '',
+          quantity: item.quantity,
+          problems: item.missing.map((field) => `missing ${field}`),
+        });
+      } else {
+        newParts.push(item);
+      }
+    }
+    const unnumberable = await this._proposeNumbers(newParts, bomItems, assemblyNumber);
+    unidentified.push(...unnumberable);
+    await this._seedThickness(newParts);
 
     const duplicates = this.detectDuplicates(bomItems);
 
     return {
-      newParts: unmatched,
-      existingParts: matched,
+      newParts,
+      existingParts: kept,
+      baseline: baseline ? { buildKey: baseline.buildKey, buildNumber: baseline.buildNumber } : null,
       duplicates,
       unidentified,
       subAssemblies: subAssemblies ?? [],
     };
+  }
+
+  /**
+   * Queue the files of Parts the tracker holds that lack their picture or
+   * STEP: ones made before files were attached, or whose attaching failed or
+   * was lost. Runs in the background; the preview does not wait.
+   * @private
+   */
+  _catchUpOnFiles(matched) {
+    if (!this.fileJobs) return;
+    for (const { story, bomItem } of matched) {
+      if (!Array.isArray(story.files) || !bomItem.origin || !story.fullPartNumber) continue;
+      const has = (extension) => story.files.includes(`${story.fullPartNumber}.${extension}`);
+      if (has('png') && has('step')) continue;
+      this.fileJobs.enqueue({
+        key: story.key, partNumber: story.fullPartNumber, thickness: story.thickness, origin: bomItem.origin,
+      });
+    }
+  }
+
+  /**
+   * New-Revision rows for the matched Parts that changed since the last cut
+   * Build and are used by a cut Build. Each carries CAD's values (quantity,
+   * material) and the old Part's own choices (machinery, powdercoat,
+   * thickness, priority), and says which Part it revises.
+   *
+   * @returns {Promise<{ baseline: object|null, revisions: object[] }>}
+   * @private
+   */
+  async _detectNewRevisions(chain, bomItems, matched, season) {
+    if (!this.partDiff || matched.length === 0) return { baseline: null, revisions: [] };
+    const baseline = await this.partDiff.baseline(chain);
+    if (!baseline) return { baseline: null, revisions: [] };
+
+    const changed = await this.partDiff.changedNumbers(baseline, bomItems, season);
+    const candidates = matched.filter((m) => changed.has(baseNumber(m.story)));
+
+    const revisions = [];
+    for (const { bomItem, story } of candidates) {
+      // eslint-disable-next-line no-await-in-loop
+      const issue = await this.jiraClient.getIssue(story.key, { fields: ['issuelinks'] });
+      // eslint-disable-next-line no-await-in-loop
+      const cut = await cutBuildsAmong(this.jiraClient, usedInKeys(issue?.fields?.issuelinks));
+      if (cut.length === 0) continue;
+
+      const next = {
+        ...bomItem,
+        version: nextRevisionLetter(story.version),
+        machinery: story.machinery,
+        powdercoat: story.powdercoat,
+        thickness: story.thickness,
+        ...(story.priority ? { priority: story.priority } : {}),
+      };
+      next.summary = formatPartNumber(next);
+      next.fullPartNumber = next.summary.split(' ')[0];
+      next.revises = story.key;
+      next.replaces = { key: story.key, fullPartNumber: story.fullPartNumber, version: story.version };
+      revisions.push(next);
+    }
+    return { baseline, revisions };
+  }
+
+  /**
+   * Fill in Thickness on new Parts from the part's smallest dimension, when
+   * it matches a stock thickness. A 3D print has none, and a new Revision
+   * keeps the old Part's.
+   * @private
+   */
+  async _seedThickness(newParts) {
+    if (!this.partFiles) return;
+    const todo = newParts.filter((p) => p.origin && !p.revises
+      && p.thickness === Thickness.NONE && p.machinery !== Machinery.THREE_D_PRINTER);
+    for (let i = 0; i < todo.length; i += 6) {
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.all(todo.slice(i, i + 6).map(async (part) => {
+        const option = await this.partFiles.thicknessOf(part.origin);
+        if (option) part.thickness = option;
+      }));
+    }
+  }
+
+  /**
+   * Give each CAD row that has no number the next free one in its Assembly's
+   * block, so the Designer can show it. Nothing is reserved: Save claims the
+   * numbers for real and keeps these when they are still free.
+   *
+   * Rows are removed from `newParts` (and returned as not-loaded entries)
+   * when the Assembly has no number to number them under.
+   * @returns {Promise<object[]>} Not-loaded entries
+   * @private
+   */
+  async _proposeNumbers(newParts, bomItems, assemblyNumber) {
+    const unnumbered = newParts.filter((p) => p.numbering);
+    if (unnumbered.length === 0) return [];
+    if (!this.partNumbers) throw new HttpError(500, 'numbering needs partNumbers');
+
+    const block = blockOf(assemblyNumber);
+    if (block === null) {
+      for (const part of unnumbered) newParts.splice(newParts.indexOf(part), 1);
+      return unnumbered.map((part) => ({
+        item: null,
+        name: part.name,
+        partNumber: '',
+        revision: '',
+        project: '',
+        quantity: part.quantity,
+        problems: ["the Assembly has no 4-digit number (like VR27A-1100), so its Parts can't be numbered"],
+      }));
+    }
+
+    const byPrefix = new Map();
+    for (const part of unnumbered) {
+      if (!byPrefix.has(part.numbering.prefix)) byPrefix.set(part.numbering.prefix, []);
+      byPrefix.get(part.numbering.prefix).push(part);
+    }
+    for (const [prefix, parts] of byPrefix) {
+      const onBom = bomItems
+        .filter((p) => p.partNumber && `V${p.seasonType}${p.year}` === prefix)
+        .map((p) => p.partNumber);
+      // eslint-disable-next-line no-await-in-loop
+      const numbers = await this.partNumbers.propose(prefix, block, parts.length, onBom);
+      parts.forEach((part, i) => {
+        part.partNumber = numbers[i];
+        part.proposedNumber = true;
+        part.summary = formatPartNumber(part);
+        part.fullPartNumber = part.summary.split(' ')[0];
+      });
+    }
+    return [];
   }
 
   /**
@@ -270,7 +453,8 @@ export class PartService {
    * V{R|F}{yy}A- prefix.
    *
    * @param {string} epicKey
-   * @returns {Promise<{ seasonType: string, year: string } | null>}
+   * @returns {Promise<{ seasonType: string, year: string, partNumber: string, configuration?: string } | null>}
+   *   Also carries the OnShape configuration the Assembly follows, when its description names one
    * @private
    */
   async _getAssemblySeason(epicKey) {
@@ -279,14 +463,21 @@ export class PartService {
     // the existing "missing Project" message.
     let issue;
     try {
-      issue = await this.jiraClient.getIssue(epicKey, { fields: ['summary'] });
+      issue = await this.jiraClient.getIssue(epicKey, { fields: ['summary', 'description'] });
     } catch (err) {
       console.warn('[preview] season lookup for', epicKey, 'failed:', err.status, err.message);
       return null;
     }
     const summary = issue?.fields?.summary ?? '';
     const parsed = applyPartMask(summary) ?? applyTitleMask(summary);
-    return parsed ? { seasonType: parsed.seasonType, year: parsed.year } : null;
+    const configuration = configurationFrom(issue?.fields?.description);
+    if (parsed) {
+      return {
+        seasonType: parsed.seasonType, year: parsed.year, partNumber: parsed.partNumber,
+        ...(configuration ? { configuration } : {}),
+      };
+    }
+    return configuration ? { configuration } : null;
   }
 
   /**
@@ -476,6 +667,8 @@ export class PartService {
         thickness: issue.fields?.customfield_10207?.value ?? Thickness.NONE,
         priority: issue.fields?.priority?.name ?? null,
         project: issue.fields?.project?.key ?? JIRA_PROJECT,
+        // Only when the search asked for attachments: undefined means "not known".
+        ...(Array.isArray(issue.fields?.attachment) ? { files: issue.fields.attachment.map((a) => a.filename) } : {}),
       });
     }
     return stories;

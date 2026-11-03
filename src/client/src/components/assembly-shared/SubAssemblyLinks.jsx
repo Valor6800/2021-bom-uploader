@@ -10,7 +10,7 @@ import { TrackerKey } from './AssemblyHeader.jsx';
  * OnShape BOM, so it follows the CAD. Shows nothing when there are none.
  *
  * A sub-assembly nobody has added yet has no page to link to; it is listed
- * with a pointer to Home, where pasting the parent's link adds it.
+ * as not added yet.
  *
  * @param {object} props
  * @param {string} props.assemblyKey
@@ -60,7 +60,7 @@ export default function SubAssemblyLinks({ assemblyKey, mode }) {
             ) : (
               <>
                 <span>{sub.name}</span>
-                <span className="text-muted"> Not added yet. Paste this assembly&apos;s link on <Link to="/">Home</Link> to add it.</span>
+                <span className="text-muted">Not added yet</span>
               </>
             )}
           </li>

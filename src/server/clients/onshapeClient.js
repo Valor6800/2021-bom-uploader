@@ -81,6 +81,20 @@ export function createSignature(method, urlPath, urlQuery, nonce, authDate, cont
 // OnshapeClient
 // ---------------------------------------------------------------------------
 
+/**
+ * OnShape's isometric view: the camera at the front-right-top corner (+x, -y,
+ * +z) looking at the part, z up. The rows are the camera's right, up and back
+ * directions.
+ */
+const ISO_VIEW_MATRIX = (() => {
+  const unit = (v) => { const l = Math.hypot(...v); return v.map((x) => x / l); };
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const back = unit([1, -1, 1]);
+  const right = unit(cross([0, 0, 1], back));
+  const up = cross(back, right);
+  return [right, up, back].flatMap((row) => [...row, 0]).join(',');
+})();
+
 export class OnshapeClient {
   /**
    * @param {object} [options]
@@ -115,7 +129,48 @@ export class OnshapeClient {
   async getAssemblyBOM(documentId, workspaceId, elementId, options = {}) {
     const multiLevel = options.multiLevel !== false;
     const path = `/api/assemblies/d/${documentId}/w/${workspaceId}/e/${elementId}/bom`;
-    return this._get(path, { multiLevel });
+    // A configured assembly's BOM is for one configuration; without one OnShape answers for the default.
+    return this._get(path, { multiLevel, ...(options.configuration ? { configuration: options.configuration } : {}) });
+  }
+
+  /**
+   * The BOM of an assembly as it was when a version was cut. A version never
+   * changes, so the answer for one version never changes either.
+   */
+  async getAssemblyBOMAtVersion(documentId, versionId, elementId, { configuration } = {}) {
+    const path = `/api/assemblies/d/${documentId}/v/${versionId}/e/${elementId}/bom`;
+    return this._get(path, { multiLevel: true, ...(configuration ? { configuration } : {}) });
+  }
+
+  /**
+   * A part's shape in numbers: volume, surface area (`periphery`), mass and
+   * principal moments of inertia. None of these depend on where the part sits
+   * in its Part Studio, so the same shape gives the same numbers.
+   *
+   * @param {object} args
+   * @param {string} args.documentId
+   * @param {'w'|'v'} args.wvmType  Workspace or version
+   * @param {string} args.wvmId
+   * @param {string} args.elementId  The Part Studio
+   * @param {string} args.partId
+   * @param {string} [args.configuration]
+   * @returns {Promise<{ volume: number, periphery: number, mass: number, principalInertia: number[] }>}
+   */
+  async getPartShape({ documentId, wvmType, wvmId, elementId, partId, configuration }) {
+    const path = `/api/parts/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}`
+      + `/partid/${encodeURIComponent(partId)}/massproperties`;
+    const res = await this._get(path, configuration ? { configuration } : {});
+    const body = res?.bodies?.[partId] ?? Object.values(res?.bodies ?? {})[0];
+    if (!body) {
+      throw new OnshapeApiError('OnShape returned no mass properties for the part', 502, path);
+    }
+    // Each value comes with its low and high bound; the first is the value.
+    return {
+      volume: body.volume?.[0] ?? 0,
+      periphery: body.periphery?.[0] ?? 0,
+      mass: body.mass?.[0] ?? 0,
+      principalInertia: (body.principalInertia ?? []).slice(0, 3),
+    };
   }
 
   /**
@@ -158,11 +213,133 @@ export class OnshapeClient {
   }
 
   /**
-   * Export a STEP file for a part. Returns a Buffer.
+   * Export a STEP file for a part in a workspace. Returns a Buffer.
    */
-  async exportSTEP(documentId, workspaceId, elementId, partId) {
-    const path = `/api/parts/d/${documentId}/w/${workspaceId}/e/${elementId}/partid/${partId}/step/`;
-    return this._getBinary(path);
+  async exportSTEP(documentId, workspaceId, elementId, partId, configuration) {
+    return this.exportPartStep({
+      documentId, wvmType: 'w', wvmId: workspaceId, elementId, partId, configuration,
+    });
+  }
+
+  /**
+   * Export one part as a STEP file, in a workspace or a version. OnShape has
+   * no direct STEP download: this starts a translation (kept out of the
+   * document), waits for it, and downloads the result. About 3 seconds.
+   *
+   * @param {object} origin  `{ documentId, wvmType, wvmId, elementId, partId, configuration? }`
+   * @param {{ timeoutMs?: number }} [options]
+   * @returns {Promise<Buffer>}
+   */
+  async exportPartStep(origin, { timeoutMs = 60_000 } = {}) {
+    const { documentId, wvmType, wvmId, elementId, partId, configuration } = origin;
+    const base = `/api/partstudios/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}`;
+    // partIds is one string (not a list); the configuration is a query parameter.
+    const job = await this._post(
+      `${base}/translations`,
+      { formatName: 'STEP', partIds: partId, storeInDocument: false },
+      configuration ? { configuration } : {},
+    );
+
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      // eslint-disable-next-line no-await-in-loop
+      const state = await this._get(`/api/translations/${job.id}`);
+      if (state.requestState === 'DONE' && state.resultExternalDataIds?.length) {
+        return this._getBinary(`/api/documents/d/${documentId}/externaldata/${state.resultExternalDataIds[0]}`);
+      }
+      if (state.requestState !== 'ACTIVE') {
+        throw new OnshapeApiError(
+          `OnShape could not export the part as STEP (${state.failureReason ?? state.requestState})`,
+          502,
+          `translation ${job.id}`,
+        );
+      }
+      if (Date.now() > deadline) {
+        throw new OnshapeApiError('OnShape took too long to export the part as STEP', 504, `translation ${job.id}`);
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => { setTimeout(resolve, 400); });
+    }
+  }
+
+  /**
+   * A picture of one part, from the isometric corner (front, right, top;
+   * z up) with its edges drawn, framed to fill the image. OnShape renders it,
+   * in the part's own colour, in about half a second.
+   *
+   * @param {object} origin  `{ documentId, wvmType, wvmId, elementId, partId, configuration? }`
+   * @param {{ width?: number, height?: number }} [size]  Pixels
+   * @returns {Promise<Buffer>}  A PNG
+   */
+  async getPartImage(origin, { width = 800, height = 600 } = {}) {
+    const { documentId, wvmType, wvmId, elementId, partId, configuration } = origin;
+    return this._isoImage(
+      `/api/parts/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}/partid/${encodeURIComponent(partId)}/shadedviews`,
+      { width, height, configuration },
+    );
+  }
+
+  /**
+   * A picture of a whole assembly, in the same isometric view as a part's.
+   * An assembly takes several seconds to draw.
+   *
+   * @param {object} origin  `{ documentId, wvmType, wvmId, elementId, configuration? }` (the assembly's tab)
+   * @param {{ width?: number, height?: number }} [size]  Pixels
+   * @returns {Promise<Buffer>}  A PNG
+   */
+  async getAssemblyImage(origin, { width = 1000, height = 700 } = {}) {
+    const { documentId, wvmType, wvmId, elementId, configuration } = origin;
+    return this._isoImage(
+      `/api/assemblies/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}/shadedviews`,
+      { width, height, configuration },
+    );
+  }
+
+  async _isoImage(path, { width, height, configuration }) {
+    const res = await this._get(path, {
+      viewMatrix: ISO_VIEW_MATRIX,
+      outputWidth: width,
+      outputHeight: height,
+      pixelSize: 0, // 0 fits the subject to the image
+      edges: 'show',
+      ...(configuration ? { configuration } : {}),
+    });
+    if (!res?.images?.[0]) {
+      throw new OnshapeApiError('OnShape returned no image', 502, path);
+    }
+    return Buffer.from(res.images[0], 'base64');
+  }
+
+  /**
+   * Every body in a Part Studio, with its faces, edges and vertices (metres).
+   * A body's id is its part id.
+   *
+   * @param {object} origin  `{ documentId, wvmType, wvmId, elementId, configuration? }`
+   * @returns {Promise<object[]>}
+   */
+  async getBodyDetails({ documentId, wvmType, wvmId, elementId, configuration }) {
+    const path = `/api/partstudios/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}/bodydetails`;
+    const res = await this._get(path, configuration ? { configuration } : {});
+    return res.bodies ?? [];
+  }
+
+  /**
+   * Points along curved edges, for outlines that aren't lines or circles.
+   *
+   * @param {object} origin   As for `getBodyDetails`
+   * @param {string[]} edgeIds
+   * @returns {Promise<Map<string, number[][]>>}  edge id -> points (metres)
+   */
+  async getTessellatedEdges({ documentId, wvmType, wvmId, elementId, configuration }, edgeIds) {
+    const path = `/api/partstudios/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}/tessellatededges`;
+    const params = { edgeId: edgeIds };
+    if (configuration) params.configuration = configuration;
+    const res = await this._get(path, params);
+    const out = new Map();
+    for (const body of res ?? []) {
+      for (const edge of body.edges ?? []) out.set(edge.id, edge.vertices);
+    }
+    return out;
   }
 
   /**
@@ -183,8 +360,11 @@ export class OnshapeClient {
    *
    * @see https://onshape-public.github.io/docs/api-adv/metadata/
    */
-  async getElementMetadata(documentId, workspaceId, elementId) {
-    return this._get(`/api/metadata/d/${documentId}/w/${workspaceId}/e/${elementId}`);
+  async getElementMetadata(documentId, workspaceId, elementId, configuration) {
+    return this._get(
+      `/api/metadata/d/${documentId}/w/${workspaceId}/e/${elementId}`,
+      configuration ? { configuration } : {},
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -259,10 +439,12 @@ export class OnshapeClient {
    * @param {string} args.workspaceId
    * @param {string} args.elementId
    * @param {string} args.partId
+   * @param {string} [args.configuration]  The part's configuration, when its
+   *   Part Studio is configured (a configured part's metadata is not found without it)
    * @param {Array<{ propertyId: string, value: * }>} args.properties
    * @returns {Promise<object>} Updated metadata payload from Onshape
    */
-  async updatePartMetadata({ documentId, workspaceId, elementId, partId, properties }) {
+  async updatePartMetadata({ documentId, workspaceId, elementId, partId, configuration, properties }) {
     if (!Array.isArray(properties) || properties.length === 0) {
       throw new OnshapeApiError(
         'updatePartMetadata requires a non-empty properties array',
@@ -271,8 +453,8 @@ export class OnshapeClient {
       );
     }
     const path =
-      `/api/metadata/d/${documentId}/w/${workspaceId}/e/${elementId}/p/${partId}`;
-    return this._post(path, { properties });
+      `/api/metadata/d/${documentId}/w/${workspaceId}/e/${elementId}/p/${encodeURIComponent(partId)}`;
+    return this._post(path, { properties }, configuration ? { configuration } : {});
   }
 
   /**
@@ -379,9 +561,13 @@ export class OnshapeClient {
    * consistent between what's signed and what's sent to Onshape.
    */
   _buildUrl(path, params) {
-    const queryString = Object.keys(params).length
-      ? new URLSearchParams(params).toString()
-      : '';
+    // A list parameter is sent as one entry per value (edgeId=a&edgeId=b).
+    const search = new URLSearchParams();
+    for (const [name, value] of Object.entries(params)) {
+      if (Array.isArray(value)) value.forEach((v) => search.append(name, v));
+      else search.append(name, value);
+    }
+    const queryString = search.toString();
     const fullPath = queryString ? `${path}?${queryString}` : path;
     return { fullPath, queryString };
   }

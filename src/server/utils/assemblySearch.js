@@ -7,11 +7,12 @@
  */
 import { applyPartMask, applyTitleMask } from './partMask.js';
 import { RevisionField } from './buildConstants.js';
+import { configurationFrom } from './onshapeConfiguration.js';
 
 /** Fields the search JQL and the direct key lookup ask the tracker for. */
 export const ASSEMBLY_FIELDS = [
   'summary', 'status', 'created', 'customfield_10104', RevisionField.REVISION,
-  'customfield_10300', 'customfield_10301', 'customfield_10302', 'issuetype',
+  'customfield_10300', 'customfield_10301', 'customfield_10302', 'issuetype', 'description',
 ];
 
 /** Issue type names that count as an Assembly (the API name is "Epic"). */
@@ -80,8 +81,9 @@ export function toAssembly(issue, { onshapeBaseUrl } = {}) {
   const workspaceId = f.customfield_10301 ?? null;
   const elementId = f.customfield_10302 ?? null;
   const base = onshapeBaseUrl ? onshapeBaseUrl.replace(/\/+$/, '') : null;
+  const configuration = configurationFrom(f.description);
   const onshapeUrl = base && documentId && workspaceId && elementId
-    ? `${base}/documents/${documentId}/w/${workspaceId}/e/${elementId}`
+    ? `${base}/documents/${documentId}/w/${workspaceId}/e/${elementId}${configuration ? `?configuration=${encodeURIComponent(configuration)}` : ''}`
     : null;
 
   const statusName = f.status?.name ?? null;
@@ -103,6 +105,7 @@ export function toAssembly(issue, { onshapeBaseUrl } = {}) {
     documentId,
     workspaceId,
     elementId,
+    configuration,
     onshapeUrl,
   };
 }

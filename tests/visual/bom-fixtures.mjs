@@ -477,11 +477,10 @@ export async function makeBomFixtures() {
   }
   {
     // Designer: Draft Build 1 holds HAR-2031 and HAR-2033; Active Build 2
-    // also uses HAR-2033, so its fields are locked until it is Re-created.
+    // also uses HAR-2033, so its fields are locked.
     const sharedLinks = { 'HAR-2051': ['HAR-2031', 'HAR-2033'], 'HAR-2052': ['HAR-2033'] };
     const s = services(jiraFor({ builds: [b2Active, b1Draft], links: sharedLinks, nextKeys: ['HAR-2041'] }));
     f['build-parts-HAR-2051-shared'] = await capture(() => s.buildService.getLinkedParts('HAR-2051'));
-    f['recreate-HAR-2033-for-2051'] = await capture(() => s.buildService.recreateForBuild({ partKey: 'HAR-2033', targetBuildKey: 'HAR-2051' }));
   }
   {
     const s = services(jiraFor({ parts: fourParts, builds: threeBuilds, links: threeLinks, nextKeys: ['HAR-2040'] }));
@@ -707,8 +706,6 @@ export function checkBomFixtures(f, assert) {
   assert(f['stories-chain-four'].body.length === 4, 'stories-chain-four is not four Parts');
   assert(f['build-parts-a-HAR-2053'].body.join() === 'HAR-2031,HAR-2035', 'Build 3 Parts');
   assert(f['build-parts-HAR-2051-shared'].body.join() === 'HAR-2031,HAR-2033', 'shared Draft Parts');
-  const re = f['recreate-HAR-2033-for-2051'].body;
-  assert(re.key === 'HAR-2041' && re.part?.fullPartNumber === 'VF27P-0003B', `recreate ok: ${JSON.stringify(re)}`);
   assert(f['clone-HAR-2032-ok'].body.key === 'HAR-2040' && f['clone-HAR-2032-ok'].body.part?.key === 'HAR-2040', 'clone ok');
   assert(f['archive-ok'].body.success === true, 'archive ok');
   checkHomeFixtures(f, assert);

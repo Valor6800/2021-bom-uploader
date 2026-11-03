@@ -1,5 +1,6 @@
 import Badge from '../ui/Badge.jsx';
 import { TrackerKey } from '../assembly-shared/AssemblyHeader.jsx';
+import PartThumb from '../assembly-shared/PartThumb.jsx';
 
 export const COLUMN_COUNT = 8;
 
@@ -9,9 +10,14 @@ const TEXT_FIELDS = ['quantity', 'material', 'machinery', 'powdercoat', 'thickne
 function PartCell({ row }) {
   return (
     <th scope="row" className="cell-part">
-      <span className="part-key"><TrackerKey issueKey={row.key} /></span>
-      <span className="mono-key part-number">{row.fullPartNumber}</span>
-      <span className="part-name">{row.name ?? row.summary}</span>
+      <span className="part-cell">
+        <PartThumb partKey={row.imageKey} />
+        <span>
+          <span className="part-key"><TrackerKey issueKey={row.key} /></span>
+          <span className="mono-key part-number">{row.fullPartNumber}</span>
+          <span className="part-name">{row.name ?? row.summary}</span>
+        </span>
+      </span>
     </th>
   );
 }

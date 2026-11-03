@@ -2,6 +2,7 @@ import InlineSelect from '../ui/InlineSelect.jsx';
 import Badge from '../ui/Badge.jsx';
 import Button from '../ui/Button.jsx';
 import { TrackerKey } from '../assembly-shared/AssemblyHeader.jsx';
+import PartThumb from '../assembly-shared/PartThumb.jsx';
 import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS, PRIORITIES } from '../../api/client.js';
 
 /** Material from OnShape as text; one that isn't on the list says where to fix it. */
@@ -30,7 +31,8 @@ const BADGE_WORDS = new Set(['New', 'Changed', 'In Build', 'Saved', 'Error', 'No
  * chip with the CAD change detail, and a per-row error with Retry.
  *
  * Fields show as plain text on a cut Build (`viewOnly`) and on a Part a cut
- * Build uses (`row.sharedLocked`); the latter offers "Re-create for this Build".
+ * Build uses (`row.sharedLocked`). A row that makes units for the Build (a new
+ * Revision, or the units CAD needs beyond what the Build holds) is plain text too.
  *
  * Material is always text: OnShape sets it. A material that isn't on the list
  * (e.g. "Steel") says to change it in OnShape. Another CAD value that isn't on
@@ -47,14 +49,11 @@ const BADGE_WORDS = new Set(['New', 'Changed', 'In Build', 'Saved', 'Error', 'No
  * @param {boolean} props.editable
  * @param {boolean} props.busy             A save is running
  * @param {boolean} [props.viewOnly]       The Build is cut: no checkbox, no inputs
- * @param {() => void} [props.onRecreate]
- * @param {boolean} [props.recreateBusy]   This row's Re-create is running
- * @param {string|null} [props.recreateBlocked]  Why Re-create is off
- * @param {boolean} [props.actionsLocked]  Another action is running, or no Build
+ * @param {number} [props.thumbStamp]      Changes when pictures may have arrived
  */
 export default function DesignerPartRow({
   row, selectable, selected, onToggle, onEdit, onRetry, problem, editable, busy,
-  viewOnly = false, onRecreate, recreateBusy = false, recreateBlocked = null, actionsLocked = false,
+  viewOnly = false, thumbStamp,
 }) {
   const label = row.fullPartNumber ?? row.summary;
   const failure = row.result && row.result.ok === false ? row.result : null;
@@ -64,8 +63,7 @@ export default function DesignerPartRow({
     ? `Not saved: ${problem.error}`
     : failure?.error ?? null;
   const showChip = BADGE_WORDS.has(row.status) || row.status === 'In Build';
-  const asText = viewOnly || row.sharedLocked;
-  const tipId = `recreate-tip-${row.rowId}`;
+  const asText = viewOnly || row.sharedLocked || row.isCopy;
 
   return (
     <>
@@ -82,9 +80,14 @@ export default function DesignerPartRow({
           )}
         </td>
         <th scope="row" className="cell-part">
-          <span className="part-key">{row.key ? <TrackerKey issueKey={row.key} /> : <span className="text-muted">New</span>}</span>
-          <span className="mono-key part-number">{row.fullPartNumber}</span>
-          <span className="part-name">{row.name}</span>
+          <span className="part-cell">
+            <PartThumb partKey={row.imageKey} refresh={thumbStamp} />
+            <span>
+              <span className="part-key">{row.key ? <TrackerKey issueKey={row.key} /> : <span className="text-muted">New</span>}</span>
+              <span className="mono-key part-number">{row.fullPartNumber}</span>
+              <span className="part-name">{row.name}</span>
+            </span>
+          </span>
         </th>
         {asText ? (
           <>
@@ -158,25 +161,10 @@ export default function DesignerPartRow({
           {row.revisionNote && (
             <span className="status-detail" data-revision-note={row.revisionNote.kind}>{row.revisionNote.text}</span>
           )}
-          {row.result?.note && <span className="status-detail">{row.result.note}</span>}
-          {row.sharedLocked && !viewOnly && onRecreate && (
-            <>
-              <span className="status-detail">Design changed? Raise its Revision in OnShape, then Update from CAD.</span>
-              <Button
-                variant="secondary"
-                className="row-recreate"
-                onClick={onRecreate}
-                ariaDisabled={!!recreateBlocked}
-                disabled={recreateBusy || actionsLocked || busy}
-                title={recreateBlocked ?? 'For Builds made at the same time. Makes the next Revision here only; OnShape keeps showing the old one.'}
-                aria-describedby={recreateBlocked ? tipId : undefined}
-                aria-label={`Re-create for this Build: ${label}`}
-              >
-                {recreateBusy ? 'Re-creating…' : 'Re-create for this Build'}
-              </Button>
-              {recreateBlocked && <span id={tipId} className="visually-hidden">{recreateBlocked}</span>}
-            </>
+          {row.proposedNumber && !row.result?.ok && (
+            <span className="status-detail">Number is set in OnShape when you Save.</span>
           )}
+          {row.result?.note && <span className="status-detail">{row.result.note}</span>}
         </td>
       </tr>
       {message && (

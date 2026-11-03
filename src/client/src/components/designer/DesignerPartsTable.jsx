@@ -17,14 +17,11 @@ import DesignerPartRow, { COLUMN_COUNT } from './DesignerPartRow.jsx';
  * @param {boolean} props.locked           No Build yet, or a load failed: read-only
  * @param {boolean} props.busy
  * @param {boolean} [props.viewOnly]       The Build is cut: only its own Parts, as text
- * @param {(row: object) => void} [props.onRecreate]  Re-create a locked shared Part
- * @param {string|null} [props.recreatingKey]  The Part whose Re-create is running
- * @param {(row: object) => string|null} [props.recreateBlocked]
- * @param {boolean} [props.actionsLocked]
+ * @param {number} [props.thumbStamp]      Changes when pictures may have arrived
  */
 export default function DesignerPartsTable({
   groups, buildName, selection, onToggle, onToggleAll, onEdit, onRetry, heldBack, locked, busy,
-  viewOnly = false, onRecreate, recreatingKey = null, recreateBlocked = () => null, actionsLocked = false,
+  viewOnly = false, thumbStamp,
 }) {
   const allSections = [
     { id: 'new', title: 'New from CAD', rows: groups.newFromCad, selectAll: true },
@@ -110,10 +107,7 @@ export default function DesignerPartsTable({
                   editable={!locked && !row.readOnly}
                   busy={busy}
                   viewOnly={viewOnly}
-                  onRecreate={onRecreate ? () => onRecreate(row) : undefined}
-                  recreateBusy={recreatingKey === row.key}
-                  recreateBlocked={row.sharedLocked ? recreateBlocked(row) : null}
-                  actionsLocked={locked || actionsLocked}
+                  thumbStamp={thumbStamp}
                 />
               ))}
             </tbody>

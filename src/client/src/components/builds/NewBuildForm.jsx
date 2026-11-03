@@ -9,21 +9,23 @@ import { buildLabel, buildSummaryPreview } from '../../lib/buildNames.js';
  * @param {object} props
  * @param {string} props.defaultName     The Assembly name
  * @param {number} props.nextNumber      Display only; the server assigns it
- * @param {object[]} props.copyFrom      Builds whose Parts may be copied
+ * @param {object[]} props.copyFrom      Cut Builds whose Parts may be reused
  * @param {string|null} [props.defaultCopyKey]
- * @param {'empty'|'copy'} [props.defaultStart]
+ * @param {'empty'|'copy'} [props.defaultStart]  Reuse is the default when there is something to reuse
  * @param {boolean} props.busy
  * @param {string|null} props.error      Text shown under the form
  * @param {(values: { name: string, description: string, cloneFromBuildKey?: string }) => void} props.onCreate
  * @param {() => void} props.onCancel
  */
 export default function NewBuildForm({
-  defaultName, nextNumber, copyFrom, defaultCopyKey = null, defaultStart = 'empty', busy, error, onCreate, onCancel,
+  defaultName, nextNumber, copyFrom, defaultCopyKey = null, defaultStart = 'copy', busy, error, onCreate, onCancel,
 }) {
   const [name, setName] = useState(defaultName);
   const [description, setDescription] = useState('');
   const [start, setStart] = useState(defaultStart === 'copy' && copyFrom.length > 0 ? 'copy' : 'empty');
-  const [copyKey, setCopyKey] = useState(defaultCopyKey ?? copyFrom[0]?.key ?? '');
+  const [copyKey, setCopyKey] = useState(
+    copyFrom.some((b) => b.key === defaultCopyKey) ? defaultCopyKey : copyFrom[0]?.key ?? '',
+  );
   const nameRef = useRef(null);
   const ids = useId();
   const errorId = `${ids}-error`;
@@ -70,35 +72,37 @@ export default function NewBuildForm({
       <p id={`${ids}-preview`} className="new-build-preview" data-testid="new-build-preview">
         <span aria-hidden="true">→ </span>&quot;{buildSummaryPreview(trimmed || defaultName, nextNumber, description)}&quot;
       </p>
-      <fieldset className="form-row new-build-start">
-        <legend className="form-label">Start</legend>
-        <label className="radio-label">
-          <input type="radio" name={`${ids}-start`} value="empty" checked={start === 'empty'} onChange={() => setStart('empty')} />
-          Empty
-        </label>
-        <label className="radio-label">
-          <input
-            type="radio"
-            name={`${ids}-start`}
-            value="copy"
-            checked={start === 'copy'}
-            disabled={copyFrom.length === 0}
-            onChange={() => setStart('copy')}
-          />
-          Copy Parts from
-        </label>
-        <select
-          className="select-inline"
-          aria-label="Copy Parts from"
-          value={copyKey}
-          disabled={start !== 'copy' || copyFrom.length === 0}
-          onChange={(e) => setCopyKey(e.target.value)}
-        >
-          {copyFrom.map((b) => (
-            <option key={b.key} value={b.key}>{buildLabel(b)} · {b.status}</option>
-          ))}
-        </select>
-      </fieldset>
+      {copyFrom.length > 0 && (
+        <fieldset className="form-row new-build-start">
+          <legend className="form-label">Parts</legend>
+          <label className="radio-label">
+            <input
+              type="radio"
+              name={`${ids}-start`}
+              value="copy"
+              checked={start === 'copy'}
+              onChange={() => setStart('copy')}
+            />
+            Reuse from
+          </label>
+          <select
+            className="select-inline"
+            aria-label="Reuse Parts from"
+            value={copyKey}
+            disabled={start !== 'copy'}
+            onChange={(e) => setCopyKey(e.target.value)}
+          >
+            {copyFrom.map((b) => (
+              <option key={b.key} value={b.key}>{buildLabel(b)}</option>
+            ))}
+          </select>
+          <label className="radio-label">
+            <input type="radio" name={`${ids}-start`} value="empty" checked={start === 'empty'} onChange={() => setStart('empty')} />
+            Make everything new
+          </label>
+          <p className="form-help">Reused Parts are already made. Changed Parts and extra units are made new.</p>
+        </fieldset>
+      )}
       {error && <p id={errorId} className="form-error" role="alert">{error}</p>}
       <div className="form-actions">
         <Button variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>

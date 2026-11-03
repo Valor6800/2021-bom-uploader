@@ -9,7 +9,6 @@
  * GET  /api/builds/:key/parts
  * POST /api/builds/:key/parts
  * POST /api/builds/:key/save
- * POST /api/builds/:key/parts/:partKey/recreate
  * POST /api/builds/:key/cut-version
  * POST /api/builds/:key/archive
  */
@@ -36,20 +35,20 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
  * crafted client, so they reject the whole request before any write.
  * Field values (material, quantity, ...) are checked per item by the service.
  *
- * @returns {{ creates: object[], updates: object[], links: object[] }}
+ * @returns {{ creates: object[], updates: object[], links: object[], copies: object[] }}
  */
 function validateSaveBody(body) {
   if (!isPlainObject(body)) throw badRequest('Body must be an object');
 
   const lists = {};
-  for (const name of ['creates', 'updates', 'links']) {
+  for (const name of ['creates', 'updates', 'links', 'copies']) {
     const value = body[name];
     if (value === undefined || value === null) lists[name] = [];
     else if (Array.isArray(value)) lists[name] = value;
     else throw badRequest(`${name} must be an array`);
   }
 
-  const total = lists.creates.length + lists.updates.length + lists.links.length;
+  const total = lists.creates.length + lists.updates.length + lists.links.length + lists.copies.length;
   if (total < 1 || total > MAX_SAVE_ITEMS) {
     throw badRequest(`A save must hold 1 to ${MAX_SAVE_ITEMS} items`);
   }
@@ -75,6 +74,16 @@ function validateSaveBody(body) {
         if (item.revision !== undefined && item.revision !== null && typeof item.revision !== 'string') {
           throw badRequest(`${path}.revision: revision must be a string`);
         }
+        if (item.revises !== undefined) {
+          const revises = validateIssueKey(item.revises);
+          if (!revises.valid) throw badRequest(`${path}.revises: ${revises.error}`);
+        }
+        if (item.cadRef !== undefined && (typeof item.cadRef !== 'string' || item.cadRef.length > 200)) {
+          throw badRequest(`${path}.cadRef: cadRef must be a string`);
+        }
+      } else if (name === 'copies') {
+        const from = validateIssueKey(item.from);
+        if (!from.valid) throw badRequest(`${path}.from: ${from.error}`);
       } else {
         const check = validateIssueKey(item.key);
         if (!check.valid) throw badRequest(`${path}.key: ${check.error}`);
@@ -236,31 +245,15 @@ export default function buildRoutes({ buildService }) {
   }));
 
   /**
-   * POST /api/builds/:key/save  { creates?, updates?, links? }
+   * POST /api/builds/:key/save  { creates?, updates?, links?, copies? }
    * → 200 { results: [...] }, even when some items failed.
    */
   router.post('/:key/save', asyncHandler(async (req, res) => {
     requireKey('key', req.params.key);
-    const { creates, updates, links } = validateSaveBody(req.body);
+    const { creates, updates, links, copies } = validateSaveBody(req.body);
 
     const result = await buildService.saveBuildParts({
-      buildKey: req.params.key, creates, updates, links,
-    });
-    res.json(result);
-  }));
-
-  /**
-   * POST /api/builds/:key/parts/:partKey/recreate — "Re-create for this
-   * Build" (Sheet 06): the Part's design changed, so it needs a new
-   * revision rather than just being moved forward.
-   * → { key, revision, part }; 409 with `recreatedAs` when already re-created.
-   */
-  router.post('/:key/parts/:partKey/recreate', asyncHandler(async (req, res) => {
-    requireKey('key', req.params.key);
-    requireKey('partKey', req.params.partKey);
-    const result = await buildService.recreateForBuild({
-      partKey: req.params.partKey,
-      targetBuildKey: req.params.key,
+      buildKey: req.params.key, creates, updates, links, copies,
     });
     res.json(result);
   }));

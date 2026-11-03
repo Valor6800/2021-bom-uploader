@@ -11,6 +11,8 @@ import BuildTabs, { TABPANEL_ID, tabId } from '../components/assembly/BuildTabs.
 import AssemblyPartRow, { COLUMN_COUNT } from '../components/assembly/AssemblyPartRow.jsx';
 import BuildCompare from '../components/assembly/BuildCompare.jsx';
 import PrintView from '../components/assembly/PrintView.jsx';
+import PurchasedParts from '../components/assembly/PurchasedParts.jsx';
+import BuildImage from '../components/assembly-shared/BuildImage.jsx';
 import CloneDialog from '../components/assembly/CloneDialog.jsx';
 import SubAssemblyLinks from '../components/assembly-shared/SubAssemblyLinks.jsx';
 import Alert from '../components/ui/Alert.jsx';
@@ -346,6 +348,8 @@ function AssemblyPage({ assemblyKey: key }) {
               onResolved={() => data.refresh()}
             />
 
+            <BuildImage buildKey={selectedBuild.key} label={buildName} />
+
             <div className="parts-table-wrap">
               <table className="table parts-table assembly-table">
                 <caption className="visually-hidden">Parts for {buildName}</caption>
@@ -398,6 +402,7 @@ function AssemblyPage({ assemblyKey: key }) {
                     ))}
                   </tbody>
                 )}
+                <PurchasedParts assemblyKey={key} buildKey={selectedKey} />
               </table>
             </div>
           </section>

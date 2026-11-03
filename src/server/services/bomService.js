@@ -5,10 +5,15 @@
 
 import { MATERIAL_MACHINERY_MAP, Material, Machinery, Powdercoat, Thickness } from '../utils/bomConstants.js';
 import { applyPartMask } from '../utils/partMask.js';
-import { isMoreOriginal } from '../utils/partChain.js';
+import { baseNumber, isCurrentRevision } from '../utils/partChain.js';
 import { stripBrackets } from '../utils/cleanName.js';
+import { OnshapeProperty } from '../utils/onshapeProperties.js';
+import { cleanConfiguration } from '../utils/onshapeConfiguration.js';
+import { powdercoatFromAppearance } from '../utils/appearance.js';
 
 const REQUIRED_COLUMNS = ['quantity', 'partNumber', 'material', 'name'];
+
+const ALUMINIUM = new Set([Material.AL_6061, Material.AL_7075]);
 
 /**
  * OnShape's built-in BOM columns, matched by header propertyId first and by
@@ -17,10 +22,10 @@ const REQUIRED_COLUMNS = ['quantity', 'partNumber', 'material', 'name'];
  * the BOM has no such header.
  */
 const BOM_PROPERTY = Object.freeze({
-  NAME: { id: '57f3fb8efa3416c06701d60d', name: 'Name', key: 'name' },
-  PART_NUMBER: { id: '57f3fb8efa3416c06701d60f', name: 'Part number', key: 'partNumber' },
-  REVISION: { id: '57f3fb8efa3416c06701d610', name: 'Revision', key: 'revision' },
-  PROJECT: { id: '57f3fb8efa3416c06701d613', name: 'Project', key: 'project' },
+  NAME: { id: OnshapeProperty.NAME, name: 'Name', key: 'name' },
+  PART_NUMBER: { id: OnshapeProperty.PART_NUMBER, name: 'Part number', key: 'partNumber' },
+  REVISION: { id: OnshapeProperty.REVISION, name: 'Revision', key: 'revision' },
+  PROJECT: { id: OnshapeProperty.PROJECT, name: 'Project', key: 'project' },
 });
 
 const PROJECT_PATTERN = /^V[RF]\d{2}$/;
@@ -32,6 +37,47 @@ function resolveItemKey(headers, { id, name, key }) {
     headers.find((h) => h.propertyId === id) ??
     headers.find((h) => h.name === name);
   return header?.propertyName ?? key;
+}
+
+/**
+ * Where a BOM row's part lives in OnShape, when the tool may write to it: a
+ * part of the Assembly's own document, in a workspace (not a version).
+ * Null for anything else (a vendor part, a part from another document).
+ */
+function cadOf(item, context) {
+  const source = item?.itemSource;
+  if (!source?.partId || source.wvmType !== 'w'
+    || !context.documentId || source.documentId !== context.documentId) return null;
+  return {
+    documentId: source.documentId,
+    workspaceId: source.wvmId,
+    elementId: source.elementId,
+    partId: source.partId,
+    configuration: source.configuration || null,
+  };
+}
+
+/**
+ * Where a BOM row's part lives and which version of its Part Studio the BOM
+ * saw, for reading it back (a version, another document: anything).
+ */
+function originOf(item) {
+  const source = item?.itemSource;
+  if (!source?.partId) return null;
+  return {
+    documentId: source.documentId,
+    wvmType: source.wvmType,
+    wvmId: source.wvmId,
+    elementId: source.elementId,
+    partId: source.partId,
+    configuration: source.configuration || null,
+    microversionId: source.sourceElementMicroversionId ?? null,
+  };
+}
+
+/** One OnShape part, as one string: the same part in two rows is one Part. */
+function cadRefOf(cad) {
+  return [cad.documentId, cad.elementId, cad.partId, cad.configuration ?? ''].join(':');
 }
 
 function readValue(item, key) {
@@ -58,6 +104,15 @@ function isSubAssemblyRow(item, items) {
   return !!source.elementId && (hasChildren || !source.partId);
 }
 
+/**
+ * A row whose part lives in another OnShape document: a vendor or
+ * off-the-shelf part. The tool makes no Part for it.
+ */
+function isExternalRow(item, context) {
+  const documentId = item?.itemSource?.documentId;
+  return !!documentId && !!context.documentId && documentId !== context.documentId;
+}
+
 /** What a sub-assembly row tells us before its own metadata is read. */
 function describeSubAssembly(item, keys) {
   const source = item.itemSource;
@@ -71,6 +126,8 @@ function describeSubAssembly(item, keys) {
     elementId: source.elementId,
     wvmType: source.wvmType ?? null,
     wvmId: source.wvmId ?? null,
+    // The configuration the parent uses this sub-assembly in.
+    configuration: cleanConfiguration(source.configuration),
   };
 }
 
@@ -78,6 +135,13 @@ function describeSubAssembly(item, keys) {
 // Key: "docId:wsId:elemId", Value: { data, timestamp }
 const BOM_CACHE = new Map();
 const CACHE_TTL_MS = 60 * 1000; // 1 minute
+// A cut version never changes, so its BOM is kept for as long as the server runs.
+const VERSION_CACHE = new Map();
+
+/** Forget every cached BOM: call after writing to OnShape, so the next read sees it. */
+export function clearBomCache() {
+  BOM_CACHE.clear();
+}
 
 export class BOMService {
   /**
@@ -114,16 +178,39 @@ export class BOMService {
    * @returns {Promise<{ parts: object[], unidentified: object[], subAssemblies: object[] }>}
    */
   async getBOMReport(epicKey, documentId, workspaceId, elementId, assembly, { fresh = false } = {}) {
-    const cacheKey = `${documentId}:${workspaceId}:${elementId}`;
+    // The Assembly's OnShape configuration (if it follows one) says which BOM to read.
+    const configuration = assembly?.configuration ?? null;
+    const cacheKey = `${documentId}:${workspaceId}:${elementId}:${configuration ?? ''}`;
     const cached = fresh ? null : BOM_CACHE.get(cacheKey);
 
     if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
-      return this._parseBOM(cached.data, epicKey, assembly);
+      return this._parseBOM(cached.data, epicKey, assembly, { documentId });
     }
 
-    const raw = await this.onshapeClient.getAssemblyBOM(documentId, workspaceId, elementId, { multiLevel: true });
+    const raw = await this.onshapeClient.getAssemblyBOM(
+      documentId, workspaceId, elementId, { multiLevel: true, ...(configuration ? { configuration } : {}) },
+    );
     BOM_CACHE.set(cacheKey, { data: raw, timestamp: Date.now() });
-    return this._parseBOM(raw, epicKey, assembly);
+    return this._parseBOM(raw, epicKey, assembly, { documentId });
+  }
+
+  /**
+   * The BOM of an assembly as of a cut version, parsed like the live one.
+   * A version never changes, so each answer is kept for good.
+   *
+   * @returns {Promise<{ parts: object[] }>}
+   */
+  async getVersionReport(documentId, versionId, elementId, assembly) {
+    const configuration = assembly?.configuration ?? null;
+    const cacheKey = `v:${documentId}:${versionId}:${elementId}:${configuration ?? ''}`;
+    let raw = VERSION_CACHE.get(cacheKey);
+    if (!raw) {
+      raw = await this.onshapeClient.getAssemblyBOMAtVersion(
+        documentId, versionId, elementId, ...(configuration ? [{ configuration }] : []),
+      );
+      VERSION_CACHE.set(cacheKey, raw);
+    }
+    return this._parseBOM(raw, null, assembly, { documentId });
   }
 
   /**
@@ -135,24 +222,28 @@ export class BOMService {
    * @returns {{ matched: object[], unmatched: import('./types').ParsedBOMItem[] }}
    */
   compareBOMWithJira(bomItems, existingStories) {
+    // The tool owns Revisions, so CAD's letter plays no part: a row matches the
+    // current Revision of its number. A spare repeats its original's number;
+    // CAD matches the original.
     const storyMap = new Map();
     for (const story of existingStories) {
-      // A spare repeats its original's number; CAD matches the original.
-      if (story.fullPartNumber && isMoreOriginal(story, storyMap.get(story.fullPartNumber))) {
-        storyMap.set(story.fullPartNumber, story);
-      }
+      const number = baseNumber(story);
+      if (number && isCurrentRevision(story, storyMap.get(number))) storyMap.set(number, story);
     }
 
     const matched = [];
     const unmatched = [];
 
     for (const item of bomItems) {
-      const story = storyMap.get(item.fullPartNumber);
+      const number = baseNumber(item);
+      const story = number ? storyMap.get(number) : undefined;
       if (!story) {
         unmatched.push(item);
         continue;
       }
 
+      // CAD owns quantity and material; machinery, powdercoat and thickness
+      // are the student's once a Part exists, so CAD never reports them.
       const changes = {};
       let changeCount = 0;
 
@@ -162,18 +253,6 @@ export class BOMService {
       }
       if (story.material !== item.material) {
         changes.material = item.material;
-        changeCount++;
-      }
-      if (story.machinery !== item.machinery) {
-        changes.machinery = item.machinery;
-        changeCount++;
-      }
-      if (story.powdercoat !== item.powdercoat) {
-        changes.powdercoat = item.powdercoat;
-        changeCount++;
-      }
-      if (story.thickness !== item.thickness) {
-        changes.thickness = item.thickness;
         changeCount++;
       }
 
@@ -200,11 +279,16 @@ export class BOMService {
    * 2. Legacy: the Part number cell already holds the full number
    *    ("VR26P-0001A").
    * 3. Legacy: the Name already holds the full number ("VR26P-0001A Plate").
+   * 4. No Part number at all, on a part of the Assembly's own document that
+   *    the tool can write to: the tool will number it (`unnumbered`).
    *
-   * @returns {{ parsed: object, name: string } | { problems: string[] }}
+   * The Revision column is not needed: the tool owns Revisions, and a part
+   * that has none is Revision A.
+   *
+   * @returns {{ parsed: object, name: string } | { unnumbered: object, name: string } | { problems: string[] }}
    * @private
    */
-  _identifyRow(item, keys, assemblyPrefix) {
+  _identifyRow(item, keys, assemblyPrefix, context = {}) {
     const partNumber = readValue(item, keys.partNumber);
     const revision = readValue(item, keys.revision).toUpperCase();
     const project = readValue(item, keys.project).toUpperCase();
@@ -221,12 +305,11 @@ export class BOMService {
       } else if (!prefix) {
         problems.push('missing Project (the part has none and the Assembly has no season prefix)');
       }
-      if (!revision) problems.push('missing Revision');
-      else if (!REVISION_PATTERN.test(revision)) {
+      if (revision && !REVISION_PATTERN.test(revision)) {
         problems.push(`invalid Revision "${revision}" (expected a single letter, e.g. A)`);
       }
       if (problems.length === 0) {
-        const parsed = applyPartMask(`${prefix}P-${partNumber}${revision} ${name}`);
+        const parsed = applyPartMask(`${prefix}P-${partNumber}${revision || 'A'} ${name}`);
         if (parsed) return { parsed, name };
       }
       return { problems };
@@ -238,11 +321,28 @@ export class BOMService {
     const fromName = applyPartMask(rawName);
     if (fromName) return { parsed: fromName, name: stripBrackets(fromName.name) };
 
-    return {
-      problems: [partNumber
-        ? `invalid Part number "${partNumber}" (expected 4 digits, e.g. 0001)`
-        : 'missing Part number'],
-    };
+    if (!partNumber) {
+      if (cadOf(item, context)) {
+        const problems = [];
+        const prefix = project ? project : assemblyPrefix;
+        if (project && !PROJECT_PATTERN.test(project)) {
+          problems.push(`invalid Project "${project}" (expected V, R or F, then a 2-digit year, e.g. VF27)`);
+        } else if (!prefix) {
+          problems.push('missing Project (the part has none and the Assembly has no season prefix)');
+        }
+        if (problems.length) return { problems };
+        return {
+          unnumbered: { prefix, setProject: !project },
+          name,
+        };
+      }
+      return {
+        problems: [item.itemSource?.partId
+          ? "missing Part number (this part is pinned to a version, so the tool can't number it)"
+          : 'missing Part number'],
+      };
+    }
+    return { problems: [`invalid Part number "${partNumber}" (expected 4 digits, e.g. 0001)`] };
   }
 
   /**
@@ -254,7 +354,7 @@ export class BOMService {
    * @returns {{ parts: object[], unidentified: object[], subAssemblies: object[] }}
    * @private
    */
-  _parseBOM(results, epicKey, assembly = {}) {
+  _parseBOM(results, epicKey, assembly = {}, context = {}) {
     const headers = results?.bomTable?.headers ?? [];
 
     const missing = REQUIRED_COLUMNS.filter(
@@ -272,6 +372,7 @@ export class BOMService {
     const unidentified = [];
     const subAssemblies = [];
     const seenSubAssemblies = new Set();
+    const external = new Map();
 
     const keys = {
       name: resolveItemKey(headers, BOM_PROPERTY.NAME),
@@ -301,8 +402,25 @@ export class BOMService {
         continue;
       }
 
-      const identified = this._identifyRow(item, keys, assemblyPrefix);
-      if (!identified.parsed) {
+      // A part from another document is bought, not made: listed for the Assembly page only.
+      if (isExternalRow(item, context)) {
+        const source = item.itemSource;
+        const id = [source.documentId, source.elementId, source.partId ?? '', source.configuration ?? ''].join(':');
+        const found = external.get(id);
+        if (found) {
+          found.quantity += item.quantity ?? 0;
+        } else {
+          external.set(id, {
+            name: readValue(item, keys.name),
+            partNumber: readValue(item, keys.partNumber),
+            quantity: item.quantity ?? 0,
+          });
+        }
+        continue;
+      }
+
+      const identified = this._identifyRow(item, keys, assemblyPrefix, context);
+      if (!identified.parsed && !identified.unnumbered) {
         unidentified.push({
           item: item.item ?? null,
           name: readValue(item, keys.name),
@@ -314,10 +432,29 @@ export class BOMService {
         });
         continue;
       }
-      const { parsed, name } = identified;
+      const { name } = identified;
+      const parsed = identified.parsed ?? {
+        summary: null,
+        name,
+        version: 'A',
+        seasonType: identified.unnumbered.prefix[1],
+        year: identified.unnumbered.prefix.slice(2),
+        partNumber: null,
+        fullPartNumber: null,
+        isEpic: false,
+      };
 
       const part = {
         ...parsed,
+        cad: cadOf(item, context),
+        origin: originOf(item),
+        ...(identified.unnumbered
+          ? {
+            numbering: { prefix: identified.unnumbered.prefix, setProject: identified.unnumbered.setProject },
+            cadRef: cadRefOf(cadOf(item, context)),
+          }
+          : {}),
+        cadRevision: readValue(item, keys.revision).toUpperCase(),
         quantity: item.quantity,
         name,
         material: Material.NONE,
@@ -346,14 +483,25 @@ export class BOMService {
         }
       }
 
-      // Aggregate quantities for duplicate part numbers
-      if (bom[part.fullPartNumber]) {
-        bom[part.fullPartNumber].quantity += part.quantity;
+      // Powdercoat follows the part's colour, on aluminium only (a black 3D
+      // print is not powdercoated). It only seeds a new Part: once a Part
+      // exists the student's choice stands.
+      if (ALUMINIUM.has(part.material)) part.powdercoat = powdercoatFromAppearance(item.appearance);
+
+      // What a new Part needs before the tool will make it.
+      part.missing = [];
+      if (!part.name) part.missing.push('Name');
+      if (part.material === Material.NONE) part.missing.push('Material');
+
+      // Aggregate quantities for one Part, whatever Revision letter CAD shows.
+      const identity = baseNumber(part) ?? part.cadRef;
+      if (bom[identity]) {
+        bom[identity].quantity += part.quantity;
       } else {
-        bom[part.fullPartNumber] = part;
+        bom[identity] = part;
       }
     }
 
-    return { parts: Object.values(bom), unidentified, subAssemblies };
+    return { parts: Object.values(bom), unidentified, subAssemblies, external: [...external.values()] };
   }
 }

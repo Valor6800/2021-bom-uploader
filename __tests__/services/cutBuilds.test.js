@@ -163,13 +163,6 @@ describe('writes into a cut Build answer 409 and write nothing', () => {
     expectNoWrites(jiraClient);
   });
 
-  it('Re-create targeting a cut Build', async () => {
-    const { app, jiraClient } = makeWorld();
-    const res = await request(app).post('/api/builds/HAR-2053/parts/HAR-2032/recreate');
-    expect(res.status).toBe(409);
-    expect(res.body.error).toBe(CUT_MESSAGE(3));
-    expectNoWrites(jiraClient);
-  });
 });
 
 describe('field updates to a Part a cut Build uses answer 409 and write nothing', () => {
@@ -181,7 +174,7 @@ describe('field updates to a Part a cut Build uses answer 409 and write nothing'
     expect(res.status).toBe(200);
     expect(res.body.results).toEqual([expect.objectContaining({
       ref: 'HAR-2031', op: 'update', ok: false, status: 409, locked: true,
-      error: "VF27P-0001A is used in cut Build 1, so it can't be changed. Re-create it for the Draft Build instead.",
+      error: "VF27P-0001A is used in cut Build 1, so it can't be changed.",
       cutBuilds: [{ key: 'HAR-2051', buildNumber: 1, status: 'Active' }],
     })]);
     expectNoWrites(jiraClient);
@@ -203,7 +196,7 @@ describe('field updates to a Part a cut Build uses answer 409 and write nothing'
     const res = await request(app).put('/api/stories/HAR-2033').send({ summary: 'VF27P-0003A Bracket', ...VALUES });
     expect(res.status).toBe(409);
     expect(res.body.error).toBe(
-      "VF27P-0003A is used in cut Build 1, Build 3, so it can't be changed. Re-create it for the Draft Build instead.",
+      "VF27P-0003A is used in cut Build 1, Build 3, so it can't be changed.",
     );
     expectNoWrites(jiraClient);
   });
@@ -236,19 +229,6 @@ describe('still allowed', () => {
     for (const [type, source] of jiraClient.createIssueLink.mock.calls) {
       expect([type, source]).toEqual([LinkType.USED_IN, 'HAR-3000']);
     }
-    expect(jiraClient.updateIssue).not.toHaveBeenCalled();
-    expect(jiraClient.transitionIssue).not.toHaveBeenCalled();
-  });
-
-  it('Re-create of a Part in a cut Build for a Draft links only the new revision to the Draft', async () => {
-    const { app, jiraClient } = makeWorld();
-    const res = await request(app).post('/api/builds/HAR-2052/parts/HAR-2031/recreate');
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ key: 'HAR-3000', revision: 'B' });
-    expect(jiraClient.createIssueLink.mock.calls).toEqual([
-      [LinkType.REVISES, 'HAR-3000', 'HAR-2031'],
-      [LinkType.USED_IN, 'HAR-2052', 'HAR-3000'],
-    ]);
     expect(jiraClient.updateIssue).not.toHaveBeenCalled();
     expect(jiraClient.transitionIssue).not.toHaveBeenCalled();
   });

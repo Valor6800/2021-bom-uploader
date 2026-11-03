@@ -340,3 +340,26 @@ describe('GET /api/epics/:key/sub-assemblies', () => {
     expect(epicService.getSubAssemblies).not.toHaveBeenCalled();
   });
 });
+
+describe('GET /api/epics/:key/purchased-parts', () => {
+  it('returns the off-the-shelf parts, for the Build asked about', async () => {
+    const epicService = { getPurchasedParts: jest.fn().mockResolvedValue({ parts: [{ name: 'Battery', partNumber: 'ES17-12', quantity: 1 }] }) };
+    const res = await request(buildApp(epicService)).get('/api/epics/VAL-49/purchased-parts?build=VAL-51');
+    expect(res.status).toBe(200);
+    expect(res.body.parts).toHaveLength(1);
+    expect(epicService.getPurchasedParts).toHaveBeenCalledWith('VAL-49', 'VAL-51');
+  });
+
+  it('works without a Build', async () => {
+    const epicService = { getPurchasedParts: jest.fn().mockResolvedValue({ parts: [] }) };
+    await request(buildApp(epicService)).get('/api/epics/VAL-49/purchased-parts');
+    expect(epicService.getPurchasedParts).toHaveBeenCalledWith('VAL-49', undefined);
+  });
+
+  it('refuses a key or Build key that is not this project\'s', async () => {
+    const epicService = { getPurchasedParts: jest.fn() };
+    expect((await request(buildApp(epicService)).get('/api/epics/har-1/purchased-parts')).status).toBe(400);
+    expect((await request(buildApp(epicService)).get('/api/epics/VAL-49/purchased-parts?build=nope')).status).toBe(400);
+    expect(epicService.getPurchasedParts).not.toHaveBeenCalled();
+  });
+});

@@ -192,24 +192,6 @@ describe('GET /api/builds/for-part/:partKey', () => {
   });
 });
 
-describe('POST /api/builds/:key/parts/:partKey/recreate', () => {
-  it('re-creates the part for the target build', async () => {
-    const buildService = {
-      recreateForBuild: jest.fn().mockResolvedValue({ key: 'VAL-51', revision: 'B' }),
-    };
-    const app = buildApp(buildService);
-
-    const res = await request(app).post('/api/builds/VAL-11/parts/VAL-50/recreate');
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ key: 'VAL-51', revision: 'B' });
-    expect(buildService.recreateForBuild).toHaveBeenCalledWith({
-      partKey: 'VAL-50',
-      targetBuildKey: 'VAL-11',
-    });
-  });
-});
-
 describe('GET /api/builds/:key/parts', () => {
   it('returns the linked part keys', async () => {
     const buildService = { getLinkedParts: jest.fn().mockResolvedValue(['VAL-50', 'VAL-51']) };
@@ -313,17 +295,26 @@ describe('POST /api/builds/:key/save', () => {
       creates: [{ ref: 'VF27P-0004A', summary: 'VF27P-0004A Spacer', revision: 'A', ...VALUES }],
       updates: [{ ref: 'VAL-31', key: 'VAL-31', ...VALUES, link: true }],
       links: [{ ref: 'VAL-33', key: 'VAL-33' }],
+      copies: [{ ref: 'copy:VAL-31', from: 'VAL-31', quantity: 1 }],
     };
     const res = await request(buildApp(buildService)).post('/api/builds/VAL-51/save').send(body);
     expect(res.status).toBe(200);
     expect(buildService.saveBuildParts).toHaveBeenCalledWith({ buildKey: 'VAL-51', ...body });
   });
 
+  it('refuses a copy whose source is not a ticket key', async () => {
+    const buildService = okService();
+    const res = await request(buildApp(buildService)).post('/api/builds/VAL-51/save')
+      .send({ copies: [{ ref: 'c', from: 'nope', quantity: 1 }] });
+    expect(res.status).toBe(400);
+    expect(buildService.saveBuildParts).not.toHaveBeenCalled();
+  });
+
   it('treats a missing list as empty', async () => {
     const buildService = okService();
     await request(buildApp(buildService)).post('/api/builds/VAL-51/save').send({ links: [{ ref: 'a', key: 'VAL-33' }] });
     expect(buildService.saveBuildParts).toHaveBeenCalledWith({
-      buildKey: 'VAL-51', creates: [], updates: [], links: [{ ref: 'a', key: 'VAL-33' }],
+      buildKey: 'VAL-51', creates: [], updates: [], links: [{ ref: 'a', key: 'VAL-33' }], copies: [],
     });
   });
 
@@ -496,33 +487,5 @@ describe('POST /api/builds/:key/cut-version (INC-4)', () => {
     spy.mockRestore();
     expect(res.status).toBe(503);
     expect(res.body).toMatchObject({ cutStage: 'supersede', onshapeVersionLink: 'l', source: 'tracker' });
-  });
-});
-
-describe('POST /api/builds/:key/parts/:partKey/recreate (INC-4)', () => {
-  it.each([
-    ['a bad Build key', '/api/builds/val-11/parts/VAL-50/recreate'],
-    ['a bad Part key', '/api/builds/VAL-11/parts/HAR-50/recreate'],
-  ])('rejects %s with 400', async (_, url) => {
-    const buildService = { recreateForBuild: jest.fn() };
-    const res = await request(buildApp(buildService)).post(url);
-    expect(res.status).toBe(400);
-    expect(buildService.recreateForBuild).not.toHaveBeenCalled();
-  });
-
-  it('answers 409 with recreatedAs', async () => {
-    const buildService = {
-      recreateForBuild: jest.fn().mockRejectedValue(conflict('VAL-50 was already re-created as VAL-51. Re-create VAL-51 instead.', { recreatedAs: 'VAL-51' })),
-    };
-    const res = await request(buildApp(buildService)).post('/api/builds/VAL-11/parts/VAL-50/recreate');
-    expect(res.status).toBe(409);
-    expect(res.body).toMatchObject({ status: 409, recreatedAs: 'VAL-51' });
-  });
-
-  it('returns the Part object', async () => {
-    const part = { key: 'VAL-51', fullPartNumber: 'VR26P-0001B', revision: 'B' };
-    const buildService = { recreateForBuild: jest.fn().mockResolvedValue({ key: 'VAL-51', revision: 'B', part }) };
-    const res = await request(buildApp(buildService)).post('/api/builds/VAL-11/parts/VAL-50/recreate');
-    expect(res.body).toEqual({ key: 'VAL-51', revision: 'B', part });
   });
 });
