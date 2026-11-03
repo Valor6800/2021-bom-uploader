@@ -5,11 +5,12 @@
 
 import { applyTitleMask, applyPartMask } from '../utils/partMask.js';
 import { sanitizeJQL, validateIssueKey } from '../utils/validators.js';
-import { RevisionField, LinkType } from '../utils/buildConstants.js';
+import { BuildField, RevisionField, LinkType } from '../utils/buildConstants.js';
 import { badRequest, conflict, HttpError } from '../middleware/httpError.js';
 import { describeUpstreamError } from '../utils/upstreamError.js';
 import { withKeyedLock } from '../utils/keyedLock.js';
 import { stripBrackets } from '../utils/cleanName.js';
+import { configurationFromUrl, configurationLine } from '../utils/onshapeConfiguration.js';
 import {
   ASSEMBLY_FIELDS, KEY_SHAPED_RE, isAssemblyIssue, searchAssemblyList, toAssembly,
 } from '../utils/assemblySearch.js';
@@ -38,6 +39,17 @@ const INVALID_URL_MESSAGE =
 const DRIFT_MESSAGE = 'The OnShape properties changed since you checked. Review the new name.';
 
 const SEASON_NAMES = { R: 'Robot', F: 'Facility' };
+
+/** What the BOM reader needs to know about an Assembly: its season prefix and OnShape configuration. */
+function bomContext(a) {
+  const context = {};
+  if (a?.seasonType && a?.year) {
+    context.seasonType = a.seasonType;
+    context.year = a.year;
+  }
+  if (a?.configuration) context.configuration = a.configuration;
+  return Object.keys(context).length ? context : null;
+}
 
 /**
  * OnShape's built-in element property ids, matched first; the display name is
@@ -238,7 +250,8 @@ export class EpicService {
    * any network call.
    *
    * @param {string} onshapeURL
-   * @returns {{ documentId: string, workspaceId: string, elementId: string }}
+   * @returns {{ documentId: string, workspaceId: string, elementId: string, configuration: string|null }}
+   *   `configuration` is the link's `?configuration=`, when it has one
    * @throws {HttpError} 400 for a version link or any other unusable URL
    */
   parseOnshapeUrl(onshapeURL) {
@@ -255,6 +268,7 @@ export class EpicService {
       documentId: documentId.toLowerCase(),
       workspaceId: workspaceId.toLowerCase(),
       elementId: elementId.toLowerCase(),
+      configuration: configurationFromUrl(url),
     };
   }
 
@@ -275,10 +289,12 @@ export class EpicService {
   }
 
   /** @private */
-  async _readOnshapeAssembly({ documentId, workspaceId, elementId }, { defaultProject = null } = {}) {
+  async _readOnshapeAssembly({ documentId, workspaceId, elementId, configuration = null }, { defaultProject = null } = {}) {
     let metadata;
     try {
-      metadata = await this.onshapeClient.getElementMetadata(documentId, workspaceId, elementId);
+      metadata = await this.onshapeClient.getElementMetadata(
+        documentId, workspaceId, elementId, ...(configuration ? [configuration] : []),
+      );
     } catch (err) {
       if (err?.status === 403 || err?.status === 404) {
         throw badRequest(
@@ -348,6 +364,7 @@ export class EpicService {
       documentId,
       workspaceId,
       elementId,
+      configuration,
     };
   }
 
@@ -396,6 +413,49 @@ export class EpicService {
   }
 
   /**
+   * The off-the-shelf parts of an Assembly (rows from other OnShape documents:
+   * vendor parts), for the Assembly page. The tool makes no Part for them, so
+   * they come from the OnShape BOM: the cut version's for a cut Build, the
+   * workspace's for a Draft or when no Build is named.
+   *
+   * A failure to read the BOM never fails the page: it comes back as `error`.
+   *
+   * @param {string} key       Assembly key (already validated)
+   * @param {string} [buildKey]  The Build being looked at (already validated)
+   * @returns {Promise<{ parts: { name: string, partNumber: string, quantity: number }[], error?: string }>}
+   */
+  async getPurchasedParts(key, buildKey) {
+    const assembly = await this.getEpicByKey(key);
+    if (!assembly) throw badRequest(`"${key}" is not an Assembly`);
+    if (!this.bomService || !assembly.documentId || !assembly.workspaceId || !assembly.elementId) {
+      return { parts: [] };
+    }
+    const season = bomContext(assembly);
+
+    try {
+      let version = null;
+      if (buildKey) {
+        const build = await this.jiraClient.getIssue(buildKey, {
+          fields: ['issuetype', BuildField.ASSEMBLY_LINK, BuildField.ONSHAPE_VERSION_LINK],
+        }).catch((err) => { if (err?.status === 404) return null; throw err; });
+        const f = build?.fields ?? {};
+        if (f.issuetype?.name === 'Build' && f[BuildField.ASSEMBLY_LINK] === key) {
+          version = /\/documents\/([a-f0-9]{24})\/v\/([a-f0-9]{24})\/e\/([a-f0-9]{24})/i
+            .exec(f[BuildField.ONSHAPE_VERSION_LINK] ?? '');
+        }
+      }
+      const report = version
+        ? await this.bomService.getVersionReport(version[1], version[2], version[3], season)
+        : await this.bomService.getBOMReport(
+          null, assembly.documentId, assembly.workspaceId, assembly.elementId, season,
+        );
+      return { parts: report.external ?? [] };
+    } catch (err) {
+      return { parts: [], error: describeUpstreamError(err) };
+    }
+  }
+
+  /**
    * The sub-assemblies of an Assembly, for the links on the Designer and
    * Assembly pages. The tracker stores no parent/child link, so they are read
    * from the Assembly's own OnShape BOM (a minute's cache) and each is matched
@@ -413,9 +473,7 @@ export class EpicService {
       return { subAssemblies: [] };
     }
 
-    const season = assembly.seasonType && assembly.year
-      ? { seasonType: assembly.seasonType, year: assembly.year }
-      : null;
+    const season = bomContext(assembly);
     let subs;
     try {
       const report = await this.bomService.getBOMReport(
@@ -475,7 +533,7 @@ export class EpicService {
 
     if (found.kind === 'exists') {
       const a = found.assembly;
-      const season = a.seasonType && a.year ? { seasonType: a.seasonType, year: a.year } : null;
+      const season = bomContext(a);
       return {
         status: 'exists',
         assembly: a,
@@ -492,7 +550,9 @@ export class EpicService {
     }
 
     const { proposed } = found;
-    const season = { seasonType: proposed.project[1], year: proposed.project.slice(2) };
+    const season = bomContext({
+      seasonType: proposed.project[1], year: proposed.project.slice(2), configuration: proposed.configuration,
+    });
     return {
       status: found.kind === 'revision' ? 'revision' : 'new',
       proposed,
@@ -604,7 +664,8 @@ export class EpicService {
       if (!workspaceId) {
         return { name, status: 'error', message: 'Could not find the document workspace.' };
       }
-      const ids = { documentId, workspaceId, elementId };
+      // The parent uses the sub-assembly in a configuration; the Assembly follows that one.
+      const ids = { documentId, workspaceId, elementId, configuration: sub.configuration ?? null };
 
       const c = await this._classify(ids, { defaultProject });
       if (c.kind === 'exists') return { name, status: 'exists', assembly: c.assembly, ids };
@@ -765,7 +826,7 @@ export class EpicService {
     if (found.kind === 'exists') {
       // The caller asked explicitly, so a sub-assembly added since is created too.
       const a = found.assembly;
-      const season = a.seasonType && a.year ? { seasonType: a.seasonType, year: a.year } : null;
+      const season = bomContext(a);
       const subs = await this._ensureSubAssemblies(ids, season);
       return { response: { status: 'exists', assembly: found.assembly, build: null, ...subs }, proposed: null };
     }
@@ -779,7 +840,9 @@ export class EpicService {
     }
 
     const made = await this._createAssemblyWithBuild(proposed, found.previous ?? null);
-    const season = { seasonType: proposed.project[1], year: proposed.project.slice(2) };
+    const season = bomContext({
+      seasonType: proposed.project[1], year: proposed.project.slice(2), configuration: proposed.configuration,
+    });
     const subs = await this._ensureSubAssemblies(ids, season);
     return { response: { status: 'created', ...made, ...subs }, proposed };
   }
@@ -796,6 +859,7 @@ export class EpicService {
       documentId: proposed.documentId,
       workspaceId: proposed.workspaceId,
       elementId: proposed.elementId,
+      description: configurationLine(proposed.configuration),
     });
 
     // Built from what was just written, without a read that could fail or lag.
@@ -808,6 +872,7 @@ export class EpicService {
         customfield_10300: proposed.documentId,
         customfield_10301: proposed.workspaceId,
         customfield_10302: proposed.elementId,
+        description: configurationLine(proposed.configuration),
         status: { name: 'New' },
         created: new Date().toISOString(),
       },

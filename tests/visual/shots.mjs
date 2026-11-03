@@ -477,7 +477,7 @@ const INC6_SCENARIOS = [
     waitFor: 'tbody.parts-group-in',
     async run(page, ctx) {
       await button(page, '+ New Build').click();
-      await page.getByRole('radio', { name: 'Copy Parts from' }).check();
+      await page.getByRole('radio', { name: 'Reuse from' }).check();
       await button(page, 'Create Build 3').click();
       const [create] = await waitForSent(ctx, 'POST', '/api/builds');
       assertEqual(create.body.cloneFromBuildKey, 'HAR-2051', 'copy source');
@@ -832,8 +832,8 @@ const CUT_SCENARIOS = [
 
       await button(page, 'New Build from this one').click();
       await page.locator('#new-build-form').waitFor({ state: 'visible' });
-      assertTrue(await page.getByRole('radio', { name: 'Copy Parts from' }).isChecked(), 'Copy Parts from is preselected');
-      assertEqual(await page.getByLabel('Copy Parts from', { exact: true }).last().inputValue(), 'HAR-2052', 'copies from this Build');
+      assertTrue(await page.getByRole('radio', { name: 'Reuse from' }).isChecked(), 'Reuse from is preselected');
+      assertEqual(await page.getByLabel('Reuse Parts from', { exact: true }).last().inputValue(), 'HAR-2052', 'copies from this Build');
       await ctx.shot('designer-cut-build-new-build');
     },
   },
@@ -841,39 +841,25 @@ const CUT_SCENARIOS = [
     inc: 'CUT',
     name: 'designer-draft-shared-locked',
     // Draft Build 1 holds HAR-2031 (only in Drafts) and HAR-2033 (also in
-    // Active Build 2): HAR-2033's fields are locked, with Re-create.
+    // Active Build 2): HAR-2033's fields are locked.
     url: `${DESIGN_URL}?build=HAR-2051`,
     bom: true,
     api: designerApi({
       buildParts: { 'HAR-2051': 'build-parts-HAR-2051-shared', 'HAR-2052': 'build-parts-HAR-2052' },
-      extra: [
-        previewRoute,
-        { method: 'POST', path: '/api/builds/HAR-2051/parts/HAR-2033/recreate', fixture: 'recreate-HAR-2033-for-2051' },
-      ],
+      extra: [previewRoute],
     }),
     waitFor: 'tbody.parts-group-in tr.part-row',
     async run(page, ctx) {
       const locked = partRow(page, 'HAR-2033');
       await locked.getByText('In cut Build 2').waitFor();
       assertEqual(await locked.locator('input, select').count(), 0, 'the shared Part has no field controls');
-      const re = button(page, 'Re-create for this Build: VF27P-0003A');
-      assertTrue(await re.isEnabled(), 'Re-create is offered');
+      assertEqual(await button(page, 'New Revision for this Build: VF27P-0003A').count(), 0, 'no button asks for a Revision: the tool detects it');
       assertTrue(await page.getByLabel('Quantity for VF27P-0001A').isEnabled(), 'the Draft-only Part stays editable');
 
       await button(page, 'Update from CAD').click();
       await page.locator('tbody.parts-group-new').waitFor({ state: 'visible' });
       assertTrue(await page.getByLabel('Machinery for VF27P-0004A').isEnabled(), 'a Part new from CAD stays editable');
       await ctx.shot('designer-draft-shared-after-cad');
-
-      await re.click();
-      const [call] = await waitForSent(ctx, 'POST', '/api/builds/HAR-2051/parts/HAR-2033/recreate');
-      assertTrue(!!call, 'Re-create targets the Draft');
-      await expectText(page, 'Re-created HAR-2033 as HAR-2041 (Revision B) in Build 1.');
-      await page.getByLabel('Quantity for VF27P-0003B').waitFor({ state: 'visible' });
-      assertTrue(await page.getByLabel('Quantity for VF27P-0003B').isEnabled(), 'the new Revision is editable');
-      await assertAttr(re, 'aria-disabled', 'true');
-      await assertAttr(re, 'title', 'Already re-created as HAR-2041');
-      await ctx.shot('designer-draft-shared-after-recreate');
     },
   },
 ];

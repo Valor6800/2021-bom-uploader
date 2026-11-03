@@ -1,7 +1,7 @@
 import {
-  deriveDesignerRows, mergeLinks, mergeParts, hasNewerRevision, newerRevisionOf,
+  deriveDesignerRows, mergeLinks, mergeParts,
   linksFromBuildParts, dropAgreedLinks, addSessionLinks, describeChanges,
-  dropAgreedParts, dropAgreedRecreated, compareBuildRows,
+  dropAgreedParts, compareBuildRows, dropAgreedUnlinks,
 } from '../../src/client/src/lib/designerRows.js';
 
 const part = (key, number, name, extra = {}) => {
@@ -186,41 +186,20 @@ describe('mergeLinks', () => {
   });
 });
 
-describe('hasNewerRevision', () => {
-  const a = part('HAR-2035', 'VF27P-0003A', 'Bash bar');
-  const b = part('HAR-2041', 'VF27P-0003B', 'Bash bar');
-  it('is true with a later letter and names the newest', () => {
-    expect(hasNewerRevision(a, [a, b])).toBe(true);
-    expect(newerRevisionOf(a, [a, b]).key).toBe('HAR-2041');
-  });
-  it('is false for the newest one', () => {
-    expect(hasNewerRevision(b, [b])).toBe(false);
-  });
-  it('is false for another number', () => {
-    expect(hasNewerRevision(a, [a, part('HAR-9', 'VF27P-0004B', 'Other')])).toBe(false);
-  });
-  it('sees a B that exists only in createdParts', () => {
-    expect(hasNewerRevision(a, mergeParts([a], new Map([['HAR-2041', b]])))).toBe(true);
-  });
-});
-
 describe('describeChanges', () => {
   it('is empty with no changes', () => {
     expect(describeChanges({})).toBe('');
   });
 });
 
-describe('dropAgreedParts and dropAgreedRecreated', () => {
+describe('dropAgreedParts', () => {
   const created = part('HAR-2040', 'VF27P-0007A', 'Clone');
   it('keeps entries the re-fetch lacks and returns the same Map', () => {
     const map = new Map([['HAR-2040', created]]);
     expect(dropAgreedParts(map, [P31])).toBe(map);
-    const recreated = new Map([['HAR-2033', 'HAR-2041']]);
-    expect(dropAgreedRecreated(recreated, [P31])).toBe(recreated);
   });
   it('drops entries once the re-fetch lists the new key', () => {
     expect(dropAgreedParts(new Map([['HAR-2040', created]]), [P31, created]).size).toBe(0);
-    expect(dropAgreedRecreated(new Map([['HAR-2033', 'HAR-2041']]), [{ key: 'HAR-2041' }]).size).toBe(0);
   });
 });
 
@@ -273,7 +252,26 @@ describe('deriveDesignerRows locks Parts a cut Build uses', () => {
     expect(locked.dirty).toBe(false);
     expect(locked.changeText).toBe('Changed in CAD: Qty 1→3');
     expect(row(groups, 'HAR-2031')).toMatchObject({ dirty: true, values: expect.objectContaining({ quantity: 7 }) });
-    expect(pendingOps).toEqual(['HAR-2031']);
+    expect(pendingOps).toEqual(['HAR-2031', 'copy:HAR-2033']);
+  });
+
+  it('asks for a copy of the units CAD needs beyond what the Build holds', () => {
+    const { groups } = shared({
+      preview: { newParts: [], existingParts: [{ story: { key: 'HAR-2033' }, bomItem: { ...bomItem('VF27P-0003A', 'Bash bar 2"'), quantity: 3 } }] },
+    });
+    const copy = groups.newFromCad.find((r) => r.isCopy);
+    expect(copy).toMatchObject({
+      rowId: 'copy:HAR-2033', copyOf: 'HAR-2033', fullPartNumber: 'VF27P-0003A', key: null,
+      values: expect.objectContaining({ quantity: 2 }),
+    });
+    expect(copy.revisionNote.text).toBe('CAD needs 3; 1 already in this Build. Make 2 more.');
+  });
+
+  it('asks for nothing once the Build holds the units CAD needs', () => {
+    const { groups } = shared({
+      preview: { newParts: [], existingParts: [{ story: { key: 'HAR-2033' }, bomItem: { ...bomItem('VF27P-0003A', 'Bash bar 2"'), quantity: 1 } }] },
+    });
+    expect(groups.newFromCad).toEqual([]);
   });
 
   it('does not lock a Part whose other Builds are all Drafts', () => {
@@ -307,74 +305,55 @@ describe('Material is locked', () => {
   });
 });
 
-describe('Revision raised in OnShape', () => {
-  const previewWithB = {
-    newParts: [bomItem('VF27P-0001B', 'Test Part')],
-    existingParts: [],
-  };
-
-  it('marks the B row as a new Revision that replaces the A Part', () => {
-    const { groups } = base({ preview: previewWithB });
-    const row = groups.newFromCad[0];
-    expect(row.isNew).toBe(true);
-    expect(row.key).toBeNull();
-    expect(row.revisionNote).toMatchObject({ kind: 'new-revision', replaces: 'HAR-2031' });
-    expect(row.revisionNote.text).toBe('New Revision B, replaces VF27P-0001A, which is still in the Build');
-  });
-
-  it('does not say the A Part is in the Build when it is not', () => {
-    const { groups } = base({ preview: previewWithB, buildKey: 'HAR-2052' });
-    expect(groups.newFromCad[0].revisionNote.text).toBe('New Revision B, replaces VF27P-0001A');
-  });
-
-  it('tells the A Part that CAD moved on, and that it is still in the Build', () => {
-    const { groups } = base({ preview: previewWithB });
-    const a = groups.inBuild.find((r) => r.key === 'HAR-2031');
-    expect(a.revisionNote).toEqual({ kind: 'cad-ahead', text: 'CAD now has Revision B; this Revision is still in the Build' });
-  });
-
-  it('leaves a brand-new number without a revision note', () => {
-    const preview = { newParts: [bomItem('VF27P-0009A', 'Gusset')], existingParts: [] };
-    expect(base({ preview }).groups.newFromCad[0].revisionNote).toBeNull();
-  });
-
-  it('does not treat a Part of another Assembly as the previous Revision', () => {
-    const foreign = part('HAR-9000', 'VF27P-0001A', 'Test Part', { epic: 'HAR-9999' });
-    const { groups } = base({ parts: [foreign], preview: previewWithB, linkedByPart: new Map() });
+describe('The tool owns Revisions and numbers', () => {
+  it('shows a part CAD has no number for as a New row with the number the tool proposes', () => {
+    const item = { ...bomItem('VF27P-0009A', 'Gusset'), cadRef: 'd:e:JVD:', proposedNumber: true };
+    const { groups } = base({ preview: { newParts: [item], existingParts: [] } });
+    expect(groups.newFromCad).toHaveLength(1);
+    expect(groups.newFromCad[0]).toMatchObject({
+      isNew: true, fullPartNumber: 'VF27P-0009A', cadRef: 'd:e:JVD:', proposedNumber: true, revision: 'A',
+    });
     expect(groups.newFromCad[0].revisionNote).toBeNull();
   });
 
-  it('keeps notes off every row until Update from CAD has run', () => {
-    const { groups } = base();
-    expect([...groups.inBuild, ...groups.other].every((r) => r.revisionNote === null)).toBe(true);
+  it('matches a CAD part to its tracker Part whatever Revision letter CAD shows', () => {
+    const p31b = part('HAR-2041', 'VF27P-0001B', 'Test Part');
+    const preview = { newParts: [], existingParts: [{ story: p31b, bomItem: bomItem('VF27P-0001A', 'Test Part'), changes: { count: 0 } }] };
+    const { groups } = base({
+      parts: [P31, p31b],
+      linkedByPart: linksFromBuildParts(new Map([['HAR-2051', ['HAR-2041']]])),
+      preview,
+    });
+    expect(groups.inBuild.map((r) => r.key)).toEqual(['HAR-2041']);
+    expect(groups.newFromCad).toEqual([]);
+  });
+
+  it('takes a replaced Revision out of the Build at once, before search agrees', () => {
+    const p31b = part('HAR-2041', 'VF27P-0001B', 'Test Part');
+    const { groups } = base({
+      parts: [P31, p31b, P32],
+      linkedThisSession: new Map([['HAR-2051', new Set(['HAR-2041'])]]),
+      unlinkedThisSession: new Map([['HAR-2051', new Set(['HAR-2031'])]]),
+    });
+    expect(groups.inBuild.map((r) => r.key)).toEqual(['HAR-2041', 'HAR-2032']);
   });
 });
 
-describe('Part re-created in the tracker while CAD still has the old Revision', () => {
-  const P31B = part('HAR-2041', 'VF27P-0001B', 'Test Part');
-  const preview = { newParts: [], existingParts: [{ story: P31, bomItem: bomItem('VF27P-0001A', 'Test Part'), changes: { count: 0 } }] };
-
-  it('tells the B Part that CAD still has Revision A', () => {
-    const { groups } = base({
-      parts: [P31, P31B, P32, P33],
-      linkedByPart: linksFromBuildParts(new Map([['HAR-2051', ['HAR-2041', 'HAR-2032']]])),
-      preview,
-    });
-    const b = groups.inBuild.find((r) => r.key === 'HAR-2041');
-    expect(b.revisionNote).toEqual({ kind: 'cad-behind', text: 'CAD still has Revision A. Raise the Revision in OnShape to match' });
+describe('mergeLinks and dropAgreedUnlinks', () => {
+  it('removes this session unlinks from the fetched links', () => {
+    const links = mergeLinks(
+      linksFromBuildParts(new Map([['HAR-2051', ['HAR-2031', 'HAR-2032']]])),
+      new Map(),
+      new Map([['HAR-2051', new Set(['HAR-2031'])]]),
+    );
+    expect(links.get('HAR-2031').has('HAR-2051')).toBe(false);
+    expect(links.get('HAR-2032').has('HAR-2051')).toBe(true);
   });
 
-  it('is aligned once CAD also has B', () => {
-    const aligned = {
-      newParts: [],
-      existingParts: [{ story: P31B, bomItem: bomItem('VF27P-0001B', 'Test Part'), changes: { count: 0 } }],
-    };
-    const { groups } = base({
-      parts: [P31, P31B],
-      linkedByPart: linksFromBuildParts(new Map([['HAR-2051', ['HAR-2041']]])),
-      preview: aligned,
-    });
-    expect(groups.inBuild.find((r) => r.key === 'HAR-2041').revisionNote).toBeNull();
+  it('forgets an unlink once a fetch of that Build no longer lists the Part', () => {
+    const unlinked = new Map([['HAR-2051', new Set(['HAR-2031'])]]);
+    expect(dropAgreedUnlinks(unlinked, new Map([['HAR-2051', ['HAR-2031']]]))).toBe(unlinked);
+    expect(dropAgreedUnlinks(unlinked, new Map([['HAR-2051', ['HAR-2032']]])).size).toBe(0);
   });
 });
 
@@ -394,8 +373,26 @@ describe('Parts in other Builds are hidden; Parts in no Build show', () => {
       existingParts: [{ story: P33, bomItem: bomItem('VF27P-0003A', 'Bash bar 2"'), changes: { count: 0 } }],
     };
     const { groups } = base({ preview });
-    expect(groups.other.map((r) => r.key)).toEqual(['HAR-2033']);
-    expect(groups.other[0].label).toBe('Also in Build 2');
+    // Build 2 made it, and this Build isn't reusing it: the tool makes it again.
+    expect(groups.other).toEqual([]);
+    expect(groups.newFromCad).toEqual([expect.objectContaining({
+      rowId: 'copy:HAR-2033', isCopy: true, values: expect.objectContaining({ quantity: 1 }),
+    })]);
+    expect(groups.newFromCad[0].revisionNote.text).toBe('Make 1 new.');
+  });
+
+  it('shows a Part a Draft alone uses when CAD lists it, to add to this Build', () => {
+    const drafts = [...builds, { key: 'HAR-2053', buildNumber: 3, status: 'Draft', assemblyKey: 'HAR-2030' }];
+    const preview = {
+      newParts: [],
+      existingParts: [{ story: P33, bomItem: bomItem('VF27P-0003A', 'Bash bar 2"'), changes: { count: 0 } }],
+    };
+    const { groups } = base({
+      builds: drafts,
+      linkedByPart: linksFromBuildParts(new Map([['HAR-2051', ['HAR-2031']], ['HAR-2053', ['HAR-2033']]])),
+      preview,
+    });
+    expect(groups.other.map((r) => r.key)).toContain('HAR-2033');
   });
 
   it('keeps a hidden Part out of the way of a Build with nothing selected', () => {

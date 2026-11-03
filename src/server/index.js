@@ -19,12 +19,19 @@ import { PartService } from './services/partService.js';
 import { ExportService } from './services/exportService.js';
 import { BuildService } from './services/buildService.js';
 import { RevisionService } from './services/revisionService.js';
+import { PartNumbers } from './services/partNumbers.js';
+import { PartDiff } from './services/partDiff.js';
+import { PartFiles } from './services/partFiles.js';
+import { Pictures } from './services/pictures.js';
+import { FileJobs } from './services/fileJobs.js';
+import { OnshapeWriter } from './services/onshapeWriter.js';
 import { OrderSheetService } from './services/orderSheetService.js';
 import { PurchasingService } from './services/purchasingService.js';
 import { ReceivingService } from './services/receivingService.js';
 
 // Routes
 import epicRoutes from './routes/epicRoutes.js';
+import pictureRoutes from './routes/pictureRoutes.js';
 import partRoutes from './routes/partRoutes.js';
 import buildRoutes from './routes/buildRoutes.js';
 import revisionRoutes from './routes/revisionRoutes.js';
@@ -76,10 +83,20 @@ try {
 const bomService = new BOMService({ onshapeClient });
 // Built before PartService, which scopes Part reads to the Revision chain.
 const revisionService = new RevisionService({ jiraClient });
-const partService = new PartService({ jiraClient, bomService, revisionService });
+const partNumbers = new PartNumbers({ jiraClient });
+const partDiff = new PartDiff({ jiraClient, onshapeClient, bomService });
+const partFiles = new PartFiles({ onshapeClient, jiraClient });
+const pictures = new Pictures({ jiraClient, onshapeClient });
+const onshapeWriter = new OnshapeWriter({ jiraClient, onshapeClient, bomService });
+const fileJobs = new FileJobs({ partFiles, onshapeWriter });
+const partService = new PartService({
+  jiraClient, bomService, revisionService, partNumbers, partDiff, partFiles, fileJobs,
+});
 const exportService = new ExportService({ onshapeClient });
 // Built before EpicService, which creates Build 1 when onboarding an Assembly.
-const buildService = new BuildService({ jiraClient, onshapeClient, revisionService, partService });
+const buildService = new BuildService({
+  jiraClient, onshapeClient, revisionService, partService, partNumbers, onshapeWriter, fileJobs, pictures,
+});
 const epicService = new EpicService({ jiraClient, onshapeClient, buildService, bomService });
 
 const orderSheetService = sheetsClient ? new OrderSheetService({ sheetsClient }) : null;
@@ -151,6 +168,7 @@ const gate = requireAuth({ authConfig, host: HOST });
 // ---------------------------------------------------------------------------
 app.use('/api/epics', epicRoutes({ epicService }));
 app.use('/api/builds', buildRoutes({ buildService }));
+app.use('/api/pictures', pictureRoutes({ pictures, fileJobs }));
 app.use('/api/revisions', revisionRoutes({ revisionService }));
 app.use('/api', partRoutes({ partService, exportService }));
 app.use('/api/bom', bomRoutes({ bomService }));

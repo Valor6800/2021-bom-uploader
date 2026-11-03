@@ -12,9 +12,9 @@ export default function UnidentifiedPartsWarning({ parts }) {
     <div style={{ margin: '1rem' }} role="status">
       <Alert variant="warning">
         {parts.length === 1 ? '1 BOM row was' : `${parts.length} BOM rows were`} not
-        loaded because the part number could not be built from its OnShape
-        properties. Fix these in the part&apos;s Properties dialog in OnShape, then
-        click &quot;Update from CAD&quot; again.
+        loaded because something the tool needs is missing in OnShape. Fix
+        these in the part&apos;s Properties dialog in OnShape, then click
+        &quot;Update from CAD&quot; again.
       </Alert>
       <ul aria-label="BOM rows that could not be identified" style={{ margin: '0.5rem 0 0', paddingLeft: '1.25rem' }}>
         {parts.map((part, idx) => (

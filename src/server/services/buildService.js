@@ -9,16 +9,15 @@ import {
   sanitizeJQL, validateMaterial, validateMachinery, validatePowdercoat, validateThickness, validateQuantity, validatePriority,
 } from '../utils/validators.js';
 import {
-  BuildField, BuildStatus, BuildTransition, LinkType, RevisionField, usedInLinkedClause,
+  BuildField, BuildStatus, BuildTransition, LinkType, usedInLinkedClause,
 } from '../utils/buildConstants.js';
 import { applyPartMask, formatPartNumber } from '../utils/partMask.js';
 import { Powdercoat, Thickness } from '../utils/bomConstants.js';
-import { nextRevisionLetter } from './revisionService.js';
-import { partFromWritten } from './partService.js';
 import { badRequest, conflict, HttpError } from '../middleware/httpError.js';
 import { describeUpstreamError, jiraErrorsForLog, upstreamSource } from '../utils/upstreamError.js';
-import { preferNewestRevision } from '../utils/partChain.js';
+import { baseNumber, preferNewestRevision } from '../utils/partChain.js';
 import { withKeyedLock } from '../utils/keyedLock.js';
+import { blockOf } from './partNumbers.js';
 import {
   buildLabelOf, cutBuildConflict, cutBuildsAmong, isCutStatus, sharedPartConflict, usedInKeys,
 } from '../utils/cutBuilds.js';
@@ -27,9 +26,6 @@ const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL
 
 /** Parallel by-key reads are sent in batches of this size. */
 const READ_BATCH = 10;
-
-/** How long a Re-create is remembered for the repeat guard. */
-const RECENT_MS = 10 * 60 * 1000;
 
 const ONSHAPE_ID_RE = /^[a-f0-9]{24}$/i;
 
@@ -115,19 +111,29 @@ export class BuildService {
    *   Only required for `cutVersionFromOnshape`; `cutVersion` itself is pure
    *   Jira and doesn't need it.
    * @param {import('./revisionService.js').RevisionService} [deps.revisionService]
-   *   Required for `recreateForBuild` and `saveBuildParts`.
+   *   Required for `saveBuildParts`.
    * @param {import('./partService.js').PartService} [deps.partService]
-   *   Required for `recreateForBuild` and `saveBuildParts`.
+   *   Required for `saveBuildParts`.
+   * @param {import('./partNumbers.js').PartNumbers} [deps.partNumbers]
+   *   Numbers new Parts on Save.
+   * @param {import('./onshapeWriter.js').OnshapeWriter} [deps.onshapeWriter]
+   *   Writes numbers and Revisions back into OnShape (Save and Cut Version).
+   * @param {import('./fileJobs.js').FileJobs} [deps.fileJobs]
+   *   Attaches each new Part's picture, STEP and DXF in the background (Save).
+   * @param {import('./pictures.js').Pictures} [deps.pictures]
+   *   Attaches the Assembly's picture to a Build when it is cut.
    */
-  constructor({ jiraClient, onshapeClient, revisionService, partService }) {
+  constructor({
+    jiraClient, onshapeClient, revisionService, partService, partNumbers, onshapeWriter, fileJobs, pictures,
+  }) {
     this.jiraClient = jiraClient;
     this.onshapeClient = onshapeClient;
     this.revisionService = revisionService;
     this.partService = partService;
-    /** In-flight Re-creates by source Part key. */
-    this._recreating = new Map();
-    /** Source Part key -> { key, at } for Re-creates in the last 10 minutes. */
-    this._recentlyRecreated = new Map();
+    this.partNumbers = partNumbers;
+    this.onshapeWriter = onshapeWriter;
+    this.fileJobs = fileJobs;
+    this.pictures = pictures;
     /** In-flight Cut Versions by Build key. */
     this._cutting = new Map();
   }
@@ -470,6 +476,7 @@ export class BuildService {
       // A cut whose supersede stage failed: finish it.
       try {
         const superseded = await this._supersedeActiveSiblings(buildKey, assemblyKey);
+        this._pictureOf(buildKey, number, assemblyKey, stored);
         return { onshapeVersionLink: stored, superseded, resumed: true };
       } catch (err) {
         console.warn('[cut]', buildKey, 'stage', err?.details?.cutStage,
@@ -488,6 +495,7 @@ export class BuildService {
       onshapeVersionLink = stored;
       resumed = true;
     } else {
+      await this._writeRevisions(buildKey, assemblyKey);
       const version = await this.onshapeClient.createVersion(documentId, workspaceId, {
         name: buildKey,
         description: `Cut from ValorBOM for ${buildKey}`,
@@ -500,12 +508,45 @@ export class BuildService {
       const { superseded } = await this.cutVersion({
         buildKey, assemblyKey, onshapeVersionLink, storedLink: stored,
       });
+      this._pictureOf(buildKey, number, assemblyKey, onshapeVersionLink);
       return { onshapeVersionLink, superseded, resumed };
     } catch (err) {
       console.warn('[cut]', buildKey, 'stage', err?.details?.cutStage,
         'failed after the OnShape version was made:', err?.status, err?.message, ...jiraErrorsForLog(err));
       throw withDetails(err, { onshapeVersionLink });
     }
+  }
+
+  /**
+   * Attach the Assembly's picture to the Build, in the background: it takes
+   * several seconds and the cut does not wait for it. A Build that misses it
+   * is given one the first time its picture is asked for.
+   * @private
+   */
+  _pictureOf(buildKey, buildNumber, assemblyKey, versionLink) {
+    if (!this.pictures) return;
+    this.pictures.attachBuildImage({ buildKey, buildNumber, assemblyKey, versionLink })
+      .then((result) => { if (result.problem) console.warn('[cut]', buildKey, "couldn't attach its picture:", result.problem); });
+  }
+
+  /**
+   * Make OnShape show the Revision the tool holds for each Part in the Build,
+   * before the version is cut, so the version carries them.
+   * @private
+   */
+  async _writeRevisions(buildKey, assemblyKey) {
+    if (!this.onshapeWriter) return;
+    // The Build's own links, read by key: each carries its Part's summary,
+    // and search (which lags a Re-create) isn't involved.
+    const build = await this.jiraClient.getIssue(buildKey, { fields: ['issuelinks'] });
+    const wanted = new Map();
+    for (const link of build?.fields?.issuelinks ?? []) {
+      if (link?.type?.name !== LinkType.USED_IN) continue;
+      const part = applyPartMask((link.outwardIssue ?? link.inwardIssue)?.fields?.summary ?? '');
+      const number = baseNumber(part);
+      if (number && (wanted.get(number) ?? '') < part.version) wanted.set(number, part.version);
+    }
+    await this.onshapeWriter.setRevisions(assemblyKey, wanted);
   }
 
   /**
@@ -581,160 +622,6 @@ export class BuildService {
   }
 
   /**
-   * "Re-create for this Build" (Sheet 06): the design changed, so this Part
-   * needs a new revision rather than just being moved forward. Creates a new
-   * Part ticket one revision letter ahead, carrying forward its BOM fields,
-   * chained back via Revises, and links only the new ticket into the target
-   * Build — the old one stays exactly as it was for whichever Build it
-   * actually shipped in (Sheet 07).
-   *
-   * Refuses (409 with `recreatedAs`) a Part that was already re-created, so
-   * a double click, a second tab or a lagging list can't make two copies of
-   * the next Revision. Concurrent calls for one Part run one at a time.
-   *
-   * @param {object} params
-   * @param {string} params.partKey        The Part being re-created
-   * @param {string} params.targetBuildKey The Build the new revision belongs to
-   * @returns {Promise<{ key: string, revision: string, part: object }>}
-   */
-  async recreateForBuild({ partKey, targetBuildKey }) {
-    if (!this.revisionService) {
-      throw new Error('recreateForBuild requires a revisionService dependency');
-    }
-    if (!this.partService) {
-      throw new HttpError(500, 'recreateForBuild needs partService');
-    }
-    return withKeyedLock(this._recreating, partKey,
-      () => this._recreateOnce(partKey, targetBuildKey));
-  }
-
-  /** @private */
-  async _recreateOnce(partKey, targetBuildKey) {
-    const [previous, target] = await Promise.all([
-      this.jiraClient.getIssue(partKey, {
-        fields: [
-          'summary',
-          RevisionField.REVISION,
-          'customfield_10110', // Epic Link
-          'customfield_10201', // Machinery
-          'customfield_10202', // Material
-          'customfield_10204', // Powdercoat
-          'customfield_10206', // Quantity
-          'customfield_10207', // Thickness
-          'issuelinks',
-        ],
-      }),
-      getIssueOrNull(this.jiraClient, targetBuildKey,
-        ['issuetype', 'status', BuildField.ASSEMBLY_LINK, BuildField.BUILD_NUMBER]),
-    ]);
-
-    if (target?.fields?.issuetype?.name !== 'Build') {
-      throw badRequest(`"${targetBuildKey}" is not a Build`);
-    }
-    // A Re-create only writes to the target; the source's cut Builds keep it as it is.
-    const targetStatus = target.fields.status?.name ?? null;
-    if (isCutStatus(targetStatus)) {
-      throw cutBuildConflict(
-        buildLabelOf(target.fields[BuildField.BUILD_NUMBER], targetBuildKey), targetStatus,
-      );
-    }
-    // The target Build's chain: a Revision B Build admits a Revision A Part.
-    const chain = await this.revisionService.getRevisionChain(target.fields[BuildField.ASSEMBLY_LINK]);
-    if (!chain.includes(previous.fields?.customfield_10110)) {
-      throw badRequest(`"${partKey}" isn't a Part of this Assembly`);
-    }
-
-    const parsed = applyPartMask(previous.fields?.summary ?? '');
-    if (!parsed) {
-      throw badRequest(`"${partKey}" summary does not match the Part number format`);
-    }
-
-    const currentRevision = previous.fields?.[RevisionField.REVISION] ?? null;
-    const nextRevision = nextRevisionLetter(currentRevision);
-    const summary = formatPartNumber({ ...parsed, version: nextRevision });
-    const newNumber = applyPartMask(summary).fullPartNumber;
-
-    const refuse = (recreatedAs) => conflict(
-      `${partKey} was already re-created as ${recreatedAs}. Re-create ${recreatedAs} instead.`,
-      { recreatedAs },
-    );
-
-    const revisedAs = this._laterRevisionLink(previous.fields?.issuelinks, parsed);
-    if (revisedAs) throw refuse(revisedAs);
-
-    const recent = this._recentlyRecreated.get(partKey);
-    if (recent && Date.now() - recent.at < RECENT_MS) throw refuse(recent.key);
-
-    const chainParts = await this.partService.getStoriesByEpics(chain);
-    const sameNumber = chainParts.find((p) => p.fullPartNumber === newNumber);
-    if (sameNumber) throw refuse(sameNumber.key);
-
-    const extraFields = {
-      customfield_10110: previous.fields?.customfield_10110 ?? null, // Epic Link
-      customfield_10201: previous.fields?.customfield_10201, // Machinery
-      customfield_10202: previous.fields?.customfield_10202, // Material
-      customfield_10206: previous.fields?.customfield_10206, // Quantity
-    };
-    if (previous.fields?.customfield_10204) extraFields.customfield_10204 = previous.fields.customfield_10204;
-    if (previous.fields?.customfield_10207) extraFields.customfield_10207 = previous.fields.customfield_10207;
-
-    let result;
-    try {
-      result = await this.revisionService.createRevision({
-        previousKey: partKey,
-        issueTypeName: 'Part',
-        summary,
-        extraFields,
-      });
-    } catch (err) {
-      if (err?.details?.stage === 'revises-link') {
-        // The ticket exists but isn't recorded as a revision; don't add it
-        // to the Build, and refuse a Retry until search catches up.
-        this._recentlyRecreated.set(partKey, { key: err.details.key, at: Date.now() });
-        withDetails(err, {
-          part: partFromWritten(err.details.key, summary, {
-            ...extraFields, [RevisionField.REVISION]: err.details.revision,
-          }),
-        });
-      }
-      throw err;
-    }
-
-    this._recentlyRecreated.set(partKey, { key: result.key, at: Date.now() });
-    const part = partFromWritten(result.key, summary, {
-      ...extraFields, [RevisionField.REVISION]: result.revision,
-    });
-
-    try {
-      await this._link(result.key, targetBuildKey);
-    } catch (err) {
-      throw withDetails(err, { key: result.key, part, stage: 'used-in-link' });
-    }
-    return { key: result.key, revision: result.revision, part };
-  }
-
-  /**
-   * The key of a later Revision of this Part named by one of its `Revises`
-   * links, on either side: same number, a later letter. An earlier letter is
-   * the Part this one revised and is ignored.
-   * @private
-   */
-  _laterRevisionLink(issuelinks, parsed) {
-    let best = null;
-    for (const link of issuelinks ?? []) {
-      if (link?.type?.name !== LinkType.REVISES) continue;
-      const other = link.outwardIssue ?? link.inwardIssue;
-      const linked = applyPartMask(other?.fields?.summary ?? '');
-      if (!linked || linked.isEpic) continue;
-      if (linked.seasonType !== parsed.seasonType || linked.year !== parsed.year
-        || linked.partNumber !== parsed.partNumber) continue;
-      if (linked.version <= parsed.version) continue;
-      if (!best || linked.version > best.version) best = { key: other.key, version: linked.version };
-    }
-    return best?.key ?? null;
-  }
-
-  /**
    * One Designer or Assembly-page Save onto a Build: creates (find-or-create
    * by number across the Revision chain), updates and links, each reported
    * per item so one bad row can't block the rest. Reads that fail before
@@ -745,9 +632,11 @@ export class BuildService {
    * @param {object[]} [params.creates]
    * @param {object[]} [params.updates]
    * @param {object[]} [params.links]
+   * @param {object[]} [params.copies]  `{ ref, from, quantity }`: an exact copy of a
+   *   Part, for the units a Build needs that no ticket in it covers
    * @returns {Promise<{ results: object[] }>}
    */
-  async saveBuildParts({ buildKey, creates = [], updates = [], links = [] }) {
+  async saveBuildParts({ buildKey, creates = [], updates = [], links = [], copies = [] }) {
     if (!this.partService || !this.revisionService) {
       throw new HttpError(500, 'save needs partService and revisionService');
     }
@@ -805,6 +694,8 @@ export class BuildService {
     });
 
     const createdHere = new Set();
+    /** Parts made in this request: key -> { partNumber, origin, thickness } */
+    const made = new Map();
     const results = [];
     const fail = (base, err, prefix = '') => {
       console.warn('[save]', buildKey, base.op, base.ref, 'failed:', err?.status, err?.message,
@@ -866,11 +757,60 @@ export class BuildService {
       };
     };
 
+    // 2b. Parts the tool numbers (a `cadRef` instead of a number): check each
+    // against the Assembly's own BOM, then take numbers for them together.
+    const numbering = new Map();
+    let assemblyUnnumbered = false;
+    const toNumber = creates.filter((i) => i.cadRef);
+    if (toNumber.length > 0) {
+      if (!this.onshapeWriter || !this.partNumbers) {
+        throw new HttpError(500, 'numbering needs onshapeWriter and partNumbers');
+      }
+      const { byRef, takenByPrefix, assemblyNumber } = await this.onshapeWriter.numberingContext(assemblyKey);
+      const block = blockOf(assemblyNumber);
+      assemblyUnnumbered = block === null;
+      const byPrefix = new Map();
+      for (const item of toNumber) {
+        const part = byRef.get(item.cadRef);
+        if (!part || block === null) continue;
+        const list = byPrefix.get(part.numbering.prefix) ?? [];
+        list.push({ item, part });
+        byPrefix.set(part.numbering.prefix, list);
+      }
+      for (const [prefix, list] of byPrefix) {
+        const wanted = list.map(({ item }) => {
+          const proposed = applyPartMask(item.summary ?? '');
+          return proposed && `V${proposed.seasonType}${proposed.year}` === prefix ? proposed.partNumber : null;
+        });
+        // eslint-disable-next-line no-await-in-loop
+        const claimed = await this.partNumbers.claim(prefix, block, wanted, takenByPrefix.get(prefix) ?? []);
+        list.forEach(({ item, part }, i) => numbering.set(item.ref, { part, prefix, number: claimed[i] }));
+      }
+    }
+
     // 3. Creates.
-    for (const item of creates) {
+    for (let item of creates) {
       const base = { ref: item.ref, op: 'create', key: null, reused: false, updated: false, linked: false, alreadyLinked: false };
+      if (item.cadRef) {
+        const plan = numbering.get(item.ref);
+        if (!plan) {
+          results.push({
+            ...base,
+            ok: false,
+            error: assemblyUnnumbered
+              ? "This Assembly has no 4-digit number (like VR27A-1100), so its Parts can't be numbered."
+              : "This part isn't waiting for a number in OnShape any more. Click Update from CAD and try again.",
+          });
+          continue;
+        }
+        // The name and number come from the tool's own read of OnShape, never the client's.
+        const summary = formatPartNumber({ ...plan.part, partNumber: plan.number, version: 'A' });
+        item = { ...item, summary, revision: 'A' };
+        base.fullPartNumber = summary.split(' ')[0];
+      }
       const problem = fieldProblem(item);
       if (problem) {
+        if (item.cadRef) this.partNumbers.forget(numbering.get(item.ref).prefix, numbering.get(item.ref).number);
         results.push({ ...base, ok: false, ...problem });
         continue;
       }
@@ -884,6 +824,18 @@ export class BuildService {
           results.push({
             ...base, ok: false, field: 'revision',
             error: `Revision ${item.revision} doesn't match the number's letter ${parsed.version} in ${parsed.fullPartNumber}`,
+          });
+          continue;
+        }
+      }
+
+      if (item.revises) {
+        const revised = chainParts.find((p) => p.key === item.revises);
+        if (!revised || baseNumber(revised) !== baseNumber(parsed) || (revised.version ?? '') >= parsed.version) {
+          if (item.cadRef) this.partNumbers.forget(numbering.get(item.ref).prefix, numbering.get(item.ref).number);
+          results.push({
+            ...base, ok: false, field: 'revises',
+            error: `${item.revises} isn't the earlier Revision of ${parsed.fullPartNumber}.`,
           });
           continue;
         }
@@ -919,6 +871,16 @@ export class BuildService {
           }
         }
       } else {
+        const plan = item.cadRef ? numbering.get(item.ref) : null;
+        if (plan) {
+          try {
+            await this.onshapeWriter.number(plan.part, plan.number);
+          } catch (err) {
+            this.partNumbers.forget(plan.prefix, plan.number);
+            results.push(fail(base, err, "Couldn't number it in OnShape: "));
+            continue;
+          }
+        }
         try {
           const created = await this.partService.createStory({
             summary: item.summary,
@@ -928,11 +890,14 @@ export class BuildService {
           });
           base.key = created.key;
           createdHere.add(created.key);
+          made.set(created.key, {
+            partNumber: parsed.fullPartNumber, origin: plan?.part?.origin ?? null, thickness: values.thickness,
+          });
           byNumber.set(parsed.fullPartNumber, {
             ...parsed, key: created.key, summary: item.summary, epic: assemblyKey, ...values,
           });
         } catch (err) {
-          results.push(fail(base, err));
+          results.push(fail(base, err, plan ? `Numbered ${base.fullPartNumber} in OnShape, but couldn't create the Part: ` : ''));
           continue;
         }
       }
@@ -945,6 +910,46 @@ export class BuildService {
           ? `Already existed, but not added to ${buildLabel}: `
           : `Created, but not added to ${buildLabel}: `;
         results.push(fail(base, outcome.linkError, prefix));
+      } else if (item.revises) {
+        const problems = await this._swapRevision(item.revises, base.key, buildKey, buildLabel, linked);
+        results.push({
+          ...base,
+          ok: true,
+          linked: true,
+          alreadyLinked: outcome.alreadyLinked,
+          replaced: problems.length === 0 ? item.revises : null,
+          ...(problems.length ? { note: `Made ${parsed.fullPartNumber}, but ${problems.join(' and ')}.` } : {}),
+        });
+      } else {
+        results.push({ ...base, ok: true, linked: true, alreadyLinked: outcome.alreadyLinked });
+      }
+    }
+
+    // 3b. Copies: units the Build needs that no Part in it already covers.
+    for (const item of copies) {
+      const base = { ref: item.ref, op: 'copy', key: null, linked: false, alreadyLinked: false };
+      const source = chainParts.find((p) => p.key === item.from);
+      if (!source) {
+        results.push({ ...base, ok: false, error: notMember(item.from) });
+        continue;
+      }
+      if (!validateQuantity(item.quantity).valid) {
+        results.push({ ...base, ok: false, field: 'quantity', error: 'Quantity must be a whole number of 1 or more.' });
+        continue;
+      }
+      let made;
+      try {
+        made = await this.partService.clonePart({ sourceKey: item.from, epicKey: assemblyKey, quantity: item.quantity });
+      } catch (err) {
+        results.push(fail(base, err));
+        continue;
+      }
+      Object.assign(base, { key: made.key, fullPartNumber: made.fullPartNumber, part: made.part });
+      createdHere.add(made.key);
+      const outcome = await link(made.key, true);
+      if (outcome.checkError || outcome.linkError) {
+        results.push(fail(base, outcome.checkError ?? outcome.linkError,
+          `Made ${made.fullPartNumber}, but not added to ${buildLabel}: `));
       } else {
         results.push({ ...base, ok: true, linked: true, alreadyLinked: outcome.alreadyLinked });
       }
@@ -1025,7 +1030,67 @@ export class BuildService {
       }
     }
 
+    this._queueFiles(assemblyKey, made, results);
+
     return { results };
+  }
+
+  /**
+   * Queue the picture, STEP and DXF of each Part this save made. Save does not
+   * wait for them (a Part's files take seconds): the jobs run in the
+   * background and the results are marked `filesPending` so the Designer can
+   * watch them. A job that fails is made up on the next Update from CAD.
+   * @private
+   */
+  _queueFiles(assemblyKey, made, results) {
+    if (!this.fileJobs) return;
+    for (const [key, info] of made) {
+      this.fileJobs.enqueue({
+        key, partNumber: info.partNumber, thickness: info.thickness, origin: info.origin, assemblyKey,
+      });
+      const result = results.find((r) => r.op === 'create' && r.key === key);
+      if (result) result.filesPending = true;
+    }
+  }
+
+  /**
+   * The new Revision takes the old one's place: record that it revises the
+   * old Part, and take the old Part out of this Build so the Build never
+   * lists both. Safe to repeat. Returns what could not be done, in words.
+   *
+   * @returns {Promise<string[]>}
+   * @private
+   */
+  async _swapRevision(oldKey, newKey, buildKey, buildLabel, linked) {
+    let entries;
+    try {
+      entries = (await this.jiraClient.getIssue(oldKey, { fields: ['issuelinks'] }))?.fields?.issuelinks ?? [];
+    } catch (err) {
+      console.warn('[save] could not read', oldKey, 'to swap in', newKey, ':', err?.status, err?.message);
+      return [`couldn't read ${oldKey} to swap it out of ${buildLabel}`];
+    }
+    const touches = (link, key) => link?.outwardIssue?.key === key || link?.inwardIssue?.key === key;
+    const problems = [];
+
+    if (!entries.some((l) => l?.type?.name === LinkType.REVISES && touches(l, newKey))) {
+      try {
+        await this.jiraClient.createIssueLink(LinkType.REVISES, newKey, oldKey);
+      } catch (err) {
+        console.warn('[save] Revises link', newKey, '->', oldKey, 'failed:', err?.status, err?.message);
+        problems.push(`couldn't record that it revises ${oldKey}`);
+      }
+    }
+    const used = entries.find((l) => l?.type?.name === LinkType.USED_IN && touches(l, buildKey));
+    if (used) {
+      try {
+        await this.jiraClient.deleteIssueLink(used.id);
+        linked.delete(oldKey);
+      } catch (err) {
+        console.warn('[save] could not take', oldKey, 'out of', buildKey, ':', err?.status, err?.message);
+        problems.push(`couldn't take ${oldKey} out of ${buildLabel}`);
+      }
+    }
+    return problems;
   }
 
   /**

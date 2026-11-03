@@ -1,6 +1,6 @@
 /**
  * Epic Routes — GET /api/epics/search, GET /api/epics/:key,
- * GET /api/epics/:key/sub-assemblies, POST /api/epics/onboard/preview, POST /api/epics/onboard
+ * GET /api/epics/:key/sub-assemblies, GET /api/epics/:key/purchased-parts, POST /api/epics/onboard/preview, POST /api/epics/onboard
  */
 
 import { Router } from 'express';
@@ -56,6 +56,23 @@ export default function epicRoutes({ epicService }) {
       includeClosed: includeClosed === '1',
     });
     res.json(result);
+  }));
+
+  /**
+   * GET /api/epics/:key/purchased-parts?build=HAR-123 — the off-the-shelf
+   * parts of the Assembly (rows from other OnShape documents), from the
+   * Build's cut version, or the live BOM for a Draft.
+   * → { parts: [{ name, partNumber, quantity }], error? }
+   */
+  router.get('/:key/purchased-parts', asyncHandler(async (req, res) => {
+    const check = validateIssueKey(req.params.key);
+    if (!check.valid) throw badRequest(check.error);
+    const build = typeof req.query.build === 'string' && req.query.build ? req.query.build : undefined;
+    if (build) {
+      const buildCheck = validateIssueKey(build);
+      if (!buildCheck.valid) throw badRequest(buildCheck.error);
+    }
+    res.json(await epicService.getPurchasedParts(req.params.key, build));
   }));
 
   /**

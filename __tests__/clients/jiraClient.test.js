@@ -16,6 +16,9 @@ const mockCreateIssue = jest.fn();
 const mockEditIssue = jest.fn();
 const mockGetIssue = jest.fn();
 const mockCreateIssueLink = jest.fn();
+const mockSendRequest = jest.fn();
+const mockAddAttachment = jest.fn();
+const mockDeleteIssueLink = jest.fn();
 
 jest.unstable_mockModule('jira.js', () => ({
   Version2Client: class {
@@ -27,7 +30,9 @@ jest.unstable_mockModule('jira.js', () => ({
         getIssue: mockGetIssue,
       };
       // jira.js's real method is linkIssues; there is no createIssueLink.
-      this.issueLinks = { linkIssues: mockCreateIssueLink };
+      this.issueLinks = { linkIssues: mockCreateIssueLink, deleteIssueLink: mockDeleteIssueLink };
+      this.issueAttachments = { addAttachment: mockAddAttachment };
+      this.sendRequest = mockSendRequest;
     }
   },
 }));
@@ -283,6 +288,38 @@ describe('JiraClient', () => {
       const { IssueLinks } = await import('jira.js/out/version2/issueLinks.js');
       expect(typeof IssueLinks.prototype.linkIssues).toBe('function');
       expect(IssueLinks.prototype.createIssueLink).toBeUndefined();
+    });
+  });
+
+  describe('attachments', () => {
+    it('reads an attachment from its content link, on the same host', async () => {
+      mockSendRequest.mockResolvedValueOnce(new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer);
+      const bytes = await makeClient().getAttachmentContent('https://jira.test/secure/attachment/13501/VR27P-1101A.png');
+      expect(Buffer.isBuffer(bytes)).toBe(true);
+      expect(bytes.subarray(1, 4).toString()).toBe('PNG');
+      expect(mockSendRequest).toHaveBeenCalledWith({
+        url: '/secure/attachment/13501/VR27P-1101A.png', method: 'GET', responseType: 'arraybuffer',
+      });
+    });
+
+    it('refuses a link that is not an attachment', async () => {
+      await expect(makeClient().getAttachmentContent('https://jira.test/rest/api/2/issue/HAR-1')).rejects.toThrow('Not an attachment link');
+      expect(mockSendRequest).not.toHaveBeenCalled();
+    });
+
+    it('adds a file to an issue, from a Buffer or text', async () => {
+      mockAddAttachment.mockResolvedValue([]);
+      const client = makeClient();
+      await client.addAttachment('HAR-9', 'a.png', Buffer.from('PNG'));
+      await client.addAttachment('HAR-9', 'a.dxf', 'ENTITIES');
+      expect(mockAddAttachment.mock.calls[0][0]).toEqual({ issueIdOrKey: 'HAR-9', attachment: { filename: 'a.png', file: Buffer.from('PNG') } });
+      expect(Buffer.isBuffer(mockAddAttachment.mock.calls[1][0].attachment.file)).toBe(true);
+    });
+
+    it('deletes an issue link by id', async () => {
+      mockDeleteIssueLink.mockResolvedValue(undefined);
+      await makeClient().deleteIssueLink(777);
+      expect(mockDeleteIssueLink).toHaveBeenCalledWith({ linkId: '777' });
     });
   });
 });

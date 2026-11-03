@@ -3,7 +3,7 @@ import {
   useBlocker, useLocation, useNavigate, useParams, useSearchParams,
 } from 'react-router-dom';
 import {
-  createBuild, cutBuildVersion, previewParts, recreatePartForBuild, saveBuildParts,
+  createBuild, cutBuildVersion, fetchFileStatus, previewParts, saveBuildParts,
 } from '../api/client.js';
 import { useAssemblyData } from '../components/assembly-shared/useAssemblyData.js';
 import AssemblyHeader from '../components/assembly-shared/AssemblyHeader.jsx';
@@ -14,8 +14,8 @@ import CutVersionDialog from '../components/builds/CutVersionDialog.jsx';
 import TwoActiveWarning from '../components/builds/TwoActiveWarning.jsx';
 import DesignerPartsTable from '../components/designer/DesignerPartsTable.jsx';
 import UnidentifiedPartsWarning from '../components/parts/UnidentifiedPartsWarning.jsx';
-import SubAssemblyList from '../components/home/SubAssemblyList.jsx';
 import SubAssemblyLinks from '../components/assembly-shared/SubAssemblyLinks.jsx';
+import BuildImage from '../components/assembly-shared/BuildImage.jsx';
 import Alert from '../components/ui/Alert.jsx';
 import Badge from '../components/ui/Badge.jsx';
 import Button from '../components/ui/Button.jsx';
@@ -28,12 +28,14 @@ import {
   mergeBuilds, nextBuildNumber, overlayBuildStatus, pickerBuilds, visibleBuilds,
 } from '../lib/buildNames.js';
 import {
-  PART_FIELDS, addSessionLinks, deriveDesignerRows, dropAgreedLinks, dropAgreedParts, dropAgreedRecreated,
-  mergeParts, newerRevisionOf,
+  PART_FIELDS, addSessionLinks, deriveDesignerRows, dropAgreedLinks, dropAgreedParts, dropAgreedUnlinks,
 } from '../lib/designerRows.js';
 import {
   SAVE_BATCH, applySaveResults, batchBody, bodySize, planSave, saveCounts,
 } from '../lib/designerSave.js';
+import {
+  addWatch, failureText, settle, watchFrom,
+} from '../lib/fileStatus.js';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
@@ -43,28 +45,34 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
  * preview and before search lists it.
  */
 function addCreatedParts(prev, results, batch, preview, assemblyKey) {
-  const made = (results ?? []).filter((r) => r.op === 'create' && r.key);
+  const made = (results ?? []).filter((r) => (r.op === 'create' || r.op === 'copy') && r.key);
   if (!made.length) return prev;
   const next = new Map(prev);
   for (const r of made) {
+    if (r.op === 'copy') {
+      if (r.part) next.set(r.key, { ...r.part, key: r.key });
+      continue;
+    }
     const item = (preview?.newParts ?? []).find((p) => p.fullPartNumber === r.ref);
     if (!item) continue;
     const sentItem = batch.creates.find((c) => c.ref === r.ref);
     const written = r.ok || !r.reused || r.updated;
     const values = {};
     if (sentItem && written) for (const f of PART_FIELDS) values[f] = sentItem[f];
-    next.set(r.key, { ...item, ...values, key: r.key, epic: assemblyKey });
+    // The server may have numbered it differently from the number shown.
+    const number = r.fullPartNumber ?? item.fullPartNumber;
+    const summary = item.summary && number !== item.fullPartNumber
+      ? number + item.summary.slice(item.fullPartNumber.length) : item.summary;
+    next.set(r.key, { ...item, ...values, fullPartNumber: number, summary, key: r.key, epic: assemblyKey });
   }
   return next;
 }
-
-/** Add one Part object to a `Map<key, Part>`; returns a new Map. */
-const withPart = (map, part) => (part?.key ? new Map(map).set(part.key, part) : map);
 
 const emptyWork = () => ({
   edits: {},
   createdKeys: {},
   linkedThisSession: new Map(),
+  unlinkedThisSession: new Map(),
   selection: new Set(),
   rowResults: {},
 });
@@ -97,14 +105,17 @@ function DesignerPage({ assemblyKey: key }) {
   const [createdParts, setCreatedParts] = useState(() => new Map());
   const [preview, setPreview] = useState(null);
   const [cadBusy, setCadBusy] = useState(false);
+  const [pictureStamp, setPictureStamp] = useState(0);
+  // Files Save left to the background: the Parts being watched, when pictures may have landed, what failed.
+  const [fileWatch, setFileWatch] = useState([]);
+  const [thumbStamp, setThumbStamp] = useState(0);
+  const [fileFailures, setFileFailures] = useState([]);
   const [cadError, setCadError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saveProgress, setSaveProgress] = useState(null);
   const [saveError, setSaveError] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
-  const [newStart, setNewStart] = useState('empty'); // 'copy' from "New Build from this one"
-  const [recreated, setRecreated] = useState(() => new Map());
-  const [recreatingKey, setRecreatingKey] = useState(null);
+  const [newStart, setNewStart] = useState('copy');
   const [actionMsg, setActionMsg] = useState(null); // { variant, text }
   const [createBusy, setCreateBusy] = useState(null); // 'form' | 'empty'
   const [newError, setNewError] = useState(null);
@@ -144,12 +155,13 @@ function DesignerPage({ assemblyKey: key }) {
   }, [data.fetchedBuilds]);
   useEffect(() => {
     setCreatedParts((prev) => dropAgreedParts(prev, data.parts));
-    setRecreated((prev) => dropAgreedRecreated(prev, data.parts));
   }, [data.parts]);
   useEffect(() => {
     setWork((w) => {
-      const next = dropAgreedLinks(w.linkedThisSession, data.buildParts);
-      return next === w.linkedThisSession ? w : { ...w, linkedThisSession: next };
+      const linked = dropAgreedLinks(w.linkedThisSession, data.buildParts);
+      const unlinked = dropAgreedUnlinks(w.unlinkedThisSession, data.buildParts);
+      return linked === w.linkedThisSession && unlinked === w.unlinkedThisSession
+        ? w : { ...w, linkedThisSession: linked, unlinkedThisSession: unlinked };
     });
   }, [data.buildParts]);
 
@@ -169,6 +181,7 @@ function DesignerPage({ assemblyKey: key }) {
     chainKeys: data.chain,
     linkedByPart: data.linkedByPart,
     linkedThisSession: work.linkedThisSession,
+    unlinkedThisSession: work.unlinkedThisSession,
     buildKey: selectedKey,
     builds,
     preview,
@@ -177,8 +190,18 @@ function DesignerPage({ assemblyKey: key }) {
     rowResults: work.rowResults,
   }), [data.parts, createdParts, data.chain, data.linkedByPart, work, selectedKey, builds, preview]);
 
+  // A row that makes units the Build is short of starts ticked, like a New Part.
+  const seenCopies = useRef(new Set());
+  useEffect(() => {
+    const current = new Set(groups.newFromCad.filter((r) => r.isCopy).map((r) => r.rowId));
+    const fresh = [...current].filter((id) => !seenCopies.current.has(id));
+    seenCopies.current = current;
+    if (fresh.length === 0) return;
+    setWork((w) => ({ ...w, selection: new Set([...w.selection, ...fresh]) }));
+  }, [groups]);
+
   const plan = useMemo(
-    () => (locked ? { body: { creates: [], updates: [], links: [] }, heldBack: [] } : planSave(groups, work.selection)),
+    () => (locked ? { body: { creates: [], updates: [], links: [], copies: [] }, heldBack: [] } : planSave(groups, work.selection)),
     [locked, groups, work.selection],
   );
   const heldBack = useMemo(() => new Map(plan.heldBack.map((h) => [h.rowId, h])), [plan]);
@@ -198,11 +221,33 @@ function DesignerPage({ assemblyKey: key }) {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [hasPending]);
 
+  // ----- Files Save leaves to the background: watch until they are on -----
+  useEffect(() => {
+    if (fileWatch.length === 0) return undefined;
+    let live = true;
+    const timer = setInterval(async () => {
+      try {
+        const { statuses } = await fetchFileStatus(fileWatch.map((w) => w.key));
+        if (!live) return;
+        const { stillWatching, finished, failed } = settle(fileWatch, statuses);
+        if (finished.length > 0) setThumbStamp((n) => n + 1);
+        if (failed.length > 0) {
+          setFileFailures((prev) => [...prev.filter((p) => !failed.some((f) => f.key === p.key)), ...failed]);
+        }
+        setFileWatch(stillWatching);
+      } catch {
+        // A missed answer is asked again on the next tick.
+      }
+    }, 3000);
+    return () => { live = false; clearInterval(timer); };
+  }, [fileWatch]);
+
   // ----- Update from CAD -----
   const runCad = useCallback(async ({ fresh }) => {
     if (!assembly) return;
     setCadBusy(true);
     setCadError(null);
+    setFileFailures([]);
     try {
       const result = await previewParts({
         epicKey: key,
@@ -212,6 +257,7 @@ function DesignerPage({ assemblyKey: key }) {
         ...(fresh ? { fresh: true } : {}),
       });
       setPreview(result);
+      setPictureStamp((n) => n + 1);
       setWork((w) => {
         const selection = new Set(w.selection);
         for (const item of result.newParts ?? []) {
@@ -266,7 +312,8 @@ function DesignerPage({ assemblyKey: key }) {
       try {
         // eslint-disable-next-line no-await-in-loop
         const res = await saveBuildParts(selectedKey, batch);
-        setWork((w) => applySaveResults(w, res.results, selectedKey, { body: batch, buildName }));
+        setWork((w) => ({ ...w, ...applySaveResults(w, res.results, selectedKey, { body: batch, buildName }) }));
+        setFileWatch((w) => addWatch(w, watchFrom(res.results)));
         setCreatedParts((prev) => addCreatedParts(prev, res.results, batch, preview, key));
         done += bodySize(batch);
       } catch (err) {
@@ -286,54 +333,6 @@ function DesignerPage({ assemblyKey: key }) {
     setPreview(null);
     setSaveError(null);
   }, []);
-
-  // ----- Re-create a Part a cut Build uses, for this Draft -----
-  const recreate = async (row) => {
-    if (!selectedKey) return;
-    const target = selectedKey;
-    const name = buildName;
-    setRecreatingKey(row.key);
-    setActionMsg(null);
-    try {
-      const res = await recreatePartForBuild(target, row.key);
-      setCreatedParts((prev) => withPart(prev, res.part));
-      setWork((w) => ({ ...w, linkedThisSession: addSessionLinks(w.linkedThisSession, target, [res.key]) }));
-      setRecreated((prev) => new Map(prev).set(row.key, res.key));
-      setActionMsg({ variant: 'info', text: `Re-created ${row.key} as ${res.key} (Revision ${res.revision}) in ${name}. OnShape still shows Revision ${row.version ?? 'A'}; raise it there to match.` });
-      data.refresh();
-    } catch (err) {
-      const body = err?.body ?? {};
-      if (err?.status === 409 && body.recreatedAs) {
-        setRecreated((prev) => new Map(prev).set(row.key, body.recreatedAs));
-        setActionMsg({ variant: 'error', text: friendlyError(err) });
-        data.refresh();
-      } else if ((body.stage === 'revises-link' || body.stage === 'used-in-link') && body.key) {
-        setCreatedParts((prev) => withPart(prev, body.part));
-        setRecreated((prev) => new Map(prev).set(row.key, body.key));
-        setActionMsg({
-          variant: 'error',
-          text: body.stage === 'revises-link'
-            ? `Created ${body.key}, but couldn't record it as the next Revision of ${row.key}: ${friendlyClause(err)}`
-            : `Created ${body.key}, but couldn't add it to ${name}: ${friendlyClause(err)} Tick it under Other Parts to add it.`,
-        });
-        data.refresh();
-      } else {
-        setActionMsg({ variant: 'error', text: `Couldn't re-create ${row.key} for ${name}: ${friendlyClause(err)}` });
-      }
-    } finally {
-      setRecreatingKey(null);
-    }
-  };
-
-  const allParts = useMemo(() => mergeParts(data.parts, createdParts), [data.parts, createdParts]);
-  /** Why "Re-create for this Build" is off for this Part, or null. */
-  const recreateBlocked = (row) => {
-    const part = allParts.find((p) => p.key === row.key);
-    const newer = part ? newerRevisionOf(part, allParts) : null;
-    if (newer) return `Already re-created as ${newer.key}`;
-    const session = recreated.get(row.key);
-    return session ? `Already re-created as ${session}` : null;
-  };
 
   // ----- Builds: select, create -----
   const selectBuild = useCallback((buildKey) => {
@@ -474,6 +473,10 @@ function DesignerPage({ assemblyKey: key }) {
       : loadFailed
         ? 'Reload the missing data first.'
         : null;
+  // Parts can be reused from a Build that was cut (made), latest first.
+  const reusable = builds
+    .filter((b) => b.status === 'Active' || b.status === 'Superseded')
+    .sort((a, b) => (b.buildNumber ?? 0) - (a.buildNumber ?? 0));
   const pickerList = pickerBuilds(builds, selectedKey)
     .sort((a, b) => (a.buildNumber ?? 0) - (b.buildNumber ?? 0));
   const hasAnyParts = groups.inBuild.length + groups.other.length + groups.newFromCad.length > 0;
@@ -520,7 +523,7 @@ function DesignerPage({ assemblyKey: key }) {
         builds={pickerList}
         selectedKey={selectedKey}
         onSelect={onPick}
-        onNew={() => { setNewError(null); setNewStart('empty'); setNewOpen((o) => !o); }}
+        onNew={() => { setNewError(null); setNewStart('copy'); setNewOpen((o) => !o); }}
         disabled={loadFailed || !data.ready}
         newDisabled={!!createBusy}
         newOpen={newOpen}
@@ -531,8 +534,8 @@ function DesignerPage({ assemblyKey: key }) {
           key={newStart}
           defaultName={assembly.name}
           nextNumber={nextNumber}
-          copyFrom={builds.filter((b) => b.status !== 'Archived' || b.key === selectedKey)}
-          defaultCopyKey={selectedKey}
+          copyFrom={reusable}
+          defaultCopyKey={reusable.some((b) => b.key === selectedKey) ? selectedKey : reusable[0]?.key ?? null}
           defaultStart={newStart}
           busy={createBusy === 'form'}
           error={newError}
@@ -547,16 +550,6 @@ function DesignerPage({ assemblyKey: key }) {
           {assembly.summary} was created, but it couldn&apos;t be recorded as the next Revision of{' '}
           {onboard.revisionOf?.summary ?? 'the earlier Assembly'}: {onboard.revisionLinkError}. Its Parts and Builds
           won&apos;t show the earlier Revision until that link exists.
-        </Alert>
-      )}
-
-      {onboard?.subAssemblies?.length > 0 && (
-        <Alert
-          variant={onboard.subAssemblies.some((s) => s.status === 'error' || s.status === 'conflict' || s.status === 'problems') ? 'warning' : 'info'}
-          role="status"
-          className="onboard-banner"
-        >
-          <SubAssemblyList subAssemblies={onboard.subAssemblies} />
         </Alert>
       )}
 
@@ -662,6 +655,7 @@ function DesignerPage({ assemblyKey: key }) {
         )}
 
         {buildWarning && <Alert variant="warning" role="alert">{buildWarning}</Alert>}
+        {fileFailures.length > 0 && <Alert variant="warning" role="status">{failureText(fileFailures)}</Alert>}
 
         <TwoActiveWarning
           builds={builds}
@@ -672,17 +666,14 @@ function DesignerPage({ assemblyKey: key }) {
           onResolved={() => { setCutFailedKey(null); data.refresh(); }}
         />
 
-        {!viewOnly && preview?.subAssemblies?.length > 0 && (
-          <Alert variant="info" role="status" className="sub-assembly-note">
-            {preview.subAssemblies.length === 1 ? '1 sub-assembly is' : `${preview.subAssemblies.length} sub-assemblies are`} an
-            Assembly, not Parts: {preview.subAssemblies.map((s) => s.name || s.partNumber).join(', ')}.
-            Paste this assembly&apos;s OnShape link on Home to add any that are missing.
-          </Alert>
-        )}
         {!viewOnly && preview?.unidentified?.length > 0 && <UnidentifiedPartsWarning parts={preview.unidentified} />}
 
         {!selectedBuild && hasAnyParts && data.ready && (
           <p className="form-help">Create Build 1 to add these Parts to it.</p>
+        )}
+
+        {selectedBuild && (
+          <BuildImage buildKey={selectedBuild.key} label={buildName} refresh={pictureStamp || undefined} />
         )}
 
         {data.ready ? (
@@ -698,10 +689,7 @@ function DesignerPage({ assemblyKey: key }) {
             locked={locked}
             busy={saving}
             viewOnly={viewOnly}
-            onRecreate={recreate}
-            recreatingKey={recreatingKey}
-            recreateBlocked={recreateBlocked}
-            actionsLocked={!!recreatingKey}
+            thumbStamp={thumbStamp || undefined}
           />
         ) : (
           <p className="page-loading" role="status">Loading Builds and Parts…</p>

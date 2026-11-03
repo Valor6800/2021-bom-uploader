@@ -142,9 +142,9 @@ describe('PartService.previewParts', () => {
 
     await service.previewParts({ epicKey: 'HAR-2030', documentId: 'd', workspaceId: 'w', elementId: 'e' });
 
-    expect(jiraClient.getIssue).toHaveBeenCalledWith('HAR-2030', { fields: ['summary'] });
+    expect(jiraClient.getIssue).toHaveBeenCalledWith('HAR-2030', { fields: ['summary', 'description'] });
     expect(bomService.getBOMReport).toHaveBeenCalledWith(
-      'HAR-2030', 'd', 'w', 'e', { seasonType: 'F', year: '27' }, { fresh: false },
+      'HAR-2030', 'd', 'w', 'e', { seasonType: 'F', year: '27', partNumber: '0000' }, { fresh: false },
     );
   });
 
@@ -270,8 +270,8 @@ describe('PartService.previewParts season lookup failure (B3)', () => {
       { propertyName: 'project', name: 'Project', propertyId: '57f3fb8efa3416c06701d613' },
     ];
     const items = [
-      { item: '1', quantity: 1, partNumber: '0001', revision: 'A', project: 'VF27', name: 'Own Project' },
-      { item: '2', quantity: 1, partNumber: '0002', revision: 'A', project: '', name: 'Needs Season' },
+      { item: '1', quantity: 1, partNumber: '0001', revision: 'A', project: 'VF27', name: 'Own Project', material: { displayName: 'PLA' } },
+      { item: '2', quantity: 1, partNumber: '0002', revision: 'A', project: '', name: 'Needs Season', material: { displayName: 'PLA' } },
     ];
     const onshapeClient = {
       getAssemblyBOM: jest.fn().mockResolvedValue({ bomTable: { formatVersion: '1.0', headers, items } }),

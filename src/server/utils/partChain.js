@@ -29,6 +29,31 @@ export function isMoreOriginal(candidate, current) {
 }
 
 /**
+ * A Part's number without its Revision letter ("VF27-0001"): what identifies
+ * it from one Revision to the next. Null when the story has no number.
+ * @param {object} story  A parsed Part (or BOM row)
+ * @returns {string|null}
+ */
+export function baseNumber(story) {
+  const match = /^V([RF]\d{2})P-(\d{4})/.exec(story?.fullPartNumber ?? '');
+  return match ? `${match[1]}-${match[2]}` : null;
+}
+
+/**
+ * Which of two Revisions of one Part is current: the later letter, and for
+ * the same letter the original (see `isMoreOriginal`).
+ * @param {object} candidate
+ * @param {object|undefined} current
+ * @returns {boolean} True when `candidate` should replace `current`
+ */
+export function isCurrentRevision(candidate, current) {
+  if (!current) return true;
+  const a = candidate.version ?? '';
+  const b = current.version ?? '';
+  return a > b || (a === b && isMoreOriginal(candidate, current));
+}
+
+/**
  * When two stories share a fullPartNumber, keep the one whose `epic` is
  * newest in the chain (lowest index); among stories under the same ticket,
  * keep the original (lowest key, see `isMoreOriginal`), so a spare never

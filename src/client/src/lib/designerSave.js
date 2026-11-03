@@ -26,22 +26,29 @@ function valuesOf(row) {
  * @param {{ newFromCad: object[], inBuild: object[], other: object[] }} groups
  * @param {Set<string>} selection  Selected rowIds (New and Other rows)
  * @param {{ only?: Set<string> }} [options]  Plan only these rowIds (a row's Retry)
- * @returns {{ body: { creates: object[], updates: object[], links: object[] },
+ * @returns {{ body: { creates: object[], updates: object[], links: object[], copies: object[] },
  *   heldBack: { rowId: string, field: string, error: string }[] }}
  */
 export function planSave(groups, selection, { only } = {}) {
   const creates = [];
   const updates = [];
   const links = [];
+  const copies = [];
   const heldBack = [];
   const wanted = (rowId) => !only || only.has(rowId);
 
   for (const row of groups.newFromCad ?? []) {
     if (!selection.has(row.rowId) || !wanted(row.rowId)) continue;
+    if (row.isCopy) {
+      copies.push({ ref: row.rowId, from: row.copyOf, quantity: row.values.quantity });
+      continue;
+    }
     const item = {
       ref: row.rowId,
       summary: row.summary,
       revision: row.revision ?? row.version ?? undefined,
+      ...(row.cadRef ? { cadRef: row.cadRef } : {}),
+      ...(row.revises ? { revises: row.revises } : {}),
       ...valuesOf(row),
     };
     const problem = validateRowFields(item);
@@ -62,18 +69,19 @@ export function planSave(groups, selection, { only } = {}) {
     }
   }
 
-  return { body: { creates, updates, links }, heldBack };
+  return { body: { creates, updates, links, copies }, heldBack };
 }
 
 /** Number of items in a save body. */
 export function bodySize(body) {
-  return (body.creates?.length ?? 0) + (body.updates?.length ?? 0) + (body.links?.length ?? 0);
+  return (body.creates?.length ?? 0) + (body.updates?.length ?? 0) + (body.links?.length ?? 0)
+    + (body.copies?.length ?? 0);
 }
 
 /** Counts for the save bar: new Parts, changes, and Parts added to the Build. */
 export function saveCounts(body) {
   return {
-    creates: body.creates.length,
+    creates: body.creates.length + (body.copies?.length ?? 0),
     updates: body.updates.length,
     added: body.links.length + body.updates.filter((u) => u.link).length,
   };
@@ -81,17 +89,18 @@ export function saveCounts(body) {
 
 /**
  * Split a body into requests of at most `size` items: creates first, then
- * updates, then links, keeping order.
+ * updates, then links, then copies, keeping order.
  */
 export function batchBody(body, size = SAVE_BATCH) {
   const flat = [
     ...(body.creates ?? []).map((item) => ['creates', item]),
     ...(body.updates ?? []).map((item) => ['updates', item]),
     ...(body.links ?? []).map((item) => ['links', item]),
+    ...(body.copies ?? []).map((item) => ['copies', item]),
   ];
   const batches = [];
   for (let i = 0; i < flat.length; i += size) {
-    const batch = { creates: [], updates: [], links: [] };
+    const batch = { creates: [], updates: [], links: [], copies: [] };
     for (const [list, item] of flat.slice(i, i + size)) batch[list].push(item);
     batches.push(batch);
   }
@@ -115,9 +124,11 @@ export function applySaveResults(state, results, buildKey, { body, buildName = '
   const rowResults = { ...state.rowResults };
   const linkedThisSession = new Map(state.linkedThisSession ?? []);
   const linkedNow = new Set(linkedThisSession.get(buildKey) ?? []);
+  const unlinkedThisSession = new Map(state.unlinkedThisSession ?? []);
+  const unlinkedNow = new Set(unlinkedThisSession.get(buildKey) ?? []);
 
   const sent = new Map();
-  for (const item of [...(body?.creates ?? []), ...(body?.updates ?? []), ...(body?.links ?? [])]) {
+  for (const item of [...(body?.creates ?? []), ...(body?.updates ?? []), ...(body?.links ?? []), ...(body?.copies ?? [])]) {
     sent.set(item.ref, item);
   }
   const sentValues = (ref) => {
@@ -134,7 +145,7 @@ export function applySaveResults(state, results, buildKey, { body, buildName = '
     const id = r.key ?? ref;
     const failure = r.ok ? null : { error: r.error, field: r.field ?? null };
 
-    if (r.op === 'create') {
+    if (r.op === 'create' || r.op === 'copy') {
       if (r.key) createdKeys[ref] = r.key;
       // The Part holds the sent values unless it already existed and the update failed.
       const written = !!r.key && (r.ok || !r.reused || r.updated);
@@ -154,7 +165,7 @@ export function applySaveResults(state, results, buildKey, { body, buildName = '
         ? {
           ok: true,
           values,
-          note: r.reused && r.updated ? `Already existed; updated and added to ${buildName}.` : null,
+          note: r.note ?? (r.reused && r.updated ? `Already existed; updated and added to ${buildName}.` : null),
         }
         : { ok: false, ...failure, values };
     } else if (r.op === 'update') {
@@ -175,8 +186,10 @@ export function applySaveResults(state, results, buildKey, { body, buildName = '
     }
 
     if (r.ok && r.key && (r.linked || r.alreadyLinked)) linkedNow.add(r.key);
+    if (r.ok && r.replaced) unlinkedNow.add(r.replaced);
   }
 
   if (linkedNow.size) linkedThisSession.set(buildKey, linkedNow);
-  return { edits, createdKeys, selection, rowResults, linkedThisSession };
+  if (unlinkedNow.size) unlinkedThisSession.set(buildKey, unlinkedNow);
+  return { edits, createdKeys, selection, rowResults, linkedThisSession, unlinkedThisSession };
 }

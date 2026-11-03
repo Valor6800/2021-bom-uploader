@@ -288,6 +288,54 @@ export class JiraClient {
     }, endpoint);
   }
 
+  /**
+   * Delete an issue link by its id (the `id` on an entry of the issue's
+   * `issuelinks`).
+   *
+   * @param {string} linkId
+   * @returns {Promise<void>}
+   */
+  async deleteIssueLink(linkId) {
+    const endpoint = `issueLinks.deleteIssueLink(${linkId})`;
+    return this._retry(async () => {
+      await this.client.issueLinks.deleteIssueLink({ linkId: String(linkId) });
+    }, endpoint);
+  }
+
+  /**
+   * An attachment's bytes, from the `content` link on its metadata. (jira.js's
+   * own download call answers 404 on this Jira, so the link is fetched as is.)
+   *
+   * @param {string} content  The attachment's `content` URL
+   * @returns {Promise<Buffer>}
+   */
+  async getAttachmentContent(content) {
+    const path = String(content ?? '').replace(/^https?:\/\/[^/]+/, '');
+    if (!path.startsWith('/secure/attachment/')) throw new Error('Not an attachment link');
+    return this._retry(
+      async () => Buffer.from(await this.client.sendRequest({ url: path, method: 'GET', responseType: 'arraybuffer' })),
+      `attachment ${path}`,
+    );
+  }
+
+  /**
+   * Attach a file to an issue.
+   *
+   * @param {string} key       Issue key
+   * @param {string} filename
+   * @param {Buffer|string} content
+   * @returns {Promise<void>}
+   */
+  async addAttachment(key, filename, content) {
+    const endpoint = `issueAttachments.addAttachment(${key}, ${filename})`;
+    return this._retry(async () => {
+      await this.client.issueAttachments.addAttachment({
+        issueIdOrKey: key,
+        attachment: { filename, file: Buffer.isBuffer(content) ? content : Buffer.from(content) },
+      });
+    }, endpoint);
+  }
+
   // -----------------------------------------------------------------------
   // Internal helpers
   // -----------------------------------------------------------------------

@@ -139,6 +139,17 @@ export function fetchEpicByKey(key) {
   return request(`/api/epics/${encodeURIComponent(key)}`);
 }
 
+/** Where the background file jobs for these Part tickets stand: `{ statuses: { [key]: { state, problems } } }`. */
+export function fetchFileStatus(keys) {
+  return request(`/api/pictures/status?keys=${keys.map(encodeURIComponent).join(',')}`);
+}
+
+/** The Assembly's off-the-shelf parts (vendor rows from other OnShape documents) for a Build. */
+export function fetchPurchasedParts(key, buildKey) {
+  const query = buildKey ? `?build=${encodeURIComponent(buildKey)}` : '';
+  return request(`/api/epics/${encodeURIComponent(key)}/purchased-parts${query}`);
+}
+
 /** The Assembly's sub-assemblies (from its OnShape BOM), each matched to its own Assembly where one exists. */
 export function fetchSubAssemblies(key) {
   return request(`/api/epics/${encodeURIComponent(key)}/sub-assemblies`);
@@ -284,13 +295,6 @@ export function saveBuildParts(buildKey, body) {
 /** Every Build a Part is linked to, newest first — the current-build indicator. */
 export function fetchBuildsForPart(partKey) {
   return request(`/api/builds/for-part/${encodeURIComponent(partKey)}`);
-}
-
-/** "Re-create for this Build": a new revision of the Part, linked only to targetBuildKey. */
-export function recreatePartForBuild(targetBuildKey, partKey) {
-  return request(`/api/builds/${encodeURIComponent(targetBuildKey)}/parts/${encodeURIComponent(partKey)}/recreate`, {
-    method: 'POST',
-  });
 }
 
 /**

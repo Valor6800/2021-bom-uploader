@@ -11,6 +11,14 @@
 export const PART_FIELDS = ['quantity', 'material', 'machinery', 'powdercoat', 'thickness'];
 
 /**
+ * The fields CAD owns. Quantity and Material always follow CAD. The rest
+ * (machinery, powdercoat, thickness, priority) are set when a Part is made
+ * and are the student's from then on: CAD never overwrites them, so a saved
+ * choice stays saved.
+ */
+export const CAD_FIELDS = ['quantity', 'material'];
+
+/**
  * Fields the student can't edit: OnShape sets them. A CAD value still
  * applies on Update from CAD; an edit to one is dropped.
  */
@@ -54,7 +62,7 @@ export function linksFromBuildParts(perBuild) {
  * Add this session's links (`Map<buildKey, Set<partKey>>`) to the fetched
  * ones, so a Part just added to a Build stays in it while search lags.
  */
-export function mergeLinks(linkedByPart, linkedThisSession) {
+export function mergeLinks(linkedByPart, linkedThisSession, unlinkedThisSession) {
   const out = new Map();
   for (const [partKey, builds] of linkedByPart ?? []) out.set(partKey, new Set(builds));
   for (const [buildKey, partKeys] of linkedThisSession ?? []) {
@@ -62,6 +70,9 @@ export function mergeLinks(linkedByPart, linkedThisSession) {
       if (!out.has(partKey)) out.set(partKey, new Set());
       out.get(partKey).add(buildKey);
     }
+  }
+  for (const [buildKey, partKeys] of unlinkedThisSession ?? []) {
+    for (const partKey of partKeys) out.get(partKey)?.delete(buildKey);
   }
   return out;
 }
@@ -83,6 +94,25 @@ export function dropAgreedLinks(linkedThisSession, perBuild) {
     if (kept.size) next.set(buildKey, kept);
   }
   return changed ? next : linkedThisSession;
+}
+
+/** Drop session unlinks a fetch of that Build's Parts no longer lists. */
+export function dropAgreedUnlinks(unlinkedThisSession, perBuild) {
+  if (!unlinkedThisSession || unlinkedThisSession.size === 0) return unlinkedThisSession;
+  let changed = false;
+  const next = new Map();
+  for (const [buildKey, partKeys] of unlinkedThisSession) {
+    const fetched = perBuild?.get(buildKey);
+    if (!fetched) {
+      next.set(buildKey, partKeys);
+      continue;
+    }
+    const fetchedSet = new Set(fetched);
+    const kept = new Set([...partKeys].filter((k) => fetchedSet.has(k)));
+    if (kept.size !== partKeys.size) changed = true;
+    if (kept.size) next.set(buildKey, kept);
+  }
+  return changed ? next : unlinkedThisSession;
 }
 
 /** Add `partKeys` to `linkedThisSession` for `buildKey`; returns a new Map. */
@@ -114,17 +144,6 @@ export function dropAgreedParts(createdParts, fetched) {
 }
 
 /**
- * Drop re-created entries (`Map<sourceKey, newKey>`) whose new Part a
- * re-fetch now lists; from then on hasNewerRevision covers the source.
- */
-export function dropAgreedRecreated(recreatedThisSession, fetched) {
-  if (!recreatedThisSession || recreatedThisSession.size === 0) return recreatedThisSession;
-  const seen = new Set((fetched ?? []).map((p) => p.key));
-  const next = new Map([...recreatedThisSession].filter(([, newKey]) => !seen.has(newKey)));
-  return next.size === recreatedThisSession.size ? recreatedThisSession : next;
-}
-
-/**
  * Rows for comparing two Builds: every Part in either, shared Parts first,
  * then by summary.
  *
@@ -146,27 +165,6 @@ export function compareBuildRows(parts, links, aKey, bKey) {
     .filter((r) => r.inA || r.inB)
     .sort((x, y) => Number(y.shared) - Number(x.shared)
       || (x.part.summary ?? '').localeCompare(y.part.summary ?? ''));
-}
-
-/**
- * The newest other Part with the same number and a later Revision letter,
- * or null.
- */
-export function newerRevisionOf(part, allParts) {
-  let newest = null;
-  for (const other of allParts ?? []) {
-    if (other.key === part.key) continue;
-    if (other.seasonType !== part.seasonType || other.year !== part.year
-      || other.partNumber !== part.partNumber) continue;
-    if (!other.version || !part.version || other.version <= part.version) continue;
-    if (!newest || other.version > newest.version) newest = other;
-  }
-  return newest;
-}
-
-/** True when another Part is a later Revision of this one. */
-export function hasNewerRevision(part, allParts) {
-  return newerRevisionOf(part, allParts) !== null;
 }
 
 /** "Changed in CAD: Qty 1→3, Material PLA→PETG-CF" */
@@ -205,28 +203,17 @@ function withoutLocked(edit) {
   return out;
 }
 
-/** "VF27-0001": the Part number without its Revision letter. */
-function numberOf(part) {
-  return part?.seasonType && part?.year && part?.partNumber
-    ? `${part.seasonType}${part.year}-${part.partNumber}`
-    : null;
-}
-
-/** The newest Part in `parts` with this one's number and an earlier Revision letter. */
-function previousRevisionIn(item, parts) {
-  const number = numberOf(item);
-  if (!number || !item.version) return null;
-  let found = null;
-  for (const other of parts) {
-    if (numberOf(other) !== number || !other.version || other.version >= item.version) continue;
-    if (!found || other.version > found.version) found = other;
+function pickCadValues(source) {
+  const out = {};
+  for (const f of CAD_FIELDS) {
+    if (source && source[f] !== undefined) out[f] = source[f];
   }
-  return found;
+  return out;
 }
 
 function diff(stored, next) {
   const changes = {};
-  for (const f of PART_FIELDS) {
+  for (const f of CAD_FIELDS) {
     if (next[f] !== undefined && next[f] !== stored[f]) changes[f] = { from: stored[f], to: next[f] };
   }
   return changes;
@@ -259,6 +246,7 @@ export function deriveDesignerRows({
   chainKeys,
   linkedByPart,
   linkedThisSession,
+  unlinkedThisSession,
   buildKey,
   builds = [],
   preview = null,
@@ -267,7 +255,7 @@ export function deriveDesignerRows({
   rowResults = {},
 }) {
   const all = mergeParts(parts ?? [], createdParts);
-  const links = mergeLinks(linkedByPart, linkedThisSession);
+  const links = mergeLinks(linkedByPart, linkedThisSession, unlinkedThisSession);
   const chain = new Set(chainKeys ?? []);
   const buildLabels = new Map(builds.map((b) => [b.key, b.buildNumber != null ? `Build ${b.buildNumber}` : b.summary]));
   const cutKeys = new Set(builds.filter((b) => b.status && b.status !== 'Draft').map((b) => b.key));
@@ -284,13 +272,6 @@ export function deriveDesignerRows({
   for (const ex of preview?.existingParts ?? []) {
     if (ex?.story?.key) cadByKey.set(ex.story.key, ex.bomItem);
   }
-
-  // Every row CAD returned, to compare Revisions by number.
-  const cadItems = [
-    ...(preview?.existingParts ?? []).map((ex) => ex?.bomItem).filter(Boolean),
-    ...(preview?.newParts ?? []),
-  ];
-  const previewLoaded = !!preview;
 
   const newItems = [];
   const synthetic = new Map();
@@ -316,12 +297,29 @@ export function deriveDesignerRows({
 
   const existing = [...all, ...synthetic.values()];
   const originals = originalsByNumber(existing);
+
+  // Units of each Part already in this Build, across every ticket of that number.
+  const inBuildQty = new Map();
+  for (const part of existing) {
+    if (!buildKey || !(links.get(part.key) ?? new Set()).has(buildKey) || !part.fullPartNumber) continue;
+    const qty = rowResults[part.key]?.values?.quantity ?? part.quantity ?? 0;
+    inBuildQty.set(part.fullPartNumber, (inBuildQty.get(part.fullPartNumber) ?? 0) + qty);
+  }
+
+  // A Part that a new Revision (from the preview) is replacing.
+  const replacedBy = new Map();
+  for (const item of preview?.newParts ?? []) {
+    if (item.revises) replacedBy.set(item.revises, item.version);
+  }
+  const baselineLabel = preview?.baseline?.buildNumber != null ? ` since Build ${preview.baseline.buildNumber}` : '';
+  const copyRows = [];
+
   for (const part of existing) {
     const rowId = part.key;
     const result = rowResults[rowId];
     const stored = { ...pickValues(part), ...(result?.values ?? {}) };
     const cad = cadByKey.get(part.key);
-    const cadValues = cad ? pickValues(cad) : null;
+    const cadValues = cad ? pickCadValues(cad) : null;
     const changes = cadValues ? diff(stored, cadValues) : {};
     const changedInCad = Object.keys(changes).length > 0;
     const readOnly = chain.size > 0 && !chain.has(part.epic);
@@ -341,30 +339,28 @@ export function deriveDesignerRows({
         ? `Also in ${otherBuildKeys.map((k) => buildLabels.get(k)).join(', ')}`
         : 'Not in any Build';
 
-    // A Part that belongs to other Builds only is not this Build's business:
-    // hide it unless CAD lists it (a candidate to add) or there is work on it.
-    // A Part in no Build at all (a spare) always shows.
-    if (!inBuild && partBuilds.size > 0 && !cad && !result && !edits[rowId]) continue;
-
-    // CAD and the tracker disagree about this Part's Revision. Only for a Part
-    // CAD doesn't list itself: a match by full number is the same Revision.
-    let revisionNote = null;
-    if (previewLoaded && !cad && !readOnly) {
-      const sameNumber = cadItems.filter((c) => numberOf(c) === numberOf(part) && c.version && part.version);
-      const ahead = sameNumber.find((c) => c.version > part.version);
-      const behind = sameNumber.find((c) => c.version < part.version);
-      if (ahead) {
-        revisionNote = {
-          kind: 'cad-ahead',
-          text: `CAD now has Revision ${ahead.version}${inBuild ? '; this Revision is still in the Build' : ''}`,
-        };
-      } else if (behind) {
-        revisionNote = {
-          kind: 'cad-behind',
-          text: `CAD still has Revision ${behind.version}. Raise the Revision in OnShape to match`,
-        };
+    // A Part that a cut Build made is reused only by copying it into the Build
+    // when it is made. If CAD needs more than the Build holds, the missing
+    // units are made as an exact copy (its own row below).
+    if (sharedLocked && cad && !isSpare) {
+      const have = inBuildQty.get(part.fullPartNumber) ?? 0;
+      const need = (cad.quantity ?? 0) - have;
+      if (need > 0 && !createdKeys[`copy:${part.key}`]) {
+        copyRows.push({ part, stored, need, have });
       }
     }
+
+    // A Part that belongs to other Builds only is not this Build's business:
+    // hide it unless there is work on it. A Part in no Build at all (a spare)
+    // always shows. One a cut Build made, and this Build doesn't hold, is
+    // made again through its copy row.
+    if (!inBuild && partBuilds.size > 0 && !result && !edits[rowId]
+      && (!cad || sharedLocked)) continue;
+
+    const replacement = replacedBy.get(part.key);
+    const revisionNote = replacement
+      ? { kind: 'replaced', text: `Replaced by Revision ${replacement} when you Save.` }
+      : null;
 
     let status;
     if (result && result.ok === false) status = 'Error';
@@ -392,6 +388,8 @@ export function deriveDesignerRows({
       sharedLocked,
       lockedLabel: sharedLocked ? `In cut ${cutBuildKeys.map((k) => buildLabels.get(k)).join(', ')}` : null,
       revisionNote,
+      // Spares share their original's picture.
+      imageKey: originals.get(part.fullPartNumber)?.key ?? part.key,
       group: inBuild ? 'inBuild' : 'other',
       buildKeys: [...partBuilds],
       otherBuildKeys,
@@ -407,9 +405,6 @@ export function deriveDesignerRows({
   for (const item of newItems) {
     const rowId = item.fullPartNumber;
     const result = rowResults[rowId];
-    // OnShape's Revision was raised: a new Part from CAD's values, not the old one reused.
-    const previous = previousRevisionIn(item, existing.filter((p) => !(chain.size > 0 && !chain.has(p.epic))));
-    const previousInBuild = !!previous && !!buildKey && (links.get(previous.key) ?? new Set()).has(buildKey);
     const values = { ...pickValues(item), ...withoutLocked(edits[rowId]) };
     groups.newFromCad.push({
       rowId,
@@ -431,13 +426,60 @@ export function deriveDesignerRows({
       readOnlyLabel: null,
       sharedLocked: false,
       lockedLabel: null,
-      revisionNote: previous
+      // The tool numbers a part CAD has no number for: the number shown is
+      // the next free one, and Save keeps it unless it was taken meanwhile.
+      imageKey: null,
+      cadRef: item.cadRef ?? null,
+      proposedNumber: item.proposedNumber === true,
+      revises: item.revises ?? null,
+      revisionNote: item.replaces
         ? {
           kind: 'new-revision',
-          text: `New Revision ${item.version}, replaces ${previous.fullPartNumber}${previousInBuild ? ', which is still in the Build' : ''}`,
-          replaces: previous.key,
+          text: `Design changed${baselineLabel}: Revision ${item.version} replaces Revision ${item.replaces.version}.`,
         }
         : null,
+      group: 'new',
+      buildKeys: [],
+      otherBuildKeys: [],
+      label: 'New',
+      status: result && result.ok === false ? 'Error' : 'New',
+      result: result ?? null,
+    });
+    pendingOps.push(rowId);
+  }
+
+  for (const { part, stored, need, have } of copyRows) {
+    const rowId = `copy:${part.key}`;
+    const result = rowResults[rowId];
+    groups.newFromCad.push({
+      rowId,
+      key: null,
+      isNew: true,
+      isCopy: true,
+      copyOf: part.key,
+      imageKey: originals.get(part.fullPartNumber)?.key ?? part.key,
+      fullPartNumber: part.fullPartNumber,
+      summary: part.summary,
+      name: part.name,
+      version: part.version ?? null,
+      revision: part.version ?? null,
+      epic: part.epic ?? null,
+      stored: null,
+      values: { ...stored, quantity: need },
+      changes: {},
+      changedInCad: false,
+      changeText: '',
+      dirty: true,
+      readOnly: false,
+      readOnlyLabel: null,
+      sharedLocked: false,
+      lockedLabel: null,
+      revisionNote: {
+        kind: 'copy',
+        text: have > 0
+          ? `CAD needs ${have + need}; ${have} already in this Build. Make ${need} more.`
+          : `Make ${need} new.`,
+      },
       group: 'new',
       buildKeys: [],
       otherBuildKeys: [],

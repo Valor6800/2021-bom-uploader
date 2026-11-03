@@ -37,9 +37,20 @@ const emptyState = () => ({
 });
 
 describe('planSave', () => {
+  it('sends a part the tool numbers by its cadRef, with the number it showed', () => {
+    const row = {
+      rowId: 'VF27P-0009A', isNew: true, group: 'new', summary: 'VF27P-0009A Gusset', revision: 'A',
+      cadRef: 'd:e:JVD:', values: { quantity: 2, material: 'PLA', machinery: '3D Printer', powdercoat: 'None', thickness: 'None' },
+    };
+    const { body } = planSave({ newFromCad: [row], inBuild: [], other: [] }, new Set(['VF27P-0009A']));
+    expect(body.creates).toEqual([expect.objectContaining({
+      ref: 'VF27P-0009A', summary: 'VF27P-0009A Gusset', revision: 'A', cadRef: 'd:e:JVD:',
+    })]);
+  });
+
   it('links HAR-2031 with a single link operation', () => {
     const { body, heldBack } = planSave(rows(), new Set(['HAR-2031']));
-    expect(body).toEqual({ creates: [], updates: [], links: [{ ref: 'HAR-2031', key: 'HAR-2031' }] });
+    expect(body).toEqual({ creates: [], updates: [], links: [{ ref: 'HAR-2031', key: 'HAR-2031' }], copies: [] });
     expect(heldBack).toEqual([]);
   });
 
@@ -126,7 +137,7 @@ describe('applySaveResults', () => {
 
     const groups = rows({ preview, ...next });
     const retry = planSave(groups, next.selection, { only: new Set(['HAR-2034']) });
-    expect(retry.body).toEqual({ creates: [], updates: [], links: [{ ref: 'HAR-2034', key: 'HAR-2034' }] });
+    expect(retry.body).toEqual({ creates: [], updates: [], links: [{ ref: 'HAR-2034', key: 'HAR-2034' }], copies: [] });
   });
 
   it('notes a reused create that was updated', () => {
@@ -167,7 +178,7 @@ describe('planSave with a Part a cut Build uses', () => {
       values: { quantity: 1, material: 'PLA', machinery: '3D Printer', powdercoat: 'None', thickness: 'None' },
     };
     const { body } = planSave({ newFromCad: [], inBuild: [], other: [row] }, new Set(['HAR-2033']));
-    expect(body).toEqual({ creates: [], updates: [], links: [{ ref: 'HAR-2033', key: 'HAR-2033' }] });
+    expect(body).toEqual({ creates: [], updates: [], links: [{ ref: 'HAR-2033', key: 'HAR-2033' }], copies: [] });
   });
 });
 

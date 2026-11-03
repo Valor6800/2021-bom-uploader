@@ -59,6 +59,7 @@ describe('toAssembly', () => {
       documentId: '8c64dfdcb66184646a7a3f17',
       workspaceId: '82f00d3cbea6901ac26040bd',
       elementId: 'faea62821490977c33bc8d7c',
+      configuration: null,
       onshapeUrl: 'https://cad.onshape.com/documents/8c64dfdcb66184646a7a3f17/w/82f00d3cbea6901ac26040bd/e/faea62821490977c33bc8d7c',
     });
   });
