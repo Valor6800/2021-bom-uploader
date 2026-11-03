@@ -40,15 +40,17 @@ export default function SubAssemblyLinks({ assemblyKey, mode }) {
       </p>
     );
   }
-  if (state.subs.length === 0) return null;
+  // The Assembly page links only to sub-assemblies that exist; adding one is the Designer's job.
+  const subs = mode === 'assemble' ? state.subs.filter((sub) => sub.status === 'exists') : state.subs;
+  if (subs.length === 0) return null;
 
   return (
     <section className="sub-assemblies no-print" aria-labelledby="sub-assemblies-heading">
       <h2 id="sub-assemblies-heading" className="sub-assemblies-title">
-        Sub-assemblies <span className="group-count">{state.subs.length}</span>
+        Sub-assemblies <span className="group-count">{subs.length}</span>
       </h2>
       <ul className="sub-assembly-list">
-        {state.subs.map((sub, i) => (
+        {subs.map((sub, i) => (
           <li key={`${sub.name}-${i}`} className="sub-assembly-item" data-sub-status={sub.status}>
             {sub.status === 'exists' ? (
               <>

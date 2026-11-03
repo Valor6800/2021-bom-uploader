@@ -409,3 +409,34 @@ export function exportSTL(params) {
     body: JSON.stringify(params),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Assembly guide, vendor parts, board columns (read-only)
+// ---------------------------------------------------------------------------
+
+/** The Build's build steps and kits: `{ source, steps, kit }`. */
+export function fetchGuide(buildKey) {
+  return request(`/api/guide/${encodeURIComponent(buildKey)}`);
+}
+
+/** A guide picture's URL (a step's sub-assembly, or a part in a step). */
+export function guideImageUrl(buildKey, imageId, { large = false } = {}) {
+  return `/api/guide/${encodeURIComponent(buildKey)}/image/${encodeURIComponent(imageId)}${large ? '?size=large' : ''}`;
+}
+
+/** Order tickets and vendor listings for these SKUs: `{ results: { [sku]: … } }`. */
+export function lookupVendorParts(skus) {
+  const unique = [...new Set(skus.filter(Boolean))].slice(0, 60);
+  if (unique.length === 0) return Promise.resolve({ results: {} });
+  return request(`/api/vendor/lookup?skus=${unique.map(encodeURIComponent).join(',')}`);
+}
+
+/** A vendor listing's picture URL. */
+export function vendorImageUrl(sku, { large = false } = {}) {
+  return `/api/vendor/image/${encodeURIComponent(sku)}${large ? '?size=large' : ''}`;
+}
+
+/** Which board column each Part status is in: `{ columns: { [statusId]: { board, column } } }`. */
+export function fetchBoardColumns() {
+  return request('/api/boards/columns');
+}

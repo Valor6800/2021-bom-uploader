@@ -174,8 +174,12 @@ describe('BOMService numbers the parts that have none', () => {
     expect(parts).toEqual([]);
     expect(unidentified).toEqual([]);
     expect(external).toEqual([
-      { name: 'Robot Battery', partNumber: 'ES17-12', quantity: 3 },
-      { name: 'Standoff', partNumber: '0042', quantity: 1 },
+      {
+        name: 'Robot Battery', partNumber: 'ES17-12', quantity: 3, sku: null, vendor: null, standard: false,
+      },
+      {
+        name: 'Standoff', partNumber: '0042', quantity: 1, sku: null, vendor: null, standard: false,
+      },
     ]);
   });
 
