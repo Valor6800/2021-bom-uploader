@@ -12,6 +12,10 @@ import AssemblyPartRow, { COLUMN_COUNT } from '../components/assembly/AssemblyPa
 import BuildCompare from '../components/assembly/BuildCompare.jsx';
 import PrintView from '../components/assembly/PrintView.jsx';
 import PurchasedParts from '../components/assembly/PurchasedParts.jsx';
+import BuildGuide from '../components/assembly/BuildGuide.jsx';
+import KitSheet from '../components/assembly/KitSheet.jsx';
+import BuildReadiness from '../components/assembly/BuildReadiness.jsx';
+import { useBoardColumns, useGuide } from '../components/assembly-shared/useGuideData.js';
 import BuildImage from '../components/assembly-shared/BuildImage.jsx';
 import CloneDialog from '../components/assembly/CloneDialog.jsx';
 import SubAssemblyLinks from '../components/assembly-shared/SubAssemblyLinks.jsx';
@@ -144,6 +148,24 @@ function AssemblyPage({ assemblyKey: key }) {
     builds,
   }), [data.parts, createdParts, data.chain, data.linkedByPart, selectedKey, builds]);
 
+  // ----- Manufacturing status and the guide -----
+  const columns = useBoardColumns();
+  const partsByKey = useMemo(() => new Map(allParts.map((p) => [p.key, p])), [allParts]);
+  /** The selected Build's Parts with their tracker status, for readiness and the guide. */
+  const buildParts = useMemo(() => groups.inBuild
+    .map((r) => {
+      const part = partsByKey.get(r.key);
+      return part ? { ...part, imageKey: r.imageKey } : null;
+    })
+    .filter(Boolean), [groups.inBuild, partsByKey]);
+  /** 4-digit Part number -> the Build's Part (the guide's rows carry OnShape's number). */
+  const partsByNumber = useMemo(() => {
+    const map = new Map();
+    for (const p of buildParts) if (p.partNumber && !map.has(p.partNumber)) map.set(p.partNumber, p);
+    return map;
+  }, [buildParts]);
+  const guideState = useGuide((view === 'guide' || view === 'kit') && data.ready ? selectedKey : null);
+
   // ----- Navigation within the page -----
   const setParams = useCallback((changes) => {
     const next = new URLSearchParams(searchParams);
@@ -249,6 +271,23 @@ function AssemblyPage({ assemblyKey: key }) {
         backTo={viewUrl(null)}
       />
     );
+  } else if (view === 'guide' && selectedBuild) {
+    body = (
+      <BuildGuide
+        build={selectedBuild}
+        buildName={buildName}
+        guideState={guideState}
+        partsByNumber={partsByNumber}
+        buildParts={buildParts}
+        columns={columns}
+        backTo={viewUrl(null)}
+        kitTo={viewUrl('kit')}
+      />
+    );
+  } else if (view === 'kit' && selectedBuild) {
+    body = (
+      <KitSheet assembly={assembly} build={selectedBuild} guideState={guideState} backTo={viewUrl(null)} guideTo={viewUrl('guide')} />
+    );
   } else if (view === 'print' && selectedBuild) {
     body = <PrintView assembly={assembly} build={selectedBuild} parts={inBuildParts} backTo={viewUrl(null)} />;
   } else {
@@ -296,6 +335,12 @@ function AssemblyPage({ assemblyKey: key }) {
                     OnShape link <span aria-hidden="true">↗</span>
                   </a>
                 )}
+                <Link to={viewUrl('guide')} className="btn btn-primary">
+                  <span aria-hidden="true">🔧 </span>Build guide
+                </Link>
+                <Link to={viewUrl('kit')} className="btn btn-secondary">
+                  <span aria-hidden="true">🧰 </span>Kit sheet
+                </Link>
                 {builds.length > 1 && (
                   <Link to={viewUrl('compare')} className="btn btn-secondary">
                     <span aria-hidden="true">⇄ </span>Compare
@@ -350,12 +395,15 @@ function AssemblyPage({ assemblyKey: key }) {
 
             <BuildImage buildKey={selectedBuild.key} label={buildName} />
 
+            <BuildReadiness parts={buildParts} buildName={buildName} />
+
             <div className="parts-table-wrap">
               <table className="table parts-table assembly-table">
                 <caption className="visually-hidden">Parts for {buildName}</caption>
                 <thead>
                   <tr>
                     <th scope="col" className="cell-part">Part</th>
+                    <th scope="col">Status</th>
                     <th scope="col">Qty</th>
                     <th scope="col">Material</th>
                     <th scope="col">Machinery</th>
@@ -385,7 +433,14 @@ function AssemblyPage({ assemblyKey: key }) {
                       ? { current: false, label: `${buildLabel(cur)} is newer` }
                       : { current: true, label: 'Current' };
                     return (
-                      <AssemblyPartRow key={row.rowId} row={row} inBuild current={current} />
+                      <AssemblyPartRow
+                        key={row.rowId}
+                        row={row}
+                        inBuild
+                        current={current}
+                        tracker={partsByKey.get(row.key)}
+                        columns={columns}
+                      />
                     );
                   })}
                 </tbody>
@@ -412,8 +467,8 @@ function AssemblyPage({ assemblyKey: key }) {
   }
 
   return (
-    <div className={`work-page assembly-page${view === 'print' ? ' assembly-page-print' : ''}`}>
-      <div className={view === 'print' ? 'no-print' : undefined}>
+    <div className={`work-page assembly-page${view === 'print' || view === 'kit' ? ' assembly-page-print' : ''}`}>
+      <div className={view === 'print' || view === 'kit' ? 'no-print' : undefined}>
         <AssemblyHeader
           assembly={assembly}
           revisions={data.revisions}
@@ -423,7 +478,9 @@ function AssemblyPage({ assemblyKey: key }) {
         />
       </div>
 
-      <SubAssemblyLinks assemblyKey={key} mode="assemble" />
+      <div className={view === 'print' || view === 'kit' ? 'no-print' : undefined}>
+        <SubAssemblyLinks assemblyKey={key} mode="assemble" />
+      </div>
 
       {wrongBuild && (
         <Alert variant="info" role="status">

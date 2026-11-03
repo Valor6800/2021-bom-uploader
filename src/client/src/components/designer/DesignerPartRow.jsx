@@ -81,7 +81,7 @@ export default function DesignerPartRow({
         </td>
         <th scope="row" className="cell-part">
           <span className="part-cell">
-            <PartThumb partKey={row.imageKey} refresh={thumbStamp} />
+            <PartThumb partKey={row.imageKey} refresh={thumbStamp} title={[row.fullPartNumber, row.name ?? row.summary].filter(Boolean).join(' ') || undefined} />
             <span>
               <span className="part-key">{row.key ? <TrackerKey issueKey={row.key} /> : <span className="text-muted">New</span>}</span>
               <span className="mono-key part-number">{row.fullPartNumber}</span>

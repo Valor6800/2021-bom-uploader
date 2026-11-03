@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Zoomable } from '../ui/ImageViewer.jsx';
 
 /**
  * The Build's Assembly in isometric view. A cut Build shows the picture
@@ -18,12 +19,14 @@ export default function BuildImage({ buildKey, label, refresh }) {
   const query = refresh ? `?fresh=1&v=${refresh}` : '';
   return (
     <figure className={`build-image build-image-${state}`}>
-      <img
-        src={`/api/pictures/build/${encodeURIComponent(buildKey)}${query}`}
-        alt={`${label}, isometric view`}
-        onLoad={() => setState('ready')}
-        onError={() => setState('failed')}
-      />
+      <Zoomable title={label} src={`/api/pictures/build/${encodeURIComponent(buildKey)}${query}`}>
+        <img
+          src={`/api/pictures/build/${encodeURIComponent(buildKey)}${query}`}
+          alt={`${label}, isometric view`}
+          onLoad={() => setState('ready')}
+          onError={() => setState('failed')}
+        />
+      </Zoomable>
     </figure>
   );
 }

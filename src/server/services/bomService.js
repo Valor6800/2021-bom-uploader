@@ -10,6 +10,7 @@ import { stripBrackets } from '../utils/cleanName.js';
 import { OnshapeProperty } from '../utils/onshapeProperties.js';
 import { cleanConfiguration } from '../utils/onshapeConfiguration.js';
 import { powdercoatFromAppearance } from '../utils/appearance.js';
+import { skuOf } from '../utils/vendorSku.js';
 
 const REQUIRED_COLUMNS = ['quantity', 'partNumber', 'material', 'name'];
 
@@ -214,6 +215,34 @@ export class BOMService {
   }
 
   /**
+   * The raw OnShape BOM table (every level), through the same caches as the
+   * parsed reads: a workspace's for a minute, a version's for good.
+   *
+   * @param {{ documentId: string, wvmType: 'w'|'v', wvmId: string, elementId: string, configuration?: string|null }} where
+   * @returns {Promise<object>}  OnShape's `bomTable`
+   */
+  async getRawBOM({ documentId, wvmType, wvmId, elementId, configuration = null }) {
+    const options = configuration ? { configuration } : {};
+    if (wvmType === 'v') {
+      const cacheKey = `v:${documentId}:${wvmId}:${elementId}:${configuration ?? ''}`;
+      let raw = VERSION_CACHE.get(cacheKey);
+      if (!raw) {
+        raw = await this.onshapeClient.getAssemblyBOMAtVersion(
+          documentId, wvmId, elementId, ...(configuration ? [options] : []),
+        );
+        VERSION_CACHE.set(cacheKey, raw);
+      }
+      return raw?.bomTable ?? null;
+    }
+    const cacheKey = `${documentId}:${wvmId}:${elementId}:${configuration ?? ''}`;
+    const cached = BOM_CACHE.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) return cached.data?.bomTable ?? null;
+    const raw = await this.onshapeClient.getAssemblyBOM(documentId, wvmId, elementId, { multiLevel: true, ...options });
+    BOM_CACHE.set(cacheKey, { data: raw, timestamp: Date.now() });
+    return raw?.bomTable ?? null;
+  }
+
+  /**
    * Compare parsed BOM items against existing Jira stories and produce
    * a change log for each item that already exists.
    *
@@ -410,10 +439,17 @@ export class BOMService {
         if (found) {
           found.quantity += item.quantity ?? 0;
         } else {
+          const found = skuOf({
+            partNumber: readValue(item, keys.partNumber), name: readValue(item, keys.name), description: readValue(item, 'description'),
+          });
           external.set(id, {
             name: readValue(item, keys.name),
             partNumber: readValue(item, keys.partNumber),
             quantity: item.quantity ?? 0,
+            sku: found?.sku ?? null,
+            vendor: readValue(item, 'vendor') || found?.vendor || null,
+            // OnShape's standard content: screws, nuts, washers (kitting hardware).
+            standard: source.isStandardContent === true,
           });
         }
         continue;
