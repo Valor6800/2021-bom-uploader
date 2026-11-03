@@ -331,6 +331,7 @@ footer.colophon{
       <a href="#roles">Who does what</a>
       <a href="#status">What's current</a>
       <a href="#decision">Which one?</a>
+      <a href="#tool">What the tool does</a>
       <a href="#faq">FAQ</a>
     </nav>
   </header>
@@ -531,6 +532,18 @@ footer.colophon{
       </div>
     </section>
 
+    <section id="tool">
+      <h2>What the tool does for you</h2>
+      <p>You design in OnShape and give every part a name and a material. The rest is the tool's job, so you don't type part numbers, Revision letters or file names.</p>
+      <div class="notebox">
+        <p><strong>Update from CAD</strong> reads your assembly. A part with no number gets the next free one inside your Assembly's block (Assembly 1100 uses 1101 to 1199), and Revision A. Machinery, powdercoat and thickness are filled in for you where the tool can tell, and you can change any of them.</p>
+        <p><strong>Tick the rows and Save, once.</strong> The tool writes the number back into OnShape, makes the Part, and adds it to your Build. A moment later each Part has a picture, a STEP file and a DXF of its flat side (a tube gets its top, right and front sides), and its picture shows in the table.</p>
+        <p><strong>A new Build</strong> either reuses the Parts of the last one that was cut, or makes everything new. If a reused part's design changed, the tool notices and gives it the next Revision on its own. If you need more of a part than the Build already holds, it adds a row to make the extra ones.</p>
+        <p><strong>When a Build is cut</strong>, the tool puts each part's Revision into OnShape and saves the version, and the Build keeps a picture of the whole Assembly.</p>
+      </div>
+      <p>Parts that come from another OnShape document (a vendor part) are bought, not made. They aren't in the Designer, and they're listed under Off-the-shelf on the Assembly page.</p>
+    </section>
+
     <section id="record">
       <h2>Keeping it all on record</h2>
       <div class="notebox">
@@ -552,7 +565,11 @@ footer.colophon{
         </div>
         <div>
           <dt>A part changed a little — does that make it a new version?</dt>
-          <dd>If the design actually changed, yes. If it's identical to what's already there, no — it just carries forward into whichever Build needs it.</dd>
+          <dd>If the shape actually changed, yes, and the tool notices and gives the part its next Revision when you Update from CAD. If it's the same as what's already there, no — it just carries forward into whichever Build needs it.</dd>
+        </div>
+        <div>
+          <dt>I changed something in OnShape and the tool doesn't show it.</dt>
+          <dd>It shows new parts, a changed quantity or material, and a changed shape. Names, descriptions and part numbers you type in OnShape don't come across, and neither do edits made in a different OnShape configuration than your Assembly follows. If it's none of those, ask a mentor to check which configuration the Assembly uses.</dd>
         </div>
       </dl>
     </section>
