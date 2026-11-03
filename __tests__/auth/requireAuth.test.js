@@ -186,3 +186,28 @@ describe('optional in-app group check', () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe('requireAuth with several groups', () => {
+  it('admits a member of any of them, and names them all when refusing', async () => {
+    const { default: express } = await import('express');
+    const { default: request } = await import('supertest');
+    const { readAuthConfig } = await import('../../src/server/auth/oidcConfig.js');
+    const { requireAuth: gateOf } = await import('../../src/server/auth/requireAuth.js');
+    const { sealCookie: seal, SESSION_COOKIE: NAME, CookieType: TYPE } = await import('../../src/server/auth/session.js');
+    const env = {
+      OIDC_ISSUER: 'https://login.example.com/', OIDC_CLIENT_ID: 'id', OIDC_CLIENT_SECRET: 's', OIDC_REDIRECT_URI: 'https://x/cb', SESSION_SECRET: 'k',
+    };
+    const authConfig = readAuthConfig(env);
+    expect(authConfig.teamGroups).toEqual(['Valor Students', 'Valor Mentors']);
+    expect(authConfig.mentorGroups).toEqual(['Valor Mentors']);
+    const app = express();
+    app.use(gateOf({ authConfig, host: '127.0.0.1', groups: authConfig.teamGroups, logger: { warn() {}, error() {}, log() {} } }));
+    app.get('/x', (req, res) => res.send('ok'));
+    const as = (groups) => `${NAME}=${seal({ sub: 'u', groups, exp: Math.floor(Date.now() / 1000) + 60 }, 'k', TYPE.SESSION)}`;
+    expect((await request(app).get('/x').set('Cookie', as(['Valor Students']))).status).toBe(200);
+    expect((await request(app).get('/x').set('Cookie', as(['Valor Mentors', 'Other']))).status).toBe(200);
+    const no = await request(app).get('/x').set('Accept', 'text/html').set('Cookie', as(['<b>Other</b>']));
+    expect(no.status).toBe(403);
+    expect(no.text).toContain('&#34;Valor Students&#34; or &#34;Valor Mentors&#34;');
+  });
+});

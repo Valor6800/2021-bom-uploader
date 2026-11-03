@@ -23,9 +23,18 @@ const SCOPES = 'openid profile email groups';
  *
  * @returns {{ configured: boolean, missing: string[], issuer: string,
  *   clientId: string, clientSecret: string, redirectUri: string,
- *   sessionSecret: string, requireGroup: string, devBypass: boolean,
+ *   sessionSecret: string, requireGroup: string, mentorGroups: string[],
+ *   teamGroups: string[], devBypass: boolean,
  *   cookieSecure: boolean, postLogoutRedirect: string }}
  */
+/** "A, B" -> ['A', 'B'] */
+const groupList = (value) => String(value ?? '').split(',').map((g) => g.trim()).filter(Boolean);
+
+/** The mentors group when REQUIRE_GROUP doesn't name one. */
+export const DEFAULT_MENTOR_GROUP = 'Valor Mentors';
+/** Who may use the BOM tooling when TEAM_GROUPS doesn't say. */
+export const DEFAULT_TEAM_GROUPS = 'Valor Students, Valor Mentors';
+
 export function readAuthConfig(env = process.env) {
   const issuer = env.OIDC_ISSUER ?? '';
   const clientId = env.OIDC_CLIENT_ID ?? '';
@@ -50,6 +59,19 @@ export function readAuthConfig(env = process.env) {
     sessionSecret,
     /** Optional in-app group gate. Empty means "rely on Authentik's binding". */
     requireGroup: env.REQUIRE_GROUP ?? '',
+    /**
+     * Who may use the mentor-only pages (parts ordering and check-in): always
+     * checked in the app, because Authentik also admits students now.
+     */
+    mentorGroups: groupList(env.REQUIRE_GROUP || DEFAULT_MENTOR_GROUP),
+    /**
+     * Who may use everything else (the BOM tooling): members of any of these.
+     * The mentors are always included.
+     */
+    teamGroups: [...new Set([
+      ...groupList(env.TEAM_GROUPS || DEFAULT_TEAM_GROUPS),
+      ...groupList(env.REQUIRE_GROUP || DEFAULT_MENTOR_GROUP),
+    ])],
     /**
      * Local-development escape hatch. Defaults to off, is purpose-named rather
      * than keyed off NODE_ENV, and is refused outright unless the server is

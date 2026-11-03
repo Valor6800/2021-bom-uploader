@@ -10,6 +10,9 @@
 
 import { SESSION_COOKIE, CookieType, openCookie, parseCookies } from './session.js';
 
+/** Group names come from config, but are still text in an HTML page. */
+const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
 /** Hosts that mean "not reachable from the network". */
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '::ffff:127.0.0.1']);
 
@@ -86,10 +89,12 @@ function wantsJson(req) {
  * @param {object} params
  * @param {ReturnType<typeof import('./oidcConfig.js').readAuthConfig>} params.authConfig
  * @param {string} params.host  Interface the server is bound to
+ * @param {string[]} [params.groups]  Admit members of any of these. Defaults to
+ *   `REQUIRE_GROUP` alone (none: rely on Authentik's application binding).
  * @param {Console} [params.logger]
  * @returns {import('express').RequestHandler}
  */
-export function requireAuth({ authConfig, host, logger = console }) {
+export function requireAuth({ authConfig, host, groups, logger = console }) {
   const bypass = evaluateDevBypass(authConfig, host);
 
   if (bypass.reason) logger.error(`SECURITY: ${bypass.reason}`);
@@ -121,7 +126,8 @@ export function requireAuth({ authConfig, host, logger = console }) {
     };
   }
 
-  const required = authConfig.requireGroup.trim();
+  const required = (groups ?? [authConfig.requireGroup]).map((g) => String(g ?? '').trim()).filter(Boolean);
+  const named = required.map((g) => `"${g}"`).join(' or ');
 
   return (req, res, next) => {
     const session = readSession(req, authConfig.sessionSecret);
@@ -134,17 +140,18 @@ export function requireAuth({ authConfig, host, logger = console }) {
       return res.redirect(`/auth/login?returnTo=${returnTo}`);
     }
 
-    // Optional second check. Authentik's application binding is the primary
-    // enforcement; this closes the hole where that binding is removed and the
-    // app would otherwise admit any Authentik account.
-    if (required && !(session.groups ?? []).includes(required)) {
-      logger.warn(`Denied ${session.username || session.sub}: not in "${required}"`);
+    // The group check. Authentik's application binding admits the whole team
+    // (students and mentors), so this is what keeps a gate narrower than that
+    // (the mentor-only pages), and closes the hole where the binding is
+    // removed and Authentik would admit any account.
+    if (required.length && !required.some((g) => (session.groups ?? []).includes(g))) {
+      logger.warn(`Denied ${session.username || session.sub}: not in ${named}`);
 
       if (wantsJson(req)) {
-        return res.status(403).json({ error: `Requires membership of "${required}"`, status: 403 });
+        return res.status(403).json({ error: `Requires membership of ${named}`, status: 403 });
       }
       return res.status(403).send(
-        `<h1>Not authorised</h1><p>This tool is limited to members of "${required}".</p>`
+        `<h1>Not authorised</h1><p>This page is limited to members of ${escapeHtml(named)}.</p>`
         + '<p><a href="/auth/logout">Sign out</a></p>',
       );
     }

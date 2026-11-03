@@ -31,8 +31,11 @@ export function friendlyError(err) {
     if (err.body?.internal) return INTERNAL;
     return err.message;
   }
-  // A sign-in prompt already carries its own copy.
-  if (err?.name === 'AuthRequiredError') return err.message;
+  // Every page needs a team sign-in, so a 401 mid-session means it expired;
+  // a reload goes through sign-in and back to the same page. A 403 says why.
+  if (err?.name === 'AuthRequiredError') {
+    return err.forbidden ? err.message : 'Your sign-in has expired. Reload the page to sign in again.';
+  }
   // fetch() itself threw: the local ValorBOM server is unreachable.
   if (err?.name === 'NetworkError') return "Couldn't reach ValorBOM. Is the server running?";
   // Anything else was thrown by our own browser code.

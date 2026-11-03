@@ -66,8 +66,10 @@ describe('friendlyError', () => {
       .toBe("OnShape didn't respond (502).");
   });
 
-  it('keeps a sign-in error message', () => {
-    expect(friendlyError(new AuthRequiredError('Sign-in required', {})))
-      .toBe('Sign-in required');
+  it('tells a student whose sign-in expired to reload, and keeps a refusal as it is', () => {
+    expect(friendlyError(new AuthRequiredError('Not signed in', {})))
+      .toBe('Your sign-in has expired. Reload the page to sign in again.');
+    expect(friendlyError(new AuthRequiredError('Requires membership of "Valor Mentors"', { forbidden: true })))
+      .toBe('Requires membership of "Valor Mentors"');
   });
 });
