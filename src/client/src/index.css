@@ -1828,7 +1828,7 @@ a { color: inherit; text-decoration: none; }
 .nav-brand { text-decoration: none; border-radius: var(--r-sm); }
 .nav-brand:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
-.home-page { display: flex; flex-direction: column; gap: var(--space-5); max-width: 60rem; }
+.home-page { display: flex; flex-direction: column; gap: var(--space-5); max-width: 60rem; margin: 0 auto; }
 .home-search,
 .onboard-box { display: flex; flex-direction: column; gap: var(--space-2); }
 .home-heading { font-size: var(--text-2xl); font-weight: 700; display: inline-flex; align-items: center; gap: var(--space-2); }
@@ -2084,12 +2084,12 @@ a { color: inherit; text-decoration: none; }
 .guide-from { display: block; font-size: var(--text-sm); }
 
 .print-view-links { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; }
-.kit-bag { margin-top: var(--space-4); break-inside: avoid; }
-.kit-bag-title { font-size: var(--text-md); font-weight: 700; color: #111111; }
+.kit-bin { margin-top: var(--space-4); break-inside: avoid; }
+.kit-bin-title { font-size: var(--text-md); font-weight: 700; color: #111111; }
 .kit-count { font-weight: 700; font-size: var(--text-md); text-align: right; font-variant-numeric: tabular-nums; }
 
 @media print {
-  .kit-bag { break-inside: avoid; page-break-inside: avoid; }
+  .kit-bin { break-inside: avoid; page-break-inside: avoid; }
 }
 /* Row headers in the guide are item names, not column labels. */
 .guide-table tbody th { text-transform: none; letter-spacing: normal; font-weight: 400; font-size: var(--text-sm); color: var(--text); }
