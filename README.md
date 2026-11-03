@@ -97,10 +97,11 @@ unreachable, not open.
    - Note the Client ID and Client Secret.
 2. **Create an Application** bound to that provider, and note its slug.
    `OIDC_ISSUER` is then `https://<authentik-host>/application/o/<slug>/`.
-3. **Restrict it to mentors.** On the Application, bind a policy for your
-   mentors group. Non-members are refused at sign-in and never receive an
-   authorization code, so they cannot reach the app at all.
-4. **Emit the `groups` claim** (only needed if you also set `REQUIRE_GROUP`):
+3. **Restrict it to the team.** On the Application, bind both the students
+   group and the mentors group (Valor Students, Valor Mentors). Anyone else is
+   refused at sign-in and never receives an authorization code.
+4. **Emit the `groups` claim** (required: the app decides who reaches the
+   mentor-only pages from it):
    add a Scope Mapping with scope name `groups` and expression
    `return [group.name for group in request.user.ak_groups.all()]`, then add it
    to the provider's scopes.
@@ -114,13 +115,18 @@ unreachable, not open.
    reports whether the issuer, endpoints, signing algorithms, PKCE support and
    `groups` scope are all present — without needing a browser.
 
-### Defence in depth
+### Who can reach what
 
-`REQUIRE_GROUP` makes the app independently refuse anyone whose `groups` claim
-does not contain that exact group name. It is empty by default, which means
-access rests solely on Authentik's application binding — if that binding is
-ever removed, the app will admit any Authentik account. Setting
-`REQUIRE_GROUP` to your mentors group closes that gap in config alone.
+Every page, the app's files and every API route need a signed-in session of a
+member of `TEAM_GROUPS` (default `Valor Students, Valor Mentors`). Parts
+ordering and check-in (`/purchasing`, `/receiving`, `/api/purchasing`,
+`/api/receiving`, `/api/sheet-sync`) also need `REQUIRE_GROUP` (default
+`Valor Mentors`). Only `/auth/*` (signing in) and `/healthz` are open.
+
+Both groups are checked in the app as well as by Authentik's binding: since
+Authentik admits students, the app's own check is what keeps them out of the
+mentor pages, and if the binding is ever removed the app still refuses any
+account in neither group. Group names must match the `groups` claim exactly.
 
 ### Local development
 

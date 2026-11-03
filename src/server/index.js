@@ -163,20 +163,26 @@ app.use('/auth', authRoutes({ provider: oidcProvider, authConfig }));
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
 /**
- * The gate. Applied per-route rather than globally: the purchasing and
- * receiving surfaces are mentor-only because they move money and close
- * tickets, while the Onshape/Jira BOM tooling stays open to the whole team as
- * it always was.
+ * Two gates, both Authentik sessions (a signed cookie from the OIDC flow).
+ *
+ * - The team gate stands in front of everything below: every page, the app's
+ *   files and every API route. Students and mentors (TEAM_GROUPS) pass.
+ * - The mentor gate stands in front of parts ordering and check-in, which move
+ *   money and close tickets: mentors only (REQUIRE_GROUP, default
+ *   "Valor Mentors"), checked in the app because Authentik admits students too.
+ *
+ * Only /auth (how you sign in) and /healthz sit outside.
  */
-const gate = requireAuth({ authConfig, host: HOST });
+const gate = requireAuth({ authConfig, host: HOST, groups: authConfig.mentorGroups });
+const teamGate = requireAuth({ authConfig, host: HOST, groups: authConfig.teamGroups });
+app.use(teamGate);
 
 // ---------------------------------------------------------------------------
-// Public API — the BOM features
+// Team API — the BOM features (behind the team gate above)
 // ---------------------------------------------------------------------------
 app.use('/api/epics', epicRoutes({ epicService }));
 app.use('/api/builds', buildRoutes({ buildService }));
 app.use('/api/pictures', pictureRoutes({ pictures, fileJobs }));
-// Read-only, like the BOM routes around it: ungated while the server binds loopback (see HANDOFF "Security").
 app.use('/api', guideRoutes({ guides, vendorCatalog, boardColumns }));
 app.use('/api/revisions', revisionRoutes({ revisionService }));
 app.use('/api', partRoutes({ partService, exportService }));
@@ -209,7 +215,8 @@ app.use('/api', apiNotFound);
 // Serve React SPA (production build from dist/)
 // ---------------------------------------------------------------------------
 const distPath = path.resolve(__dirname, '../../dist');
-app.use(express.static(distPath));
+// `index: false`: "/" is served by the routes below, not straight from disk.
+app.use(express.static(distPath, { index: false }));
 
 /**
  * Client-side routes that are mentor-only. Gating the document means a direct
@@ -240,11 +247,8 @@ app.listen(PORT, HOST, () => {
 
   if (authConfig.configured) {
     console.log(`Auth: Authentik OIDC via ${authConfig.issuer}`);
-    if (authConfig.requireGroup) {
-      console.log(`Auth: additionally requiring group "${authConfig.requireGroup}"`);
-    } else {
-      console.log('Auth: group membership enforced by Authentik\'s application binding');
-    }
+    console.log(`Auth: team pages for ${authConfig.teamGroups.map((g) => `"${g}"`).join(' or ')}`);
+    console.log(`Auth: parts ordering and check-in for ${authConfig.mentorGroups.map((g) => `"${g}"`).join(' or ')}`);
   }
 
   // Only a worry when the gate is not actually standing: a configured OIDC
@@ -252,10 +256,8 @@ app.listen(PORT, HOST, () => {
   // rather than an exposure.
   if (!isLoopbackHost(HOST) && !authConfig.configured) {
     console.warn(
-      `WARNING: bound to ${HOST} with authentication unconfigured. The parts-ordering `
-      + 'routes are refusing every request with 503, but the BOM API and pages are '
-      + 'deliberately public and ARE being served to the network from this bind. '
-      + 'Configure Authentik, or bind HOST=127.0.0.1 if nothing should be reachable.',
+      `WARNING: bound to ${HOST} with authentication unconfigured: every page and API `
+      + 'route is refusing requests with 503 until Authentik is configured.',
     );
   }
 });

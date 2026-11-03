@@ -68,24 +68,13 @@ After this, a Part is created only by a Build save (which also makes new Revisio
 
 Removed client code: `DashboardPage`, `AssemblyBomPage`, `AssemblyHubPage`, `AssemblySelection`, `BuildSelection`, `PartsListTable`, the old `DesignerPartsTable`, `parts/PartRow`, `parts/PartsTableToolbar`, the `assembly`, `parts` and `build` Zustand slices, `partRules.isStepAutoExport`, and the client functions `fetchEpics`, `createEpicFromURL`, `createStory`, `uploadSelectedParts`.
 
-## Security: BOM writes are ungated
+## Security: who can reach what (2026-11-03)
 
-Auth gating did not change in the refactor. Only `/api/purchasing`, `/api/receiving` and `/api/sheet-sync` sit behind the Authentik gate. Every BOM write endpoint is open to anyone who can reach the server:
+Everything is behind Authentik now. `index.js` mounts a **team gate** (`app.use(teamGate)`) right after `/auth` and `/healthz`, so every page, the app's files (`express.static` with `index: false`), every API route and unknown `/api` paths need a session of a member of `TEAM_GROUPS` (default `Valor Students, Valor Mentors`; the mentors group is always included). The **mentor gate** stays on `/purchasing`, `/receiving`, `/api/purchasing`, `/api/receiving` and `/api/sheet-sync`, and now always checks `REQUIRE_GROUP` in the app (default `Valor Mentors` when empty), because Authentik's application binding admits students too. Both are `requireAuth({ groups })` (any of the groups; the session is the signed cookie from the OIDC flow). Unconfigured auth refuses everything with 503 (fails closed); `AUTH_DEV_BYPASS` still works on loopback only. `__tests__/auth/gateScope.test.js` pins the split (anonymous, student, mentor, outsider, forged, unconfigured).
 
-- `POST /api/epics/onboard`
-- `POST /api/builds`
-- `POST /api/builds/:key/save`
-- `POST /api/builds/:key/cut-version`
-- `POST /api/builds/:key/archive`
-- `POST /api/builds/:key/parts`
-- `POST /api/parts/:key/clone`
-- `PUT /api/stories/:key`
+On the client, a 401 mid-session (the 12-hour session expired) reads "Your sign-in has expired. Reload the page to sign in again." (`lib/friendlyError.js`).
 
-The read-only Assembly-flow endpoints added 2026-11-03 (`GET /api/guide/:buildKey`, `/api/guide/:buildKey/image/:imageId`, `/api/vendor/lookup`, `/api/vendor/image/:sku`, `/api/boards/columns`) are ungated too and need the same gate; `/api/guide/.../image` starts OnShape renders and `/api/vendor/*` makes the server call vendor stores (allowlisted hosts only).
-
-The OnShape export endpoints `POST /api/export/step`, `POST /api/export/stl` and `POST /api/parts/auto-export` are also ungated. They trigger OnShape exports and need the same gate. The read-only picture routes (`GET /api/pictures/part/:key`, `/build/:key`, `/status`) are ungated too: they serve Part and Assembly pictures and are not sensitive, but `/build/:key` can start an OnShape render (several seconds), so gate them with the rest.
-
-This is safe only while the server binds loopback (`127.0.0.1`, the default). **These endpoints must go behind the existing Authentik gate before the server is reachable from other machines**, meaning any `HOST` other than loopback or any deploy. `index.js` already warns at startup when bound beyond loopback without auth.
+**Authentik step (by hand):** bind the **Valor Students** group to the ValorBOM Application next to Valor Mentors, or students are refused at Authentik before the app sees them. The `groups` scope mapping must stay on the provider.
 
 ## Cut Builds are immutable
 
