@@ -67,7 +67,15 @@ docker:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # ---------------------------------------------------------------------------
-# Deploy — recreate the bom-uploader container on docker2 via Portainer
+# Deploy — recreate the bom-uploader container on proxmox2 via Dockhand
+#
+# Only this container is updated, not the whole "valor" stack it belongs to:
+# a stack redeploy with pull would also update vaultwarden, redis and the
+# Atlassian apps whenever their upstream tags moved. batch-update pulls the
+# image (Dockhand holds the GitLab registry credentials) and recreates the
+# container with its existing settings.
+#
+# DOCKHAND_API_TOKEN is a masked CI/CD variable (Settings → CI/CD → Variables).
 # ---------------------------------------------------------------------------
 deploy:production:
   stage: deploy
@@ -75,9 +83,8 @@ deploy:production:
   tags: [docker]
   image: alpine:3.20
   variables:
-    PORTAINER_URL: https://docker.mray190.com
-    PORTAINER_API_KEY: $PORTAINER_API_KEY
-    ENDPOINT_ID: "5"
+    DOCKHAND_URL: https://docker.mray190.com
+    DOCKHAND_ENV_ID: "2"          # proxmox2
     CONTAINER_NAME: bom-uploader
   environment:
     name: production
@@ -85,15 +92,25 @@ deploy:production:
     - apk add --no-cache curl jq
   script:
     - |
-      CONTAINER_ID=$(curl -sk -H "X-API-Key: $PORTAINER_API_KEY" \
-        "$PORTAINER_URL/api/endpoints/$ENDPOINT_ID/docker/containers/json" | \
-        tr -d '\000-\037' | \
-        jq -r --arg name "$CONTAINER_NAME" '.[] | select(.Names[] == "/"+$name) | .Id')
-      echo "Recreating $CONTAINER_NAME ($CONTAINER_ID)"
-      curl -sfk -X POST \
-        -H "X-API-Key: $PORTAINER_API_KEY" \
+      set -eu
+      AUTH="Authorization: Bearer $DOCKHAND_API_TOKEN"
+
+      CONTAINER_ID=$(curl -sSf -H "$AUTH" "$DOCKHAND_URL/api/containers?env=$DOCKHAND_ENV_ID" \
+        | jq -r --arg name "$CONTAINER_NAME" '.[] | select(.name == $name) | .id')
+      if [ -z "$CONTAINER_ID" ]; then
+        echo "No container named $CONTAINER_NAME in Dockhand environment $DOCKHAND_ENV_ID" >&2
+        exit 1
+      fi
+
+      echo "Updating $CONTAINER_NAME ($CONTAINER_ID) to the newly pushed image"
+      RESULT=$(curl -sSf -X POST "$DOCKHAND_URL/api/containers/batch-update?env=$DOCKHAND_ENV_ID" \
+        -H "$AUTH" \
+        -H "Accept: application/json" \
         -H "Content-Type: application/json" \
-        -d '{"PullImage":true}' \
-        "$PORTAINER_URL/api/docker/$ENDPOINT_ID/containers/$CONTAINER_ID/recreate" > /dev/null
+        -d "{\"containerIds\": [\"$CONTAINER_ID\"]}")
+      echo "$RESULT" | jq .
+
+      # The call returns 200 even when the update itself failed, so check the result.
+      echo "$RESULT" | jq -e '.success == true and all(.results[]; .success == true)' > /dev/null
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
