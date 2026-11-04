@@ -6,13 +6,13 @@
  */
 
 import {
-  sanitizeJQL, validateMaterial, validateMachinery, validatePowdercoat, validateThickness, validateQuantity, validatePriority,
+  sanitizeJQL, validateMaterial, validateMachinery, validatePowdercoat, validateTapping, validateThickness, validateQuantity, validatePriority,
 } from '../utils/validators.js';
 import {
   BuildField, BuildStatus, BuildTransition, LinkType, usedInLinkedClause,
 } from '../utils/buildConstants.js';
 import { applyPartMask, formatPartNumber } from '../utils/partMask.js';
-import { Powdercoat, Thickness } from '../utils/bomConstants.js';
+import { Powdercoat, Tapping, Thickness } from '../utils/bomConstants.js';
 import { badRequest, conflict, HttpError } from '../middleware/httpError.js';
 import { describeUpstreamError, jiraErrorsForLog, upstreamSource } from '../utils/upstreamError.js';
 import { baseNumber, preferNewestRevision } from '../utils/partChain.js';
@@ -34,6 +34,7 @@ const FIELD_CHECKS = [
   ['material', 'Material', validateMaterial],
   ['machinery', 'Machinery', validateMachinery],
   ['powdercoat', 'Powdercoat', validatePowdercoat],
+  ['tapping', 'Needs tapping', validateTapping],
   ['thickness', 'Thickness', validateThickness],
 ];
 
@@ -69,7 +70,8 @@ function hasUsedInLink(issuelinks, buildKey) {
 }
 
 /**
- * The BOM values a save writes, with None for an absent Powdercoat/Thickness.
+ * The BOM values a save writes, with None for an absent Powdercoat/Thickness
+ * and No for an absent Needs Tapping.
  * Priority is included only when the item carries one.
  */
 function bomValues(item) {
@@ -78,6 +80,7 @@ function bomValues(item) {
     material: item.material,
     machinery: item.machinery,
     powdercoat: item.powdercoat ?? Powdercoat.NONE,
+    tapping: item.tapping ?? Tapping.NO,
     thickness: item.thickness ?? Thickness.NONE,
     ...(item.priority !== undefined && item.priority !== null ? { priority: item.priority } : {}),
   };
@@ -846,8 +849,10 @@ export class BuildService {
       if (existing) {
         base.key = existing.key;
         base.reused = true;
-        const differs = ['quantity', 'material', 'machinery', 'powdercoat', 'thickness']
-          .some((f) => existing[f] !== values[f]);
+        // Both sides with the same defaults, so an unset field equals its None/No.
+        const stored = bomValues(existing);
+        const differs = ['quantity', 'material', 'machinery', 'powdercoat', 'tapping', 'thickness']
+          .some((f) => stored[f] !== values[f]);
         if (differs) {
           let cut;
           try {

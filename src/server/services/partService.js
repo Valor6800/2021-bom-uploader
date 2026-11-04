@@ -6,7 +6,7 @@
 import { badRequest, HttpError } from '../middleware/httpError.js';
 import { applyPartMask, applyTitleMask, formatPartNumber } from '../utils/partMask.js';
 import { validatePartPayload, sanitizeJQL } from '../utils/validators.js';
-import { Powdercoat, Thickness, Material, Machinery } from '../utils/bomConstants.js';
+import { Powdercoat, Tapping, Thickness, Material, Machinery } from '../utils/bomConstants.js';
 import { RevisionField } from '../utils/buildConstants.js';
 import { preferNewestRevision } from '../utils/partChain.js';
 import { blockOf } from './partNumbers.js';
@@ -16,6 +16,9 @@ import { cutBuildsAmong, sharedPartConflict, usedInKeys } from '../utils/cutBuil
 import { baseNumber } from '../utils/partChain.js';
 
 const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL';
+
+/** Needs Tapping? (radio buttons: No / Yes, default No). */
+const TAPPING_FIELD = 'customfield_10600';
 
 /** Most Revision tickets one Epic Link query may list. */
 const MAX_CHAIN_KEYS = 50;
@@ -38,6 +41,7 @@ export function partFromWritten(key, summary, fields = {}) {
     material: fields.customfield_10202?.value ?? Material.NONE,
     machinery: fields.customfield_10201?.[0]?.value ?? Machinery.NONE,
     powdercoat: fields.customfield_10204?.value ?? Powdercoat.NONE,
+    tapping: fields[TAPPING_FIELD]?.value ?? Tapping.NO,
     quantity: fields.customfield_10206 ?? 0,
     thickness: fields.customfield_10207?.value ?? Thickness.NONE,
     project: fields.project?.key ?? JIRA_PROJECT,
@@ -199,6 +203,7 @@ export class PartService {
       material: source.material,
       machinery: source.machinery,
       powdercoat: source.powdercoat,
+      tapping: source.tapping,
       thickness: source.thickness,
       // Only a non-default priority is copied: a Part made without one gets
       // the tracker's default, and writing Priority needs it on the screen.
@@ -325,7 +330,7 @@ export class PartService {
    * New-Revision rows for the matched Parts that changed since the last cut
    * Build and are used by a cut Build. Each carries CAD's values (quantity,
    * material) and the old Part's own choices (machinery, powdercoat,
-   * thickness, priority), and says which Part it revises.
+   * tapping, thickness, priority), and says which Part it revises.
    *
    * @returns {Promise<{ baseline: object|null, revisions: object[] }>}
    * @private
@@ -351,6 +356,7 @@ export class PartService {
         version: nextRevisionLetter(story.version),
         machinery: story.machinery,
         powdercoat: story.powdercoat,
+        tapping: story.tapping,
         thickness: story.thickness,
         ...(story.priority ? { priority: story.priority } : {}),
       };
@@ -518,6 +524,9 @@ export class PartService {
     } else if (payload.powdercoat) {
       fields.customfield_10204 = { value: payload.powdercoat };
     }
+    // Radio buttons always hold a value, so "No" is written, not cleared.
+    // Absent leaves the Part's value as it is.
+    if (payload.tapping) fields[TAPPING_FIELD] = { value: payload.tapping };
     if (payload.thickness === Thickness.NONE) {
       fields.customfield_10207 = null;
     } else if (payload.thickness) {
@@ -581,6 +590,7 @@ export class PartService {
       material: payload.material,
       machinery: payload.machinery,
       powdercoat: payload.powdercoat ?? Powdercoat.NONE,
+      tapping: payload.tapping ?? Tapping.NO,
       thickness: payload.thickness ?? Thickness.NONE,
       quantity: payload.quantity,
       priority: payload.priority,
@@ -598,8 +608,9 @@ export class PartService {
 
   /**
    * Build Jira issue fields from a part payload.
-   * Machinery → array of {value}, material/powdercoat/thickness → {value},
-   * quantity → number. Omit powdercoat/thickness when "None".
+   * Machinery → array of {value}, material/powdercoat/tapping/thickness → {value},
+   * quantity → number. Omit powdercoat/thickness when "None"; tapping is
+   * always written ("No" when absent, the tracker's default).
    * Revision comes from the payload, else the summary's letter, else "A".
    * @private
    */
@@ -620,6 +631,7 @@ export class PartService {
     if (payload.powdercoat && payload.powdercoat !== Powdercoat.NONE) {
       fields.customfield_10204 = { value: payload.powdercoat };
     }
+    fields[TAPPING_FIELD] = { value: payload.tapping ?? Tapping.NO };
     if (payload.thickness && payload.thickness !== Thickness.NONE) {
       fields.customfield_10207 = { value: payload.thickness };
     }
@@ -648,6 +660,7 @@ export class PartService {
         material: issue.fields?.customfield_10202?.value ?? Material.NONE,
         machinery: issue.fields?.customfield_10201?.[0]?.value ?? Machinery.NONE,
         powdercoat: issue.fields?.customfield_10204?.value ?? Powdercoat.NONE,
+        tapping: issue.fields?.[TAPPING_FIELD]?.value ?? Tapping.NO,
         quantity: issue.fields?.customfield_10206 ?? 0,
         thickness: issue.fields?.customfield_10207?.value ?? Thickness.NONE,
         priority: issue.fields?.priority?.name ?? null,

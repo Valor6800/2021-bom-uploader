@@ -670,7 +670,7 @@ describe('BuildService.saveBuildParts', () => {
         chainParts: [story('HAR-2031', 'VF27P-0001A', 'HAR-2030', { quantity: 2, summary: 'VF27P-0001A Old Name' })],
       });
       const { results } = await service.saveBuildParts({ buildKey: 'HAR-2051', creates: [create('VF27P-0001A')] });
-      expect(partService.updateStory).toHaveBeenCalledWith('HAR-2031', { ...VALUES, summary: 'VF27P-0001A Old Name' }, { cutBuildsChecked: true });
+      expect(partService.updateStory).toHaveBeenCalledWith('HAR-2031', { ...VALUES, tapping: 'No', summary: 'VF27P-0001A Old Name' }, { cutBuildsChecked: true });
       expect(results[0]).toMatchObject({ ok: true, reused: true, updated: true });
     });
 
@@ -679,6 +679,19 @@ describe('BuildService.saveBuildParts', () => {
       const { results } = await service.saveBuildParts({ buildKey: 'HAR-2051', creates: [create('VF27P-0001A')] });
       expect(partService.updateStory).not.toHaveBeenCalled();
       expect(results[0]).toMatchObject({ reused: true, updated: false });
+    });
+
+    it('a reused create whose Tapping differs updates it', async () => {
+      const { service, partService } = setup({ chainParts: [story('HAR-2031', 'VF27P-0001A')] });
+      const { results } = await service.saveBuildParts({ buildKey: 'HAR-2051', creates: [create('VF27P-0001A', { tapping: 'Yes' })] });
+      expect(partService.updateStory).toHaveBeenCalledWith('HAR-2031', expect.objectContaining({ tapping: 'Yes' }), { cutBuildsChecked: true });
+      expect(results[0]).toMatchObject({ reused: true, updated: true });
+    });
+
+    it('refuses a Tapping value that is not on the list', async () => {
+      const { service } = setup();
+      const { results } = await service.saveBuildParts({ buildKey: 'HAR-2051', creates: [create('VF27P-0001A', { tapping: 'Maybe' })] });
+      expect(results[0]).toMatchObject({ ok: false, field: 'tapping' });
     });
 
     it('a reused create whose update fails is not linked', async () => {
@@ -762,7 +775,7 @@ describe('BuildService.saveBuildParts', () => {
         buildKey: 'HAR-2051',
         updates: [{ ref: 'HAR-2031', key: 'HAR-2031', summary: 'VF27P-0099A Renamed', ...VALUES, link: true }],
       });
-      expect(partService.updateStory).toHaveBeenCalledWith('HAR-2031', { ...VALUES, summary: 'VF27P-0001A Spacer' }, { cutBuildsChecked: true });
+      expect(partService.updateStory).toHaveBeenCalledWith('HAR-2031', { ...VALUES, tapping: 'No', summary: 'VF27P-0001A Spacer' }, { cutBuildsChecked: true });
       expect(jiraClient.createIssueLink).toHaveBeenCalledWith(LinkType.USED_IN, 'HAR-2051', 'HAR-2031');
       expect(results[0]).toMatchObject({ op: 'update', ok: true, linked: true });
     });

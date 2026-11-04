@@ -47,13 +47,14 @@ export default function PrintView({ assembly, build, parts, backTo }) {
               <th scope="col">Material</th>
               <th scope="col">Machinery</th>
               <th scope="col">Powdercoat</th>
+              <th scope="col">Tapping</th>
               <th scope="col">Thickness</th>
               <th scope="col">Priority</th>
             </tr>
           </thead>
           <tbody>
             {parts.length === 0 && (
-              <tr><td colSpan={8}>No Parts in {buildLabel(build)} yet.</td></tr>
+              <tr><td colSpan={9}>No Parts in {buildLabel(build)} yet.</td></tr>
             )}
             {parts.map((part) => (
               <tr key={part.key}>
@@ -63,6 +64,7 @@ export default function PrintView({ assembly, build, parts, backTo }) {
                 <td>{dash(part.material)}</td>
                 <td>{dash(part.machinery)}</td>
                 <td>{dash(part.powdercoat)}</td>
+                <td>{dash(part.tapping)}</td>
                 <td>{dash(part.thickness)}</td>
                 <td>{dash(part.priority)}</td>
               </tr>

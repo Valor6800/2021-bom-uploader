@@ -3,7 +3,7 @@ import Badge from '../ui/Badge.jsx';
 import Button from '../ui/Button.jsx';
 import { TrackerKey } from '../assembly-shared/AssemblyHeader.jsx';
 import PartThumb from '../assembly-shared/PartThumb.jsx';
-import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS, PRIORITIES } from '../../api/client.js';
+import { MATERIALS, MACHINERY, POWDERCOAT, TAPPING, THICKNESS, PRIORITIES } from '../../api/client.js';
 
 /** Material from OnShape as text; one that isn't on the list says where to fix it. */
 function MaterialCell({ value, invalid }) {
@@ -19,10 +19,11 @@ function MaterialCell({ value, invalid }) {
 const SELECTS = [
   ['machinery', 'Machinery', MACHINERY],
   ['powdercoat', 'Powdercoat', POWDERCOAT],
+  ['tapping', 'Tapping', TAPPING],
   ['thickness', 'Thickness', THICKNESS],
 ];
 
-export const COLUMN_COUNT = 9;
+export const COLUMN_COUNT = 10;
 
 const BADGE_WORDS = new Set(['New', 'Changed', 'In Build', 'Saved', 'Error', 'Not in any Build']);
 
@@ -122,7 +123,7 @@ export default function DesignerPartRow({
               invalid={!!row.values.material && !MATERIALS.includes(row.values.material)}
             />
             {SELECTS.map(([field, fieldLabel, options]) => {
-              const value = row.values[field] ?? 'None';
+              const value = row.values[field] ?? (field === 'tapping' ? 'No' : 'None');
               const unlisted = !options.includes(value);
               return (
                 <td key={field} className="cell-select">
