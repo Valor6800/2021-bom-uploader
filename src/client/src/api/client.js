@@ -377,6 +377,11 @@ export function fetchReceiving() {
   return request('/api/receiving');
 }
 
+/** Past orders from the sheet, newest first, with who each part went to. */
+export function fetchOrderHistory() {
+  return request('/api/receiving/history');
+}
+
 /**
  * Mark parts delivered on the sheet and in Jira.
  * @param {{ keys: string[] }} payload

@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import Button from '../ui/Button.jsx';
 import { GROUP_MODES } from '../../lib/receivingView.js';
 
@@ -73,6 +74,8 @@ export default function ReceivingToolbar({
             </button>
           ))}
         </div>
+
+        <Link to="/receiving/history" className="btn btn-secondary">Past orders</Link>
 
         <Button variant="secondary" onClick={onSync} disabled={syncing}>
           {syncing ? 'Syncing…' : 'Sync now'}

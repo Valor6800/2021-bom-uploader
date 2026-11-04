@@ -35,6 +35,9 @@ const ASSEMBLY_TTL_MS = 60 * 60 * 1000;
 /** How many epics to resolve at once. Small — these are individual GETs. */
 const ASSEMBLY_CONCURRENCY = 5;
 
+/** Days before the earliest dated order to search Jira from, for history. */
+const HISTORY_MARGIN_DAYS = 60;
+
 /** Sheet statuses that mean a human should look before receiving. */
 const ATTENTION_SHEET_STATUSES = new Set(['out-of-stock', 'needs attention']);
 
@@ -124,6 +127,59 @@ export class ReceivingService {
         attentionCount: plan.attention.length,
         driftCount: plan.drift.length,
       },
+      jiraBaseUrl: (process.env.JIRA_URL ?? process.env.JIRA_BASE_URL ?? '').replace(/\/$/, ''),
+    };
+  }
+
+  /**
+   * Past orders, as the sheet's order-date rows divide them, so a part that
+   * has already been checked in (and dropped off the in-flight view) can still
+   * be traced: which vendor it came from, and who it was handed to.
+   *
+   * The sheet is the record of what was ordered and when; Jira adds who asked
+   * for each part and which assembly it was for. A line whose ticket cannot be
+   * found keeps its sheet facts and simply shows no requester.
+   *
+   * @returns {Promise<{ orders: object[], jiraBaseUrl: string }>}
+   */
+  async getOrderHistory() {
+    const orders = await this.orderSheetService.readOrderHistory();
+
+    const keys = new Set(
+      orders.flatMap((order) => order.lines.map((line) => line.jiraKey?.toUpperCase()))
+        .filter(Boolean),
+    );
+
+    const issues = keys.size > 0 ? await this._searchSince(this._historyStart(orders)) : [];
+    const tickets = issues
+      .filter((issue) => keys.has(issue.key.toUpperCase()))
+      .map((issue) => this._toTicket(issue));
+
+    const assemblies = await this._resolveAssemblies(
+      [...new Set(tickets.map((t) => t.epic).filter(Boolean))],
+    );
+    const byKey = new Map();
+    for (const ticket of tickets) {
+      ticket.assembly = ticket.epic ? (assemblies.get(ticket.epic) ?? { key: ticket.epic, name: ticket.epic }) : null;
+      byKey.set(ticket.key.toUpperCase(), ticket);
+    }
+
+    return {
+      orders: orders.map((order) => {
+        const lines = order.lines.map(
+          (row) => this._toHistoryLine(row, row.jiraKey ? byKey.get(row.jiraKey.toUpperCase()) : null),
+        );
+        return {
+          id: `rows:${order.firstRow}-${order.lastRow}`,
+          date: order.date,
+          dateRow: order.dateRow,
+          firstRow: order.firstRow,
+          lastRow: order.lastRow,
+          vendors: [...new Set(lines.map((line) => line.vendor).filter(Boolean))],
+          total: lines.reduce((sum, line) => sum + (line.lineTotal ?? 0), 0),
+          lines,
+        };
+      }),
       jiraBaseUrl: (process.env.JIRA_URL ?? process.env.JIRA_BASE_URL ?? '').replace(/\/$/, ''),
     };
   }
@@ -340,6 +396,64 @@ export class ReceivingService {
       maxResults: 100,
       fields: RECEIVING_FIELDS,
     });
+  }
+
+  /**
+   * Every PARTS ticket touched since a date. Used for history rather than a
+   * `key in (...)` search because Jira rejects the whole query if any one key
+   * no longer exists, and a sheet typed by hand will eventually hold one.
+   * @private
+   */
+  async _searchSince(isoDate) {
+    return this.jiraClient.searchIssues(
+      `project = ${PARTS_PROJECT_KEY} AND updated >= "${isoDate}" ORDER BY key ASC`,
+      { paginate: true, maxResults: 100, fields: RECEIVING_FIELDS },
+    );
+  }
+
+  /**
+   * How far back to look in Jira for the tickets on the sheet. A ticket moves
+   * to Sent to VFF when its order is cut, so it has been updated on or after
+   * its order date; the margin covers lines above the first dated order.
+   * @private
+   */
+  _historyStart(orders) {
+    const dates = orders.map((order) => order.date).filter(Boolean).sort();
+    const from = dates.length > 0 ? new Date(`${dates[0]}T00:00:00Z`) : new Date();
+    from.setUTCDate(from.getUTCDate() - HISTORY_MARGIN_DAYS);
+    return from.toISOString().slice(0, 10);
+  }
+
+  /**
+   * One line of a past order: the sheet's facts, plus who asked for it and
+   * where it went when its Jira ticket is known.
+   * @private
+   */
+  _toHistoryLine(row, ticket) {
+    const line = {
+      id: `row:${row.row}`,
+      key: row.jiraKey ?? null,
+      sheetRow: row.row,
+      summary: ticket?.summary || row.description || '',
+      partNumber: row.partNumber ?? ticket?.partNumber ?? null,
+      vendorRaw: row.vendor ?? ticket?.vendorRaw ?? null,
+      vendor: normalizeVendor(row.vendor ?? ticket?.vendorRaw),
+      qty: row.qty ?? ticket?.qty ?? null,
+      price: row.price ?? ticket?.price ?? null,
+      link: row.link ?? ticket?.link ?? null,
+      classification: row.classification ?? null,
+      sheetStatus: row.orderStatus ?? '',
+      status: ticket?.status ?? null,
+      trackingNumber: row.trackingNumber ?? null,
+      receiptLink: row.receiptLink ?? null,
+      requestedBy: ticket?.requestedBy ?? null,
+      assembly: ticket?.assembly ?? null,
+      ticketFound: Boolean(ticket),
+    };
+
+    // The sheet's own Total includes shipping, so prefer it when present.
+    line.lineTotal = row.total ?? lineTotal(line);
+    return line;
   }
 
   /**
