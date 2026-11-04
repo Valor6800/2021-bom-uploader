@@ -5,6 +5,8 @@ node_modules/
 dist/
 coverage/
 keys.json
+# Runtime state the app writes to disk, not source.
+data/
 # Agent task notes (reports, designs, reviews) are checked in as handoff
 # context; only their bulky screenshots are not.
 .agents/**/screenshots/

@@ -31,6 +31,7 @@ import { ReceivingService } from './services/receivingService.js';
 import { AssemblyGuides } from './services/assemblyGuides.js';
 import { VendorCatalog } from './services/vendorCatalog.js';
 import { BoardColumns } from './services/boardColumns.js';
+import { onshapeUsage } from './utils/onshapeUsage.js';
 
 // Routes
 import epicRoutes from './routes/epicRoutes.js';
@@ -94,7 +95,7 @@ const pictures = new Pictures({ jiraClient, onshapeClient });
 const onshapeWriter = new OnshapeWriter({ jiraClient, onshapeClient, bomService });
 const fileJobs = new FileJobs({ partFiles, onshapeWriter });
 const partService = new PartService({
-  jiraClient, bomService, revisionService, partNumbers, partDiff, partFiles, fileJobs,
+  jiraClient, bomService, revisionService, partNumbers, partDiff, partFiles,
 });
 const exportService = new ExportService({ onshapeClient });
 // Built before EpicService, which creates Build 1 when onboarding an Assembly.
@@ -207,6 +208,9 @@ if (purchasingService && receivingService) {
   app.use('/api/purchasing', gate, unavailable);
   app.use('/api/receiving', gate, unavailable);
 }
+
+// How much of OnShape's yearly call budget the team has used so far.
+app.get('/api/onshape-usage', gate, (req, res) => res.json(onshapeUsage()));
 
 // Unknown API routes → JSON 404 (before the SPA fallback below).
 app.use('/api', apiNotFound);

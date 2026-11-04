@@ -76,14 +76,21 @@ export class PartDiff {
     this._shapes = new Map();
   }
 
-  /** `getPartShape`, remembered. */
-  async _shape(origin) {
+  /**
+   * `getPartShape`, remembered. Caches the in-flight promise (not the
+   * resolved shape), so two parts compared at once that share an origin
+   * never fire the request twice.
+   */
+  _shape(origin) {
     const cacheable = origin.wvmType === 'v' || !!origin.microversionId;
     const key = cacheable ? shapeKey(origin) : null;
     if (key && this._shapes.has(key)) return this._shapes.get(key);
-    const shape = await this.onshapeClient.getPartShape(origin);
-    if (key) this._shapes.set(key, shape);
-    return shape;
+    const promise = this.onshapeClient.getPartShape(origin);
+    if (key) {
+      this._shapes.set(key, promise);
+      promise.catch(() => this._shapes.delete(key));
+    }
+    return promise;
   }
 
   /**

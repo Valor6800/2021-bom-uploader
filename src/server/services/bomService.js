@@ -132,11 +132,16 @@ function describeSubAssembly(item, keys) {
   };
 }
 
-// In-memory cache for Onshape BOM responses to minimize API calls.
-// Key: "docId:wsId:elemId", Value: { data, timestamp }
+// In-memory cache for Onshape BOM responses to minimize API calls. Both
+// caches hold the in-flight *promise*, set synchronously before the request
+// goes out, so two callers asking for the same BOM at once (e.g. the Assembly
+// page's sub-assemblies and off-the-shelf sections, both mounting at once)
+// share one OnShape request instead of each firing their own.
+// Key: "docId:wsId:elemId:config", Value: { promise, at }
 const BOM_CACHE = new Map();
 const CACHE_TTL_MS = 60 * 1000; // 1 minute
 // A cut version never changes, so its BOM is kept for as long as the server runs.
+// Key: "v:docId:versionId:elemId:config", Value: promise
 const VERSION_CACHE = new Map();
 
 /** Forget every cached BOM: call after writing to OnShape, so the next read sees it. */
@@ -151,6 +156,35 @@ export class BOMService {
    */
   constructor({ onshapeClient }) {
     this.onshapeClient = onshapeClient;
+  }
+
+  /**
+   * The raw workspace BOM, shared by every caller asking for the same one at
+   * once and kept for CACHE_TTL_MS. Not async: the cache check-and-set must
+   * happen with no `await` in between, or two concurrent callers would both
+   * see a miss.
+   */
+  _workspaceBOM(cacheKey, documentId, workspaceId, elementId, configuration) {
+    const hit = BOM_CACHE.get(cacheKey);
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.promise;
+    const promise = this.onshapeClient.getAssemblyBOM(
+      documentId, workspaceId, elementId, { multiLevel: true, ...(configuration ? { configuration } : {}) },
+    );
+    BOM_CACHE.set(cacheKey, { promise, at: Date.now() });
+    promise.catch(() => BOM_CACHE.delete(cacheKey));
+    return promise;
+  }
+
+  /** The raw BOM at a version: fetched once per version, ever, shared the same way. */
+  _versionBOM(cacheKey, documentId, versionId, elementId, configuration) {
+    const hit = VERSION_CACHE.get(cacheKey);
+    if (hit) return hit;
+    const promise = this.onshapeClient.getAssemblyBOMAtVersion(
+      documentId, versionId, elementId, ...(configuration ? [{ configuration }] : []),
+    );
+    VERSION_CACHE.set(cacheKey, promise);
+    promise.catch(() => VERSION_CACHE.delete(cacheKey));
+    return promise;
   }
 
   /**
@@ -182,16 +216,8 @@ export class BOMService {
     // The Assembly's OnShape configuration (if it follows one) says which BOM to read.
     const configuration = assembly?.configuration ?? null;
     const cacheKey = `${documentId}:${workspaceId}:${elementId}:${configuration ?? ''}`;
-    const cached = fresh ? null : BOM_CACHE.get(cacheKey);
-
-    if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
-      return this._parseBOM(cached.data, epicKey, assembly, { documentId });
-    }
-
-    const raw = await this.onshapeClient.getAssemblyBOM(
-      documentId, workspaceId, elementId, { multiLevel: true, ...(configuration ? { configuration } : {}) },
-    );
-    BOM_CACHE.set(cacheKey, { data: raw, timestamp: Date.now() });
+    if (fresh) BOM_CACHE.delete(cacheKey);
+    const raw = await this._workspaceBOM(cacheKey, documentId, workspaceId, elementId, configuration);
     return this._parseBOM(raw, epicKey, assembly, { documentId });
   }
 
@@ -204,13 +230,7 @@ export class BOMService {
   async getVersionReport(documentId, versionId, elementId, assembly) {
     const configuration = assembly?.configuration ?? null;
     const cacheKey = `v:${documentId}:${versionId}:${elementId}:${configuration ?? ''}`;
-    let raw = VERSION_CACHE.get(cacheKey);
-    if (!raw) {
-      raw = await this.onshapeClient.getAssemblyBOMAtVersion(
-        documentId, versionId, elementId, ...(configuration ? [{ configuration }] : []),
-      );
-      VERSION_CACHE.set(cacheKey, raw);
-    }
+    const raw = await this._versionBOM(cacheKey, documentId, versionId, elementId, configuration);
     return this._parseBOM(raw, null, assembly, { documentId });
   }
 
@@ -222,23 +242,13 @@ export class BOMService {
    * @returns {Promise<object>}  OnShape's `bomTable`
    */
   async getRawBOM({ documentId, wvmType, wvmId, elementId, configuration = null }) {
-    const options = configuration ? { configuration } : {};
     if (wvmType === 'v') {
       const cacheKey = `v:${documentId}:${wvmId}:${elementId}:${configuration ?? ''}`;
-      let raw = VERSION_CACHE.get(cacheKey);
-      if (!raw) {
-        raw = await this.onshapeClient.getAssemblyBOMAtVersion(
-          documentId, wvmId, elementId, ...(configuration ? [options] : []),
-        );
-        VERSION_CACHE.set(cacheKey, raw);
-      }
+      const raw = await this._versionBOM(cacheKey, documentId, wvmId, elementId, configuration);
       return raw?.bomTable ?? null;
     }
     const cacheKey = `${documentId}:${wvmId}:${elementId}:${configuration ?? ''}`;
-    const cached = BOM_CACHE.get(cacheKey);
-    if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) return cached.data?.bomTable ?? null;
-    const raw = await this.onshapeClient.getAssemblyBOM(documentId, wvmId, elementId, { multiLevel: true, ...options });
-    BOM_CACHE.set(cacheKey, { data: raw, timestamp: Date.now() });
+    const raw = await this._workspaceBOM(cacheKey, documentId, wvmId, elementId, configuration);
     return raw?.bomTable ?? null;
   }
 
@@ -414,6 +424,62 @@ export class BOMService {
         ? `V${assembly.seasonType}${assembly.year}`
         : null;
 
+    // Parent path ('' = top level) -> its direct children, for walking into
+    // unnumbered sub-assemblies below. An unnumbered sub-assembly has no
+    // Build or kit sheet of its own, so its off-the-shelf rows are this
+    // Assembly's to show (same rule the build guide uses for its steps).
+    const childrenByParent = new Map();
+    for (const it of items) {
+      const path = String(it.item ?? '');
+      if (!path) continue;
+      const cut = path.lastIndexOf('.');
+      const parent = cut < 0 ? '' : path.slice(0, cut);
+      if (!childrenByParent.has(parent)) childrenByParent.set(parent, []);
+      childrenByParent.get(parent).push(it);
+    }
+
+    const addExternal = (item, multiplier) => {
+      const source = item.itemSource;
+      const id = [source.documentId, source.elementId, source.partId ?? '', source.configuration ?? ''].join(':');
+      const found = external.get(id);
+      const quantity = (item.quantity ?? 0) * multiplier;
+      if (found) {
+        found.quantity += quantity;
+      } else {
+        const sku = skuOf({
+          partNumber: readValue(item, keys.partNumber), name: readValue(item, keys.name), description: readValue(item, 'description'),
+        });
+        external.set(id, {
+          name: readValue(item, keys.name),
+          partNumber: readValue(item, keys.partNumber),
+          quantity,
+          sku: sku?.sku ?? null,
+          vendor: readValue(item, 'vendor') || sku?.vendor || null,
+          // OnShape's standard content: screws, nuts, washers (kitting hardware).
+          standard: source.isStandardContent === true,
+        });
+      }
+    };
+
+    // Made Parts and unidentified rows nested here are a separate, known gap
+    // (HANDOFF.md "Known gaps"): they get no Part ticket. Only off-the-shelf
+    // rows are collected at this depth.
+    const collectNestedExternal = (path, multiplier) => {
+      for (const item of childrenByParent.get(path) ?? []) {
+        if (item.excludeFromBom === true) continue;
+        if (isSubAssemblyRow(item, items)) {
+          const ownDoc = item.itemSource?.documentId === context.documentId;
+          const numbered = PART_NUMBER_PATTERN.test(readValue(item, keys.partNumber));
+          // A numbered sub-assembly is its own Assembly, with its own Build
+          // and kit sheet; a sub-assembly from another document is a
+          // vendor kit. Neither is opened up further here.
+          if (ownDoc && !numbered) collectNestedExternal(String(item.item ?? ''), multiplier * (item.quantity ?? 1));
+          continue;
+        }
+        if (isExternalRow(item, context)) addExternal(item, multiplier);
+      }
+    };
+
     for (const item of items) {
       // Skip nested sub-assembly items (item path contains ".")
       if (item.item && String(item.item).lastIndexOf('.') >= 0) continue;
@@ -428,30 +494,16 @@ export class BOMService {
           seenSubAssemblies.add(id);
           subAssemblies.push(sub);
         }
+        const ownDoc = sub.documentId === context.documentId;
+        if (ownDoc && !PART_NUMBER_PATTERN.test(sub.partNumber)) {
+          collectNestedExternal(String(item.item ?? ''), item.quantity ?? 1);
+        }
         continue;
       }
 
       // A part from another document is bought, not made: listed for the Assembly page only.
       if (isExternalRow(item, context)) {
-        const source = item.itemSource;
-        const id = [source.documentId, source.elementId, source.partId ?? '', source.configuration ?? ''].join(':');
-        const found = external.get(id);
-        if (found) {
-          found.quantity += item.quantity ?? 0;
-        } else {
-          const found = skuOf({
-            partNumber: readValue(item, keys.partNumber), name: readValue(item, keys.name), description: readValue(item, 'description'),
-          });
-          external.set(id, {
-            name: readValue(item, keys.name),
-            partNumber: readValue(item, keys.partNumber),
-            quantity: item.quantity ?? 0,
-            sku: found?.sku ?? null,
-            vendor: readValue(item, 'vendor') || found?.vendor || null,
-            // OnShape's standard content: screws, nuts, washers (kitting hardware).
-            standard: source.isStandardContent === true,
-          });
-        }
+        addExternal(item, 1);
         continue;
       }
 

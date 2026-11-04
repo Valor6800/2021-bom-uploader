@@ -63,11 +63,9 @@ export class PartService {
    *   Finds Parts that changed since the last cut Build.
    * @param {import('./partFiles.js').PartFiles} [deps.partFiles]
    *   Measures new Parts for their Thickness.
-   * @param {import('./fileJobs.js').FileJobs} [deps.fileJobs]
-   *   Attaches files to Parts that are missing them.
    */
   constructor({
-    jiraClient, bomService, revisionService, partNumbers, partDiff, partFiles, fileJobs,
+    jiraClient, bomService, revisionService, partNumbers, partDiff, partFiles,
   }) {
     this.jiraClient = jiraClient;
     this.bomService = bomService;
@@ -75,7 +73,6 @@ export class PartService {
     this.partNumbers = partNumbers;
     this.partDiff = partDiff;
     this.partFiles = partFiles;
-    this.fileJobs = fileJobs;
   }
 
   /**
@@ -277,7 +274,9 @@ export class PartService {
 
     const compared = this.bomService.compareBOMWithJira(bomItems, existingStories);
     const { matched, unmatched } = compared;
-    this._catchUpOnFiles(matched);
+
+    // Picture, STEP and DXF cost OnShape calls per Part; they wait for Cut
+    // Version (BuildService._queuePartFiles), not every Update from CAD.
 
     // A Part whose design changed since the last cut Build is a new Revision,
     // made from scratch. One a cut Build doesn't use is a Draft's own and
@@ -321,23 +320,6 @@ export class PartService {
     };
   }
 
-  /**
-   * Queue the files of Parts the tracker holds that lack their picture or
-   * STEP: ones made before files were attached, or whose attaching failed or
-   * was lost. Runs in the background; the preview does not wait.
-   * @private
-   */
-  _catchUpOnFiles(matched) {
-    if (!this.fileJobs) return;
-    for (const { story, bomItem } of matched) {
-      if (!Array.isArray(story.files) || !bomItem.origin || !story.fullPartNumber) continue;
-      const has = (extension) => story.files.includes(`${story.fullPartNumber}.${extension}`);
-      if (has('png') && has('step')) continue;
-      this.fileJobs.enqueue({
-        key: story.key, partNumber: story.fullPartNumber, thickness: story.thickness, origin: bomItem.origin,
-      });
-    }
-  }
 
   /**
    * New-Revision rows for the matched Parts that changed since the last cut

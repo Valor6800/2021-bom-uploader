@@ -111,8 +111,9 @@ export default function OnboardBox() {
     let to = base;
     if (build) {
       onboard.build = build;
-      // Only the call that created Build 1 reads Parts from CAD.
-      to = `${base}?build=${encodeURIComponent(build.key)}${alreadyAdded ? '' : '&cad=1'}`;
+      // Reading Parts from CAD costs an OnShape call, so even right after
+      // onboarding the student clicks "Update from CAD" themselves.
+      to = `${base}?build=${encodeURIComponent(build.key)}`;
     }
     if (buildError) onboard.buildError = buildError;
     if (alreadyAdded) onboard.alreadyAdded = true;
