@@ -181,6 +181,8 @@ export class PurchasingService {
     return {
       startRow,
       endRow: startRow + lines.length - 1,
+      // The black order-date row written after the last line.
+      dateRow: startRow + lines.length,
       lines: lines.map((line, offset) => ({ ...line, targetRow: startRow + offset })),
       ...sumLineTotals(lines),
       projectedBudget: projectBudget(budget.categories, lines),
@@ -200,12 +202,13 @@ export class PurchasingService {
    *
    * @param {object} params
    * @param {{ key: string, classification: string, wishId: *, source: * }[]} params.rows
-   * @returns {Promise<{ startRow: number, endRow: number, submitted: object[], errors: object[] }>}
+   * @returns {Promise<{ startRow: number, endRow: number, dateRow: number, orderDate: string,
+   *   submitted: object[], errors: object[] }>}
    */
   async submit({ rows }) {
     const { lines } = await this._resolveSubmission({ rows });
 
-    const { startRow, endRow, assignments } =
+    const { startRow, endRow, dateRow, orderDate, assignments } =
       await this.orderSheetService.writeOrderRows({ lines });
 
     const rowByKey = new Map(assignments.map((a) => [a.jiraKey, a.row]));
@@ -227,7 +230,7 @@ export class PurchasingService {
       }
     }
 
-    return { startRow, endRow, submitted, errors };
+    return { startRow, endRow, dateRow, orderDate, submitted, errors };
   }
 
   // -----------------------------------------------------------------------

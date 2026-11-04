@@ -116,6 +116,12 @@ export class SheetsClient {
     return this.doc.title;
   }
 
+  /** @returns {Promise<string|null>} The spreadsheet's time zone, e.g. "America/Chicago". */
+  async timeZone() {
+    await this.connect();
+    return this.doc.timeZone ?? null;
+  }
+
   /**
    * Fetch a tab by title.
    *
@@ -196,9 +202,11 @@ export class SheetsClient {
    * (writeCells does it for the bounding box of the given updates).
    *
    * @param {string} tabTitle
-   * @param {{ row: number, column: number, value: *, formula?: string }[]} updates
+   * @param {{ row: number, column: number, value?: *, formula?: string,
+   *   format?: { backgroundColor?: object, numberFormat?: object } }[]} updates
    *   `row`/`column` are 0-based. Pass `formula` to write a formula instead of
-   *   a literal value.
+   *   a literal value. Pass `format` to set cell formatting; an update with
+   *   only `format` leaves the cell's contents alone.
    * @returns {Promise<number>} Number of cells written
    */
   async writeCells(tabTitle, updates) {
@@ -218,8 +226,12 @@ export class SheetsClient {
       const cell = sheet.getCell(update.row, update.column);
       if (update.formula !== undefined) {
         cell.formula = update.formula;
-      } else {
+      } else if (update.value !== undefined) {
         cell.value = update.value;
+      }
+
+      for (const [param, setting] of Object.entries(update.format ?? {})) {
+        cell[param] = setting;
       }
     }
 

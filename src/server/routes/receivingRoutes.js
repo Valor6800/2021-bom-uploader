@@ -3,6 +3,7 @@
  * edits into Jira.
  *
  * GET  /api/receiving
+ * GET  /api/receiving/history
  * POST /api/receiving/check-in
  * POST /api/receiving/sync
  */
@@ -26,6 +27,15 @@ export default function receivingRoutes({ receivingService }) {
    */
   router.get('/', asyncHandler(async (req, res) => {
     res.json(await receivingService.getReceiving());
+  }));
+
+  /**
+   * GET /api/receiving/history
+   * Past orders from the sheet, newest first, divided by the order-date rows,
+   * with the requester and assembly for each line from Jira.
+   */
+  router.get('/history', asyncHandler(async (req, res) => {
+    res.json(await receivingService.getOrderHistory());
   }));
 
   /**

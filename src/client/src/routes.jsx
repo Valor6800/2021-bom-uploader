@@ -6,6 +6,7 @@ import AssemblyPage from './pages/AssemblyPage.jsx';
 import DesignerPage from './pages/DesignerPage.jsx';
 import PurchasingQueuePage from './pages/PurchasingQueuePage.jsx';
 import ReceivingPage from './pages/ReceivingPage.jsx';
+import OrderHistoryPage from './pages/OrderHistoryPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 
 /** `/assembly/:key` moved to `/a/:key/assemble`; keep the search string. */
@@ -39,6 +40,7 @@ export const routes = [
       { path: 'designer', element: <Navigate to="/" replace /> },
       { path: 'purchasing', element: <PurchasingQueuePage /> },
       { path: 'receiving', element: <ReceivingPage /> },
+      { path: 'receiving/history', element: <OrderHistoryPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

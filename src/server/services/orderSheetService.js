@@ -13,6 +13,11 @@
  *
  *  2. Classification (col A) is the key for every budget roll-up. A row with
  *     a blank Classification is invisible to the entire budget.
+ *
+ * Orders are separated by an order-date row: every cell filled black, and the
+ * date the order was cut in Description (col E). It closes the order above
+ * it, so the sheet reads as blocks of lines each followed by their date. It
+ * is a divider, not a part, and is never returned from readOrders().
  */
 
 import { badRequest } from '../middleware/httpError.js';
@@ -27,6 +32,12 @@ import {
   OVERVIEW_CATEGORY_ROWS,
   OVERVIEW_VOUCHER_HEADING,
 } from '../utils/purchasingConstants.js';
+import {
+  serialToIsoDate,
+  isoDateToSerial,
+  textToIsoDate,
+  todayIsoDate,
+} from '../utils/sheetDates.js';
 
 /** Columns that indicate a row is in use. Total (N) is excluded because the
  *  sheet pre-fills its formula on otherwise-blank rows. */
@@ -46,6 +57,27 @@ const IN_USE_COLUMNS = [
   OrderColumn.ORDER_STATUS,
   OrderColumn.SOURCE,
 ];
+
+/**
+ * Columns that must be empty on an order-date row. Source (O) is left out
+ * because some date rows carry a stray pre-filled formula there that
+ * evaluates to 0; Total (N) is left out for the same reason as above.
+ */
+const DATE_ROW_EMPTY_COLUMNS = IN_USE_COLUMNS.filter(
+  (column) => column !== OrderColumn.DESCRIPTION && column !== OrderColumn.SOURCE,
+);
+
+/** Serials for 2000-01-01 and 2100-01-01: anything outside is not an order date. */
+const MIN_DATE_SERIAL = 36526;
+const MAX_DATE_SERIAL = 73051;
+
+/** The order-date row's look: black across A..O, date formatted as m/d/yyyy. */
+const BLACK = { red: 0, green: 0, blue: 0 };
+const DATE_ROW_FORMAT = Object.freeze({
+  backgroundColor: BLACK,
+  backgroundColorStyle: { rgbColor: BLACK },
+});
+const DATE_FORMAT = Object.freeze({ type: 'DATE', pattern: 'm/d/yyyy' });
 
 function isBlank(value) {
   return value === null || value === undefined || value === '';
@@ -79,42 +111,57 @@ export class OrderSheetService {
    *   `row` is 1-based.
    */
   async readOrders() {
-    const sheet = await this.sheetsClient.getTab(SheetTab.ORDERS);
-    const { rows } = await this.sheetsClient.readRange(SheetTab.ORDERS, {
-      startRow: 0,
-      endRow: sheet.rowCount,
-      startColumn: 0,
-      endColumn: ORDER_COLUMN_COUNT,
-    });
-
+    const rows = await this._readOrdersGrid();
     const orders = [];
 
     // Row index 0 is the header.
     for (let i = 1; i < rows.length; i++) {
       const values = rows[i];
-      if (!this._isRowInUse(values)) continue;
-
-      orders.push({
-        row: i + 1,
-        classification: isBlank(values[OrderColumn.CLASSIFICATION]) ? null : String(values[OrderColumn.CLASSIFICATION]),
-        wishId: toNumberOrNull(values[OrderColumn.WISH_ID]),
-        partNumber: isBlank(values[OrderColumn.PART_NUMBER]) ? null : String(values[OrderColumn.PART_NUMBER]),
-        vendor: isBlank(values[OrderColumn.VENDOR]) ? null : String(values[OrderColumn.VENDOR]),
-        description: isBlank(values[OrderColumn.DESCRIPTION]) ? null : String(values[OrderColumn.DESCRIPTION]),
-        qty: toNumberOrNull(values[OrderColumn.QTY]),
-        price: toNumberOrNull(values[OrderColumn.PRICE]),
-        link: isBlank(values[OrderColumn.LINK]) ? null : String(values[OrderColumn.LINK]),
-        jiraKey: isBlank(values[OrderColumn.JIRA_KEY]) ? null : String(values[OrderColumn.JIRA_KEY]).trim(),
-        trackingNumber: isBlank(values[OrderColumn.TRACKING_NUMBER]) ? null : String(values[OrderColumn.TRACKING_NUMBER]),
-        shippingCost: toNumberOrNull(values[OrderColumn.SHIPPING_COST]),
-        receiptLink: isBlank(values[OrderColumn.RECEIPT_LINK]) ? null : String(values[OrderColumn.RECEIPT_LINK]),
-        orderStatus: isBlank(values[OrderColumn.ORDER_STATUS]) ? null : String(values[OrderColumn.ORDER_STATUS]),
-        total: toNumberOrNull(values[OrderColumn.TOTAL]),
-        source: isBlank(values[OrderColumn.SOURCE]) ? null : String(values[OrderColumn.SOURCE]),
-      });
+      if (!this._isRowInUse(values) || this._orderDateOf(values)) continue;
+      orders.push(this._toOrder(values, i + 1));
     }
 
     return orders;
+  }
+
+  /**
+   * Every order on the tab, as the blocks the order-date rows divide it into.
+   *
+   * An order is the run of lines above a date row. Lines below the last date
+   * row have not been closed off yet, so they come back with `date: null`.
+   * Newest first, which is how anyone looking back through orders reads them.
+   *
+   * @returns {Promise<{ date: string|null, dateRow: number|null,
+   *   firstRow: number, lastRow: number, lines: object[] }[]>}
+   *   `date` is `YYYY-MM-DD`; `lines` are shaped like readOrders() rows.
+   */
+  async readOrderHistory() {
+    const rows = await this._readOrdersGrid();
+    const orders = [];
+    let lines = [];
+
+    for (let i = 1; i < rows.length; i++) {
+      const values = rows[i];
+      if (!this._isRowInUse(values)) continue;
+
+      const date = this._orderDateOf(values);
+      if (!date) {
+        lines.push(this._toOrder(values, i + 1));
+        continue;
+      }
+
+      // Two date rows in a row would be an empty order; nothing to show.
+      if (lines.length > 0) {
+        orders.push({ date, dateRow: i + 1, firstRow: lines[0].row, lastRow: lines.at(-1).row, lines });
+      }
+      lines = [];
+    }
+
+    if (lines.length > 0) {
+      orders.push({ date: null, dateRow: null, firstRow: lines[0].row, lastRow: lines.at(-1).row, lines });
+    }
+
+    return orders.reverse();
   }
 
   /**
@@ -136,18 +183,17 @@ export class OrderSheetService {
   /**
    * The first row a new submission should write to.
    *
+   * When the last thing on the tab is an order-date row, the previous order is
+   * already closed off, so the new one starts directly beneath it. Otherwise
+   * (lines written before date rows existed, or added by hand) `gap` blank
+   * rows are left so the new order does not run into them.
+   *
    * @param {object} [options]
-   * @param {number} [options.gap=1]  Blank rows to leave between submissions
+   * @param {number} [options.gap=1]  Blank rows to leave after an unclosed order
    * @returns {Promise<number>} 1-based row number
    */
   async findNextWritableRow({ gap = 1 } = {}) {
-    const sheet = await this.sheetsClient.getTab(SheetTab.ORDERS);
-    const { rows } = await this.sheetsClient.readRange(SheetTab.ORDERS, {
-      startRow: 0,
-      endRow: sheet.rowCount,
-      startColumn: 0,
-      endColumn: ORDER_COLUMN_COUNT,
-    });
+    const rows = await this._readOrdersGrid();
 
     let lastInUse = 0;
     for (let i = 1; i < rows.length; i++) {
@@ -157,6 +203,8 @@ export class OrderSheetService {
     // Empty log: start directly under the header, no leading gap.
     if (lastInUse === 0) return 2;
 
+    if (this._orderDateOf(rows[lastInUse - 1])) return lastInUse + 1;
+
     return lastInUse + 1 + gap;
   }
 
@@ -165,7 +213,8 @@ export class OrderSheetService {
   // -----------------------------------------------------------------------
 
   /**
-   * Write a batch of order lines into consecutive rows.
+   * Write a batch of order lines into consecutive rows, followed by the
+   * order-date row that closes the order off.
    *
    * Order Status (col M) is deliberately left blank: the sheet's dropdown has
    * no "Submitted" value, so blank means "handed to the purchaser, not yet
@@ -179,10 +228,13 @@ export class OrderSheetService {
    *   `source` is per line because it is chosen per vendor, and a submission
    *   can span vendors drawing on different funding.
    * @param {number} [params.startRow]  Defaults to findNextWritableRow()
-   * @returns {Promise<{ startRow: number, endRow: number,
-   *   assignments: { jiraKey: string, row: number }[] }>}
+   * @param {string} [params.orderDate]  `YYYY-MM-DD`; defaults to today in the
+   *   spreadsheet's time zone
+   * @returns {Promise<{ startRow: number, endRow: number, dateRow: number,
+   *   orderDate: string, assignments: { jiraKey: string, row: number }[] }>}
+   *   `endRow` is the last order line; `dateRow` is the row after it.
    */
-  async writeOrderRows({ lines, startRow }) {
+  async writeOrderRows({ lines, startRow, orderDate }) {
     if (!Array.isArray(lines) || lines.length === 0) {
       throw new Error('writeOrderRows requires a non-empty lines array');
     }
@@ -190,10 +242,12 @@ export class OrderSheetService {
     const firstRow = startRow ?? await this.findNextWritableRow();
     const sheet = await this.sheetsClient.getTab(SheetTab.ORDERS);
     const lastRow = firstRow + lines.length - 1;
+    const dateRow = lastRow + 1;
+    const date = orderDate ?? todayIsoDate(await this.sheetsClient.timeZone?.());
 
-    if (lastRow > sheet.rowCount) {
+    if (dateRow > sheet.rowCount) {
       throw badRequest(
-        `Submission needs rows ${firstRow}-${lastRow} but the "${SheetTab.ORDERS}" tab `
+        `Submission needs rows ${firstRow}-${dateRow} (including the order-date row) but the "${SheetTab.ORDERS}" tab `
         + `only has ${sheet.rowCount} rows. Add rows to the sheet and retry.`,
       );
     }
@@ -211,7 +265,7 @@ export class OrderSheetService {
      */
     const { rows: targetRows } = await this.sheetsClient.readRange(SheetTab.ORDERS, {
       startRow: firstRow - 1,
-      endRow: lastRow,
+      endRow: dateRow,
       startColumn: 0,
       endColumn: ORDER_COLUMN_COUNT,
     });
@@ -265,9 +319,21 @@ export class OrderSheetService {
       assignments.push({ jiraKey: line.jiraKey, row: sheetRow });
     });
 
+    // The order-date row: black across the whole width, date in Description.
+    for (let column = 0; column < ORDER_COLUMN_COUNT; column++) {
+      updates.push(column === OrderColumn.DESCRIPTION
+        ? {
+          row: dateRow - 1,
+          column,
+          value: isoDateToSerial(date),
+          format: { ...DATE_ROW_FORMAT, numberFormat: DATE_FORMAT },
+        }
+        : { row: dateRow - 1, column, format: DATE_ROW_FORMAT });
+    }
+
     await this.sheetsClient.writeCells(SheetTab.ORDERS, updates);
 
-    return { startRow: firstRow, endRow: lastRow, assignments };
+    return { startRow: firstRow, endRow: lastRow, dateRow, orderDate: date, assignments };
   }
 
   /**
@@ -440,5 +506,63 @@ export class OrderSheetService {
   /** @private */
   _isRowInUse(values) {
     return IN_USE_COLUMNS.some((column) => !isBlank(values[column]));
+  }
+
+  /**
+   * The order date on an order-date row, or null for any other row.
+   *
+   * Recognized by its contents rather than its black fill — formatting is not
+   * read back — so a row counts when Description holds a date (a date serial,
+   * or `m/d/yyyy` typed as text) and nothing else that describes a part is set.
+   *
+   * @returns {string|null} `YYYY-MM-DD`
+   * @private
+   */
+  _orderDateOf(values) {
+    if (!values || DATE_ROW_EMPTY_COLUMNS.some((column) => !isBlank(values[column]))) return null;
+
+    const description = values[OrderColumn.DESCRIPTION];
+    if (Number.isFinite(description)) {
+      return description >= MIN_DATE_SERIAL && description < MAX_DATE_SERIAL
+        ? serialToIsoDate(description)
+        : null;
+    }
+    return textToIsoDate(description);
+  }
+
+  /** The whole Orders tab, A..O, row index 0 = header. @private */
+  async _readOrdersGrid() {
+    const sheet = await this.sheetsClient.getTab(SheetTab.ORDERS);
+    const { rows } = await this.sheetsClient.readRange(SheetTab.ORDERS, {
+      startRow: 0,
+      endRow: sheet.rowCount,
+      startColumn: 0,
+      endColumn: ORDER_COLUMN_COUNT,
+    });
+    return rows;
+  }
+
+  /** @private */
+  _toOrder(values, row) {
+    const text = (column) => (isBlank(values[column]) ? null : String(values[column]));
+
+    return {
+      row,
+      classification: text(OrderColumn.CLASSIFICATION),
+      wishId: toNumberOrNull(values[OrderColumn.WISH_ID]),
+      partNumber: text(OrderColumn.PART_NUMBER),
+      vendor: text(OrderColumn.VENDOR),
+      description: text(OrderColumn.DESCRIPTION),
+      qty: toNumberOrNull(values[OrderColumn.QTY]),
+      price: toNumberOrNull(values[OrderColumn.PRICE]),
+      link: text(OrderColumn.LINK),
+      jiraKey: text(OrderColumn.JIRA_KEY)?.trim() || null,
+      trackingNumber: text(OrderColumn.TRACKING_NUMBER),
+      shippingCost: toNumberOrNull(values[OrderColumn.SHIPPING_COST]),
+      receiptLink: text(OrderColumn.RECEIPT_LINK),
+      orderStatus: text(OrderColumn.ORDER_STATUS),
+      total: toNumberOrNull(values[OrderColumn.TOTAL]),
+      source: text(OrderColumn.SOURCE),
+    };
   }
 }

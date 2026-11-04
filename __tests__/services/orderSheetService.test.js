@@ -26,7 +26,8 @@ function fakeSheetsClient(tabs) {
       writes.push({ title, updates });
       for (const u of updates) {
         tabs[title][u.row] ??= [];
-        tabs[title][u.row][u.column] = u.formula !== undefined ? u.formula : u.value;
+        if (u.formula !== undefined) tabs[title][u.row][u.column] = u.formula;
+        else if (u.value !== undefined) tabs[title][u.row][u.column] = u.value;
       }
       return updates.length;
     },
@@ -37,6 +38,13 @@ function fakeSheetsClient(tabs) {
 function blankRow() {
   const row = new Array(15).fill('');
   row[OrderColumn.TOTAL] = 0;
+  return row;
+}
+
+/** A black order-date row: the date serial in Description, nothing else. */
+function dateRow(serial) {
+  const row = blankRow();
+  row[OrderColumn.DESCRIPTION] = serial;
   return row;
 }
 
@@ -177,7 +185,8 @@ describe('OrderSheetService.writeOrderRows', () => {
 
     const totalWrites = client.writes
       .flatMap((w) => w.updates)
-      .filter((u) => u.column === OrderColumn.TOTAL);
+      .filter((u) => u.column === OrderColumn.TOTAL)
+      .filter((u) => u.value !== undefined || u.formula !== undefined);
 
     expect(totalWrites).toHaveLength(0);
   });
@@ -307,5 +316,122 @@ describe('OrderSheetService.readWishList', () => {
 
     expect(buckets.map((b) => b.wishId)).toEqual([0, 1]);
     expect(buckets[0]).toMatchObject({ item: 'Hardware', allocated: 2500, notes: 'NEED' });
+  });
+});
+
+describe('order-date rows', () => {
+  // 46324 = 2026-10-29, 46310 = 2026-10-15
+  const line = {
+    jiraKey: 'PARTS-1', classification: 'Robot', source: 'LISD', wishId: null,
+    partNumber: 'WCP-1', vendor: 'WCP', description: 'A thing', qty: 2, price: 10,
+    link: null,
+  };
+
+  it('are not returned as order lines', async () => {
+    const tabs = {
+      Orders: [HEADER, orderRow({ description: 'a' }), dateRow(46310), orderRow({ description: 'b' })],
+    };
+    const service = new OrderSheetService({ sheetsClient: fakeSheetsClient(tabs) });
+
+    expect((await service.readOrders()).map((o) => o.description)).toEqual(['a', 'b']);
+  });
+
+  it('a date row with a stray 0 in Source is still a date row', async () => {
+    const row = dateRow(46310);
+    row[OrderColumn.SOURCE] = 0;
+    const tabs = { Orders: [HEADER, orderRow({ description: 'a' }), row] };
+    const service = new OrderSheetService({ sheetsClient: fakeSheetsClient(tabs) });
+
+    expect(await service.readOrders()).toHaveLength(1);
+  });
+
+  it('a numeric Description on a real part line is not mistaken for a date', async () => {
+    const row = orderRow({ description: 46310 });
+    const tabs = { Orders: [HEADER, row] };
+    const service = new OrderSheetService({ sheetsClient: fakeSheetsClient(tabs) });
+
+    expect(await service.readOrders()).toHaveLength(1);
+  });
+
+  it('divide history into orders, newest first, each dated by the row below it', async () => {
+    const tabs = {
+      Orders: [
+        HEADER,
+        orderRow({ description: 'a' }),
+        orderRow({ description: 'b' }),
+        dateRow(46310),
+        orderRow({ description: 'c' }),
+        dateRow('10/29/2026'),
+        orderRow({ description: 'd' }),
+        blankRow(),
+      ],
+    };
+    const service = new OrderSheetService({ sheetsClient: fakeSheetsClient(tabs) });
+
+    const history = await service.readOrderHistory();
+
+    expect(history.map((o) => [o.date, o.dateRow, o.lines.map((l) => l.description)])).toEqual([
+      [null, null, ['d']],
+      ['2026-10-29', 6, ['c']],
+      ['2026-10-15', 4, ['a', 'b']],
+    ]);
+  });
+
+  it('a new order starts directly under a date row, with no spacer', async () => {
+    const tabs = {
+      Orders: [HEADER, orderRow({ description: 'a' }), dateRow(46324), blankRow(), blankRow()],
+    };
+    const service = new OrderSheetService({ sheetsClient: fakeSheetsClient(tabs) });
+
+    expect(await service.findNextWritableRow()).toBe(4);
+  });
+
+  it('are written black after the last line, dated in Description', async () => {
+    const tabs = { Orders: [HEADER, ...Array.from({ length: 10 }, blankRow)] };
+    const client = fakeSheetsClient(tabs);
+    const service = new OrderSheetService({ sheetsClient: client });
+
+    const result = await service.writeOrderRows({
+      lines: [line, { ...line, jiraKey: 'PARTS-2' }],
+      orderDate: '2026-10-29',
+    });
+
+    expect(result).toMatchObject({ startRow: 2, endRow: 3, dateRow: 4, orderDate: '2026-10-29' });
+
+    const dateUpdates = client.writes.flatMap((w) => w.updates).filter((u) => u.row === 3);
+    expect(dateUpdates).toHaveLength(15);
+    for (const u of dateUpdates) {
+      expect(u.format.backgroundColor).toEqual({ red: 0, green: 0, blue: 0 });
+    }
+
+    const dateCell = dateUpdates.find((u) => u.column === OrderColumn.DESCRIPTION);
+    expect(dateCell.value).toBe(46324);
+    expect(dateCell.format.numberFormat).toEqual({ type: 'DATE', pattern: 'm/d/yyyy' });
+    expect(dateUpdates.filter((u) => u.value !== undefined)).toHaveLength(1);
+
+    // And the next order reads back as one dated order.
+    const history = await service.readOrderHistory();
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ date: '2026-10-29', firstRow: 2, lastRow: 3 });
+    expect(await service.findNextWritableRow()).toBe(5);
+  });
+
+  it('defaults the date to today in the spreadsheet time zone', async () => {
+    const tabs = { Orders: [HEADER, ...Array.from({ length: 5 }, blankRow)] };
+    const client = { ...fakeSheetsClient(tabs), timeZone: async () => 'America/Chicago' };
+    const service = new OrderSheetService({ sheetsClient: client });
+
+    const { orderDate } = await service.writeOrderRows({ lines: [line] });
+
+    expect(orderDate).toBe(
+      new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date()),
+    );
+  });
+
+  it('refuses when the tab has room for the lines but not the date row', async () => {
+    const tabs = { Orders: [HEADER, blankRow()] };
+    const service = new OrderSheetService({ sheetsClient: fakeSheetsClient(tabs) });
+
+    await expect(service.writeOrderRows({ lines: [line] })).rejects.toThrow(/order-date row/);
   });
 });

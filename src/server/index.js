@@ -228,7 +228,7 @@ app.use(express.static(distPath, { index: false }));
  * gate above is what actually protects the data, since a client-side
  * navigation never asks the server for a document at all.
  */
-const GATED_PAGES = ['/purchasing', '/receiving'];
+const GATED_PAGES = ['/purchasing', '/receiving', '/receiving/history'];
 
 const sendApp = (req, res) => res.sendFile(path.join(distPath, 'index.html'));
 
