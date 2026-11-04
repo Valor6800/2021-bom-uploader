@@ -14,7 +14,7 @@
  * - **Kits**: per step, the standard hardware (OnShape's standard content:
  *   screws, nuts) and vendor parts (parts from other documents) one unit
  *   needs, and the total for every unit the step builds. The kit sheet is
- *   one bag per step.
+ *   one bin per step.
  *
  * Rows marked "Exclude from all BOMs" are left out.
  */

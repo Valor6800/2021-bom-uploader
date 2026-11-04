@@ -166,6 +166,25 @@ describe('BOMService.getBOM / getBOMReport', () => {
     expect(report.unidentified).toHaveLength(1);
     expect(onshapeClient.getAssemblyBOM).toHaveBeenCalledWith('d-report', 'w', 'e', { multiLevel: true });
   });
+
+  it('shares one in-flight OnShape request between two callers asking for the same BOM at once', async () => {
+    let resolveCall;
+    const onshapeClient = {
+      getAssemblyBOM: jest.fn(() => new Promise((resolve) => { resolveCall = resolve; })),
+    };
+    const service = new BOMService({ onshapeClient });
+
+    // Both fire before either resolves — e.g. the Assembly page's sub-assemblies
+    // and off-the-shelf sections, which both read this same BOM on mount.
+    const p1 = service.getBOMReport('HAR-1', 'd-race', 'w', 'e', VF27);
+    const p2 = service.getBOMReport('HAR-1', 'd-race', 'w', 'e', VF27);
+    resolveCall(bom([row()]));
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    expect(onshapeClient.getAssemblyBOM).toHaveBeenCalledTimes(1);
+    expect(r1.parts[0].fullPartNumber).toBe('VF27P-0001A');
+    expect(r2.parts[0].fullPartNumber).toBe('VF27P-0001A');
+  });
 });
 describe('BOMService._parseBOM — rows excluded from BOMs (B4)', () => {
   const service = new BOMService({ onshapeClient: {} });
@@ -268,6 +287,29 @@ describe('BOMService._parseBOM — sub-assemblies', () => {
   it('skips an excluded sub-assembly row', () => {
     const { subAssemblies } = service._parseBOM(bom([subRow({ excludeFromBom: true })]), 'HAR-1', VF27);
     expect(subAssemblies).toEqual([]);
+  });
+
+  const EXTERNAL_DOC = 'z'.repeat(24);
+  const bolt = (over = {}) => row({
+    item: '2.1', partNumber: '', name: 'M4 bolt', quantity: 3,
+    itemSource: { documentId: EXTERNAL_DOC, wvmType: 'w', wvmId: WS, elementId: 'e'.repeat(24), partId: 'BOLT', isStandardContent: true },
+    ...over,
+  });
+
+  it('pulls off-the-shelf rows out of an unnumbered sub-assembly, scaled by its quantity', () => {
+    const { external, subAssemblies } = service._parseBOM(
+      bom([subRow({ partNumber: '', name: 'Swerve module', quantity: 4 }), bolt()]),
+      'HAR-1', VF27, { documentId: DOC },
+    );
+    expect(subAssemblies.map((s) => s.name)).toEqual(['Swerve module']);
+    expect(external).toEqual([{
+      name: 'M4 bolt', partNumber: '', quantity: 12, sku: null, vendor: null, standard: true,
+    }]);
+  });
+
+  it('does not open up a numbered sub-assembly to collect its off-the-shelf rows', () => {
+    const { external } = service._parseBOM(bom([subRow(), bolt()]), 'HAR-1', VF27, { documentId: DOC });
+    expect(external).toEqual([]);
   });
 });
 

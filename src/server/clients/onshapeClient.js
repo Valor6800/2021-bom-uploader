@@ -8,6 +8,7 @@
 import crypto from 'node:crypto';
 import axios from 'axios';
 import { isNetworkError } from '../utils/upstreamError.js';
+import { recordOnshapeCall } from '../utils/onshapeUsage.js';
 
 // ---------------------------------------------------------------------------
 // Custom error class
@@ -489,6 +490,7 @@ export class OnshapeClient {
    */
   async _get(path, params = {}) {
     const endpoint = `GET ${path}`;
+    recordOnshapeCall(endpoint);
     try {
       const { fullPath, queryString } = this._buildUrl(path, params);
       const headers = this._signHeaders('GET', path, queryString, 'application/json');
@@ -504,6 +506,7 @@ export class OnshapeClient {
    */
   async _getBinary(path, params = {}) {
     const endpoint = `GET (binary) ${path}`;
+    recordOnshapeCall(endpoint);
     try {
       const { fullPath, queryString } = this._buildUrl(path, params);
       const headers = this._signHeaders('GET', path, queryString, 'application/json');
@@ -541,6 +544,7 @@ export class OnshapeClient {
    */
   async _write(method, path, body, params) {
     const endpoint = `${method} ${path}`;
+    recordOnshapeCall(endpoint);
     try {
       const { fullPath, queryString } = this._buildUrl(path, params);
       const headers = this._signHeaders(method, path, queryString, 'application/json');

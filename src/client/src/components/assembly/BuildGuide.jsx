@@ -174,13 +174,13 @@ export default function BuildGuide({
                   <thead>
                     <tr>
                       <th scope="col" className="cell-part">Item</th>
-                      <th scope="col" className="cell-num">Each</th>
-                      <th scope="col" className="cell-num">{step.count > 1 ? `For ${step.count}` : 'Total'}</th>
+                      {step.count > 1 && <th scope="col" className="cell-num">Each</th>}
+                      <th scope="col" className="cell-num">Total</th>
                       <th scope="col">Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {sorted.length === 0 && <tr><td colSpan={4} className="table-empty">OnShape lists nothing in this step.</td></tr>}
+                    {sorted.length === 0 && <tr><td colSpan={step.count > 1 ? 4 : 3} className="table-empty">OnShape lists nothing in this step.</td></tr>}
                     {sorted.map((line, i) => {
                       const part = line.kind === 'made' && line.number ? partsByNumber.get(line.number) : null;
                       const vendor = line.sku ? vendorInfo[line.sku] : undefined;
@@ -192,8 +192,8 @@ export default function BuildGuide({
                               <span><LineWhat line={line} part={part} stepsById={stepsById} /></span>
                             </span>
                           </th>
-                          <td className="cell-num" data-label="Each">{line.perUnit}</td>
-                          <td className="cell-num" data-label={step.count > 1 ? `For ${step.count}` : 'Total'}>{line.total}</td>
+                          {step.count > 1 && <td className="cell-num" data-label="Each">{line.perUnit}</td>}
+                          <td className="cell-num" data-label="Total">{line.total}</td>
                           <td className="cell-line-status"><LineStatus line={line} part={part} vendor={vendor} columns={columns} /></td>
                         </tr>
                       );

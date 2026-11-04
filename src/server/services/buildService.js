@@ -477,6 +477,7 @@ export class BuildService {
       try {
         const superseded = await this._supersedeActiveSiblings(buildKey, assemblyKey);
         this._pictureOf(buildKey, number, assemblyKey, stored);
+        this._queuePartFiles(buildKey, assemblyKey);
         return { onshapeVersionLink: stored, superseded, resumed: true };
       } catch (err) {
         console.warn('[cut]', buildKey, 'stage', err?.details?.cutStage,
@@ -509,6 +510,7 @@ export class BuildService {
         buildKey, assemblyKey, onshapeVersionLink, storedLink: stored,
       });
       this._pictureOf(buildKey, number, assemblyKey, onshapeVersionLink);
+      this._queuePartFiles(buildKey, assemblyKey);
       return { onshapeVersionLink, superseded, resumed };
     } catch (err) {
       console.warn('[cut]', buildKey, 'stage', err?.details?.cutStage,
@@ -694,8 +696,6 @@ export class BuildService {
     });
 
     const createdHere = new Set();
-    /** Parts made in this request: key -> { partNumber, origin, thickness } */
-    const made = new Map();
     const results = [];
     const fail = (base, err, prefix = '') => {
       console.warn('[save]', buildKey, base.op, base.ref, 'failed:', err?.status, err?.message,
@@ -890,9 +890,6 @@ export class BuildService {
           });
           base.key = created.key;
           createdHere.add(created.key);
-          made.set(created.key, {
-            partNumber: parsed.fullPartNumber, origin: plan?.part?.origin ?? null, thickness: values.thickness,
-          });
           byNumber.set(parsed.fullPartNumber, {
             ...parsed, key: created.key, summary: item.summary, epic: assemblyKey, ...values,
           });
@@ -1030,27 +1027,32 @@ export class BuildService {
       }
     }
 
-    this._queueFiles(assemblyKey, made, results);
-
     return { results };
   }
 
   /**
-   * Queue the picture, STEP and DXF of each Part this save made. Save does not
-   * wait for them (a Part's files take seconds): the jobs run in the
-   * background and the results are marked `filesPending` so the Designer can
-   * watch them. A job that fails is made up on the next Update from CAD.
+   * Queue the picture, STEP and DXF of every Part linked to this Build. Runs
+   * once the Build is ready to build (Cut Version), not at Save: a Draft's
+   * Parts may still change shape, and each of these costs an OnShape call a
+   * Part that never ships shouldn't have spent. A job already done or
+   * failed is handled by FileJobs' own dedup; this never waits for them.
    * @private
    */
-  _queueFiles(assemblyKey, made, results) {
-    if (!this.fileJobs) return;
-    for (const [key, info] of made) {
-      this.fileJobs.enqueue({
-        key, partNumber: info.partNumber, thickness: info.thickness, origin: info.origin, assemblyKey,
-      });
-      const result = results.find((r) => r.op === 'create' && r.key === key);
-      if (result) result.filesPending = true;
-    }
+  _queuePartFiles(buildKey, assemblyKey) {
+    if (!this.fileJobs || !this.partService) return undefined;
+    // Returns the promise so a test (or a future caller) can await it;
+    // _cutOnce itself does not, since the cut shouldn't wait on it.
+    return this.getLinkedParts(buildKey)
+      .then((keys) => (keys.length ? this.partService.getStoriesByKeys(keys) : []))
+      .then((stories) => {
+        for (const story of stories) {
+          if (!story.fullPartNumber) continue;
+          this.fileJobs.enqueue({
+            key: story.key, partNumber: story.fullPartNumber, thickness: story.thickness, assemblyKey,
+          });
+        }
+      })
+      .catch((err) => console.warn('[cut]', buildKey, 'could not queue Part files:', err?.status, err?.message));
   }
 
   /**

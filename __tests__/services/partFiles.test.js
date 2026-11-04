@@ -177,12 +177,12 @@ describe('PartService.previewParts fills in Thickness from the part', () => {
   });
 });
 
-describe('BuildService.saveBuildParts queues the files of the Parts it makes, and does not wait for them', () => {
+describe('BuildService.saveBuildParts does not touch OnShape files (that waits for Cut Version)', () => {
   const VALUES = { quantity: 2, material: 'AL 6061', machinery: 'CNC Router', powdercoat: 'None', thickness: 'None' };
   const BUILD = { fields: { issuetype: { name: 'Build' }, status: { name: 'Draft' }, customfield_10110: 'HAR-30', customfield_10501: 1 } };
   const item = (number, extra = {}) => ({ ref: `VR27P-${number}A`, summary: `VR27P-${number}A Plate`, revision: 'A', ...VALUES, ...extra });
 
-  function setup({ withJobs = true } = {}) {
+  function setup() {
     const jiraClient = {
       getIssue: jest.fn(async () => BUILD),
       searchIssues: jest.fn().mockResolvedValue([]),
@@ -194,81 +194,86 @@ describe('BuildService.saveBuildParts queues the files of the Parts it makes, an
       getStoriesByKeys: jest.fn().mockResolvedValue([]),
       createStory: jest.fn(async () => ({ key: `HAR-${next++}` })),
     };
-    // A queue whose jobs never finish: if Save waited for them it would hang.
     const fileJobs = { enqueue: jest.fn(() => true) };
     const service = new BuildService({
-      jiraClient, partService, fileJobs: withJobs ? fileJobs : undefined, revisionService: { getRevisionChain: async () => ['HAR-30'] },
+      jiraClient, partService, fileJobs, revisionService: { getRevisionChain: async () => ['HAR-30'] },
     });
     return { service, fileJobs, partService };
   }
 
-  it('queues a job for each Part made, marks it pending, and answers at once', async () => {
+  it('creates the Part tickets but queues no files and marks nothing pending', async () => {
     const { service, fileJobs } = setup();
     const { results } = await service.saveBuildParts({ buildKey: 'HAR-51', creates: [item('1101'), item('1102')] });
-    expect(fileJobs.enqueue).toHaveBeenCalledTimes(2);
-    expect(fileJobs.enqueue).toHaveBeenCalledWith({
-      key: 'HAR-3000', partNumber: 'VR27P-1101A', thickness: 'None', origin: null, assemblyKey: 'HAR-30',
-    });
-    expect(results.map((r) => [r.key, r.ok, r.filesPending])).toEqual([['HAR-3000', true, true], ['HAR-3001', true, true]]);
-  });
-
-  it('passes the Thickness the Part was saved with, so a plate gets one DXF', async () => {
-    const { service, fileJobs } = setup();
-    await service.saveBuildParts({ buildKey: 'HAR-51', creates: [item('1101', { thickness: '0.125' })] });
-    expect(fileJobs.enqueue).toHaveBeenCalledWith(expect.objectContaining({ partNumber: 'VR27P-1101A', thickness: '0.125' }));
-  });
-
-  it('queues nothing for a Part that already existed, and saves fine without a queue', async () => {
-    const { service, fileJobs, partService } = setup();
-    const existing = { key: 'HAR-100', fullPartNumber: 'VR27P-1101A', seasonType: 'R', year: '27', partNumber: '1101', version: 'A', summary: 'VR27P-1101A Plate', epic: 'HAR-30', ...VALUES };
-    partService.getStoriesByEpics.mockResolvedValue([existing]);
-    await service.saveBuildParts({ buildKey: 'HAR-51', creates: [item('1101')] });
     expect(fileJobs.enqueue).not.toHaveBeenCalled();
+    expect(results.map((r) => [r.key, r.ok, r.filesPending])).toEqual([['HAR-3000', true, undefined], ['HAR-3001', true, undefined]]);
+  });
 
-    const bare = setup({ withJobs: false });
-    const { results } = await bare.service.saveBuildParts({ buildKey: 'HAR-51', creates: [item('1105')] });
+  it('saves fine with no fileJobs dependency at all', async () => {
+    const jiraClient = { getIssue: jest.fn(async () => BUILD), searchIssues: jest.fn().mockResolvedValue([]), createIssueLink: jest.fn().mockResolvedValue(undefined) };
+    const partService = { getStoriesByEpics: jest.fn().mockResolvedValue([]), createStory: jest.fn(async () => ({ key: 'HAR-9000' })) };
+    const service = new BuildService({ jiraClient, partService, revisionService: { getRevisionChain: async () => ['HAR-30'] } });
+    const { results } = await service.saveBuildParts({ buildKey: 'HAR-51', creates: [item('1105')] });
     expect(results[0]).toMatchObject({ ok: true });
     expect(results[0].filesPending).toBeUndefined();
   });
 });
 
-describe('PartService.previewParts queues files for Parts that lack them', () => {
+describe('BuildService._queuePartFiles — files are queued once the Build is cut', () => {
+  function setup({ stories = [] } = {}) {
+    const fileJobs = { enqueue: jest.fn(() => true) };
+    const partService = { getStoriesByKeys: jest.fn().mockResolvedValue(stories) };
+    const service = new BuildService({ jiraClient: {}, fileJobs, partService });
+    return { service, fileJobs, partService };
+  }
+
+  it('queues a job for every Part linked to the Build, by number and thickness only (no origin)', async () => {
+    const { service, fileJobs, partService } = setup({
+      stories: [
+        { key: 'HAR-100', fullPartNumber: 'VR27P-1101A', thickness: '0.125' },
+        { key: 'HAR-101', fullPartNumber: 'VR27P-1102A', thickness: 'None' },
+      ],
+    });
+    service.getLinkedParts = jest.fn().mockResolvedValue(['HAR-100', 'HAR-101']);
+    await service._queuePartFiles('HAR-51', 'HAR-30');
+    expect(partService.getStoriesByKeys).toHaveBeenCalledWith(['HAR-100', 'HAR-101']);
+    expect(fileJobs.enqueue).toHaveBeenCalledWith({ key: 'HAR-100', partNumber: 'VR27P-1101A', thickness: '0.125', assemblyKey: 'HAR-30' });
+    expect(fileJobs.enqueue).toHaveBeenCalledWith({ key: 'HAR-101', partNumber: 'VR27P-1102A', thickness: 'None', assemblyKey: 'HAR-30' });
+  });
+
+  it('does nothing for a Build with no linked Parts, and never throws without fileJobs/partService', async () => {
+    const { service, fileJobs, partService } = setup();
+    service.getLinkedParts = jest.fn().mockResolvedValue([]);
+    await service._queuePartFiles('HAR-51', 'HAR-30');
+    expect(partService.getStoriesByKeys).not.toHaveBeenCalled();
+    expect(fileJobs.enqueue).not.toHaveBeenCalled();
+
+    const bare = new BuildService({ jiraClient: {} });
+    expect(() => bare._queuePartFiles('HAR-51', 'HAR-30')).not.toThrow();
+  });
+});
+
+describe('PartService.previewParts does not touch OnShape files (Update from CAD is read-only on files)', () => {
   const part = { fullPartNumber: 'VR27P-1101A', partNumber: '1101', seasonType: 'R', year: '27', version: 'A', name: 'Tube', quantity: 1, material: 'AL 6061', machinery: 'CNC Router', powdercoat: 'None', thickness: 'None', missing: [], origin };
-  const ticket = (attachments) => ({
+  const ticket = {
     key: 'HAR-10',
     fields: {
       summary: 'VR27P-1101A Tube', customfield_10110: 'HAR-1', customfield_10202: { value: 'AL 6061' }, customfield_10201: [{ value: 'CNC Router' }],
-      customfield_10206: 1, ...(attachments ? { attachment: attachments.map((filename) => ({ filename })) } : {}),
+      customfield_10206: 1,
     },
-  });
-  async function preview(attachments, bomPart = part) {
+  };
+
+  it('never calls fileJobs.enqueue, even for a Part with no picture or STEP yet', async () => {
     const jiraClient = {
       getIssue: jest.fn(async (key, { fields }) => (fields.includes('issuetype')
         ? { fields: { issuetype: { name: 'Epic' } } } : { fields: { summary: 'VR27A-1100A Base Frame' } })),
-      searchIssues: jest.fn().mockResolvedValue([ticket(attachments)]),
+      searchIssues: jest.fn().mockResolvedValue([ticket]),
     };
     const bomService = new BOMService({ onshapeClient: {} });
-    jest.spyOn(bomService, 'getBOMReport').mockResolvedValue({ parts: [bomPart], unidentified: [], subAssemblies: [] });
-    const fileJobs = { enqueue: jest.fn() };
-    const service = new PartService({ jiraClient, bomService, fileJobs, revisionService: { getRevisionChain: async () => ['HAR-1'] } });
-    await service.previewParts({ epicKey: 'HAR-1', documentId: 'd', workspaceId: 'w', elementId: 'e' });
-    return { fileJobs, jiraClient };
-  }
-
-  it('asks for attachments in the chain search, since a default search leaves them out', async () => {
-    const { jiraClient } = await preview(['VR27P-1101A.png', 'VR27P-1101A.step']);
-    expect(jiraClient.searchIssues).toHaveBeenCalledWith(expect.any(String), { paginate: true, fields: ['*navigable', 'attachment'] });
-  });
-
-  it('queues a Part with no picture or no STEP, from where CAD says it is', async () => {
-    const { fileJobs } = await preview(['VR27P-1101A.step']);
-    expect(fileJobs.enqueue).toHaveBeenCalledWith({ key: 'HAR-10', partNumber: 'VR27P-1101A', thickness: 'None', origin });
-    expect((await preview([])).fileJobs.enqueue).toHaveBeenCalledTimes(1);
-  });
-
-  it('leaves a Part that has both, one it cannot place in OnShape, and one whose files it was not told about', async () => {
-    expect((await preview(['VR27P-1101A.png', 'VR27P-1101A.step'])).fileJobs.enqueue).not.toHaveBeenCalled();
-    expect((await preview([], { ...part, origin: null })).fileJobs.enqueue).not.toHaveBeenCalled();
-    expect((await preview(undefined)).fileJobs.enqueue).not.toHaveBeenCalled();
+    jest.spyOn(bomService, 'getBOMReport').mockResolvedValue({ parts: [part], unidentified: [], subAssemblies: [] });
+    // PartService no longer accepts a fileJobs dependency at all.
+    const service = new PartService({ jiraClient, bomService, revisionService: { getRevisionChain: async () => ['HAR-1'] } });
+    const result = await service.previewParts({ epicKey: 'HAR-1', documentId: 'd', workspaceId: 'w', elementId: 'e' });
+    expect(result.existingParts).toHaveLength(1);
+    expect(service.fileJobs).toBeUndefined();
   });
 });

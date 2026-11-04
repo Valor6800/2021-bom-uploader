@@ -128,7 +128,6 @@ function DesignerPage({ assemblyKey: key }) {
   const [switchTo, setSwitchTo] = useState(null);
   const [showAlreadyAdded, setShowAlreadyAdded] = useState(!!onboard?.alreadyAdded);
   const [wrongBuild, setWrongBuild] = useState(false);
-  const cadRunRef = useRef(false);
   const keepRef = useRef(null);
   const leaveRef = useRef(null);
 
@@ -272,26 +271,11 @@ function DesignerPage({ assemblyKey: key }) {
     }
   }, [assembly, key]);
 
-  // `cad=1` runs Update from CAD once, after the Build list is final. The
-  // ref is set and the parameter stripped before the request, so
-  // StrictMode's second effect run doesn't send a second preview.
-  useEffect(() => {
-    if (!data.ready || !assembly || cadRunRef.current) return;
-    if (searchParams.get('cad') !== '1') return;
-    cadRunRef.current = true;
-    const next = new URLSearchParams(searchParams);
-    next.delete('cad');
-    if (selectedKey) next.set('build', selectedKey);
-    setSearchParams(next, { replace: true, state: location.state });
-    if (selectedKey && hasIds && !viewOnly) runCad({ fresh: false });
-  }, [data.ready, assembly, searchParams, setSearchParams, location.state, selectedKey, hasIds, viewOnly, runCad]);
-
   // Pin the default selection into ?build once the list is final, so a
   // status change (a cut, a lagging re-fetch) never moves the student to
   // another Build. A requested Build that isn't in the list is reported.
   useEffect(() => {
     if (!data.ready || !selectedKey || requested === selectedKey) return;
-    if (searchParams.get('cad') === '1') return;
     if (requested) setWrongBuild(true);
     const next = new URLSearchParams(searchParams);
     next.set('build', selectedKey);
@@ -340,7 +324,6 @@ function DesignerPage({ assemblyKey: key }) {
     setActionMsg(null);
     const next = new URLSearchParams(searchParams);
     next.set('build', buildKey);
-    next.delete('cad');
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
