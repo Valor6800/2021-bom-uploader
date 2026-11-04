@@ -32,6 +32,12 @@ export const Powdercoat = Object.freeze({
   GOLD: 'Gold',
 });
 
+/** Needs Tapping? on a Part: set by hand, "No" unless picked. */
+export const Tapping = Object.freeze({
+  NO: 'No',
+  YES: 'Yes',
+});
+
 export const Thickness = Object.freeze({
   NONE: 'None',
   T_0060: '0.060',
@@ -51,6 +57,7 @@ export const PRIORITIES = Object.freeze(['Highest', 'High', 'Medium', 'Low', 'Lo
 export const MATERIALS = Object.values(Material);
 export const MACHINERY = Object.values(Machinery);
 export const POWDERCOAT = Object.values(Powdercoat);
+export const TAPPING = Object.values(Tapping);
 export const THICKNESS = Object.values(Thickness);
 
 /**

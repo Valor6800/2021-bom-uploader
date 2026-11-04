@@ -2,6 +2,7 @@ import {
   validateMaterial,
   validateMachinery,
   validatePowdercoat,
+  validateTapping,
   validateThickness,
   validateQuantity,
   validatePartPayload,
@@ -53,6 +54,19 @@ describe('validatePowdercoat', () => {
     const result = validatePowdercoat('Red');
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Red');
+  });
+});
+
+describe('validateTapping', () => {
+  test('accepts No and Yes', () => {
+    expect(validateTapping('No')).toEqual({ valid: true });
+    expect(validateTapping('Yes')).toEqual({ valid: true });
+  });
+
+  test('rejects anything else', () => {
+    const result = validateTapping('None');
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('None');
   });
 });
 

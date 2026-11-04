@@ -8,11 +8,11 @@
  */
 
 /** The BOM fields CAD sets and a row can differ on. Priority is separate (tracker-only). */
-export const PART_FIELDS = ['quantity', 'material', 'machinery', 'powdercoat', 'thickness'];
+export const PART_FIELDS = ['quantity', 'material', 'machinery', 'powdercoat', 'tapping', 'thickness'];
 
 /**
  * The fields CAD owns. Quantity and Material always follow CAD. The rest
- * (machinery, powdercoat, thickness, priority) are set when a Part is made
+ * (machinery, powdercoat, tapping, thickness, priority) are set when a Part is made
  * and are the student's from then on: CAD never overwrites them, so a saved
  * choice stays saved.
  */
@@ -29,6 +29,7 @@ const FIELD_LABELS = {
   material: 'Material',
   machinery: 'Machinery',
   powdercoat: 'Powdercoat',
+  tapping: 'Tapping',
   thickness: 'Thickness',
 };
 

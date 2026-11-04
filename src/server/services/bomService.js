@@ -3,7 +3,9 @@
  * with Jira stories.
  */
 
-import { MATERIAL_MACHINERY_MAP, Material, Machinery, Powdercoat, Thickness } from '../utils/bomConstants.js';
+import {
+  MATERIAL_MACHINERY_MAP, Material, Machinery, Powdercoat, Tapping, Thickness,
+} from '../utils/bomConstants.js';
 import { applyPartMask } from '../utils/partMask.js';
 import { baseNumber, isCurrentRevision } from '../utils/partChain.js';
 import { stripBrackets } from '../utils/cleanName.js';
@@ -281,7 +283,7 @@ export class BOMService {
         continue;
       }
 
-      // CAD owns quantity and material; machinery, powdercoat and thickness
+      // CAD owns quantity and material; machinery, powdercoat, tapping and thickness
       // are the student's once a Part exists, so CAD never reports them.
       const changes = {};
       let changeCount = 0;
@@ -549,6 +551,8 @@ export class BOMService {
         thickness: Thickness.NONE,
         machinery: Machinery.NONE,
         powdercoat: Powdercoat.NONE,
+        // OnShape doesn't say whether a part is tapped; the student picks it.
+        tapping: Tapping.NO,
         epic: epicKey,
       };
 

@@ -407,7 +407,7 @@ describe('partFromWritten', () => {
 
   it('gives None for an omitted Powdercoat and Thickness', () => {
     const part = partFromWritten('HAR-1', 'VF27P-0001A Plate', {});
-    expect(part).toMatchObject({ powdercoat: 'None', thickness: 'None', material: 'None', machinery: 'None', quantity: 0, epic: null, revision: null });
+    expect(part).toMatchObject({ powdercoat: 'None', tapping: 'No', thickness: 'None', material: 'None', machinery: 'None', quantity: 0, epic: null, revision: null });
   });
 });
 
@@ -434,6 +434,55 @@ describe('PartService.updateStory clears Powdercoat and Thickness on None (B2)',
     const [fields] = jiraClient.createIssue.mock.calls[0];
     expect(fields).not.toHaveProperty('customfield_10204');
     expect(fields).not.toHaveProperty('customfield_10207');
+  });
+});
+
+describe('PartService Needs Tapping? (customfield_10600)', () => {
+  const base = { summary: 'VF27P-0001A Plate', material: 'AL 6061', machinery: 'CNC Mill', quantity: 1 };
+
+  it('reads Yes, and No when the field is unset', () => {
+    const service = new PartService({ jiraClient: makeJiraClient() });
+    const yes = partIssue('HAR-1', 'VF27P-0001A');
+    yes.fields.customfield_10600 = { value: 'Yes' };
+    const [tapped, unset] = service._parseStories([yes, partIssue('HAR-2', 'VF27P-0002A')]);
+    expect(tapped.tapping).toBe('Yes');
+    expect(unset.tapping).toBe('No');
+  });
+
+  it('a create writes the picked value, and No when none is given', async () => {
+    const jiraClient = makeJiraClient({ createIssue: jest.fn().mockResolvedValue({ key: 'HAR-2' }) });
+    const service = new PartService({ jiraClient });
+    await service.createStory({ ...base, epic: 'HAR-1', tapping: 'Yes' });
+    await service.createStory({ ...base, epic: 'HAR-1' });
+    expect(jiraClient.createIssue.mock.calls[0][0].customfield_10600).toEqual({ value: 'Yes' });
+    expect(jiraClient.createIssue.mock.calls[1][0].customfield_10600).toEqual({ value: 'No' });
+  });
+
+  it('an update writes No as a value (radio buttons are never cleared) and leaves an absent one alone', async () => {
+    const jiraClient = makeJiraClient({ updateIssue: jest.fn().mockResolvedValue(undefined) });
+    const service = new PartService({ jiraClient });
+    await service.updateStory('HAR-1', { ...base, tapping: 'No' });
+    await service.updateStory('HAR-1', base);
+    expect(jiraClient.updateIssue.mock.calls[0][1].customfield_10600).toEqual({ value: 'No' });
+    expect(jiraClient.updateIssue.mock.calls[1][1]).not.toHaveProperty('customfield_10600');
+  });
+
+  it('refuses a value that is not on the list', async () => {
+    const jiraClient = makeJiraClient({ updateIssue: jest.fn() });
+    await expect(new PartService({ jiraClient }).updateStory('HAR-1', { ...base, tapping: 'Maybe' }))
+      .rejects.toThrow(/tapping "Maybe"/);
+    expect(jiraClient.updateIssue).not.toHaveBeenCalled();
+  });
+
+  it('a spare copies the source Part\'s value', async () => {
+    const source = partIssue('VAL-50', 'VR26P-0001A');
+    source.fields.customfield_10600 = { value: 'Yes' };
+    const jiraClient = makeJiraClient({
+      searchIssues: jest.fn().mockResolvedValueOnce([source]).mockResolvedValueOnce([]),
+      createIssue: jest.fn().mockResolvedValue({ key: 'VAL-99' }),
+    });
+    await new PartService({ jiraClient }).clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
+    expect(jiraClient.createIssue.mock.calls[0][0].customfield_10600).toEqual({ value: 'Yes' });
   });
 });
 

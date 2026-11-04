@@ -34,6 +34,11 @@ export const PowdercoatEnum = Object.freeze({
   GOLD: 'Gold',
 });
 
+export const TappingEnum = Object.freeze({
+  NO: 'No',
+  YES: 'Yes',
+});
+
 export const ThicknessEnum = Object.freeze({
   NONE: 'None',
   T_0060: '0.060',
@@ -49,6 +54,7 @@ export const PRIORITIES = Object.freeze(['Highest', 'High', 'Medium', 'Low', 'Lo
 export const MATERIALS = Object.values(Material);
 export const MACHINERY = Object.values(MachineryEnum);
 export const POWDERCOAT = Object.values(PowdercoatEnum);
+export const TAPPING = Object.values(TappingEnum);
 export const THICKNESS = Object.values(ThicknessEnum);
 
 // ---------------------------------------------------------------------------

@@ -3,13 +3,13 @@ import { TrackerKey } from '../assembly-shared/AssemblyHeader.jsx';
 import PartThumb from '../assembly-shared/PartThumb.jsx';
 import StageChip from '../assembly-shared/StageChip.jsx';
 
-export const COLUMN_COUNT = 9;
+export const COLUMN_COUNT = 10;
 
 /** Every Part field, shown as text: a cut Build's Parts never change. */
-const TEXT_FIELDS = ['quantity', 'material', 'machinery', 'powdercoat', 'thickness', 'priority'];
+const TEXT_FIELDS = ['quantity', 'material', 'machinery', 'powdercoat', 'tapping', 'thickness', 'priority'];
 /** Column names, repeated on each cell for the phone layout (cards instead of columns). */
 const LABELS = {
-  quantity: 'Qty', material: 'Material', machinery: 'Machinery', powdercoat: 'Powdercoat', thickness: 'Thickness', priority: 'Priority',
+  quantity: 'Qty', material: 'Material', machinery: 'Machinery', powdercoat: 'Powdercoat', tapping: 'Tapping', thickness: 'Thickness', priority: 'Priority',
 };
 
 function PartCell({ row }) {

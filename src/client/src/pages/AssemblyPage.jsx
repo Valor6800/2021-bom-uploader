@@ -408,6 +408,7 @@ function AssemblyPage({ assemblyKey: key }) {
                     <th scope="col">Material</th>
                     <th scope="col">Machinery</th>
                     <th scope="col">Powdercoat</th>
+                    <th scope="col">Tapping</th>
                     <th scope="col">Thickness</th>
                     <th scope="col">Priority</th>
                     <th scope="col">Current?</th>

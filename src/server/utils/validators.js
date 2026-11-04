@@ -3,7 +3,9 @@
  * All allowed-value checks reference the centralized BOM constants.
  */
 
-import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS, PRIORITIES } from './bomConstants.js';
+import {
+  MATERIALS, MACHINERY, POWDERCOAT, TAPPING, THICKNESS, PRIORITIES, Tapping,
+} from './bomConstants.js';
 
 /**
  * @param {string} value
@@ -34,6 +36,17 @@ export function validateMachinery(value) {
 export function validatePowdercoat(value) {
   if (!POWDERCOAT.includes(value)) {
     return { valid: false, error: `Invalid powdercoat "${value}". Allowed: ${POWDERCOAT.join(', ')}` };
+  }
+  return { valid: true };
+}
+
+/**
+ * @param {string} value
+ * @returns {{ valid: boolean, error?: string }}
+ */
+export function validateTapping(value) {
+  if (!TAPPING.includes(value)) {
+    return { valid: false, error: `Invalid tapping "${value}". Allowed: ${TAPPING.join(', ')}` };
   }
   return { valid: true };
 }
@@ -75,7 +88,7 @@ export function validateQuantity(value) {
 
 /**
  * Validate all fields on a part payload.
- * @param {{ material: string, machinery: string, powdercoat: string, thickness: string, quantity: number }} payload
+ * @param {{ material: string, machinery: string, powdercoat: string, tapping: string, thickness: string, quantity: number }} payload
  * @returns {{ valid: boolean, errors: string[] }}
  */
 export function validatePartPayload(payload) {
@@ -85,6 +98,8 @@ export function validatePartPayload(payload) {
     validateMaterial(payload.material),
     validateMachinery(payload.machinery),
     validatePowdercoat(payload.powdercoat),
+    // Absent is "No", the tracker's default, so older callers stay valid.
+    validateTapping(payload.tapping ?? Tapping.NO),
     validateThickness(payload.thickness),
     validateQuantity(payload.quantity),
     validatePriority(payload.priority),
