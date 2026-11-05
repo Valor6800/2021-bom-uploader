@@ -37,6 +37,7 @@ const VIEWPORTS = {
   laptop: { width: 1366, height: 768 },
   tablet: { width: 1024, height: 768 },
   portrait: { width: 768, height: 1024 },
+  phone: { width: 390, height: 844 },
 };
 
 /** Words that must not appear on the BOM screens (design section 4.5). */
@@ -166,7 +167,9 @@ function designerApi({
     { method: 'GET', path: '/api/epics/HAR-2030', fixture: 'epic-HAR-2030' },
     { method: 'GET', path: '/api/epics/HAR-2030/sub-assemblies', respond: () => ({ status: 200, body: { subAssemblies: [] } }) },
     { method: 'GET', path: '/api/revisions/chain/HAR-2030', fixture: 'chain-HAR-2030' },
-    { method: 'GET', path: '/api/stories', query: { key: 'HAR-2030', chain: '1' }, fixture: stories },
+    typeof stories === 'function'
+      ? { method: 'GET', path: '/api/stories', query: { key: 'HAR-2030', chain: '1' }, respond: stories }
+      : { method: 'GET', path: '/api/stories', query: { key: 'HAR-2030', chain: '1' }, fixture: stories },
     typeof builds === 'function'
       ? { method: 'GET', path: '/api/builds', query: { assemblyKey: 'HAR-2030' }, respond: builds }
       : { method: 'GET', path: '/api/builds', query: { assemblyKey: 'HAR-2030' }, fixture: builds },
@@ -897,8 +900,80 @@ const tab = (page, label) => page.getByRole('tab', { name: new RegExp(`^${label}
 const inBuildRow = (page, text) => page.locator('tbody.parts-group-in tr.part-row', { hasText: text });
 const otherRow = (page, text) => page.locator('tbody.parts-group-other tr.part-row', { hasText: text });
 
+/** A picture fixture, served as PNG bytes. */
+const pngFixture = (name) => () => ({ status: 200, contentType: 'image/png', raw: readFileSync(path.join(FIXTURES, name)) });
+
+/** The Assembly page with its pictures served: the plate VF27P-0003A has a drawing. */
+const drawingsApi = () => assemblyApi({
+  stories: () => {
+    const { status, body } = fixture('stories-chain-four');
+    return {
+      status,
+      body: body.map((s) => ({
+        ...s,
+        files: s.fullPartNumber === 'VF27P-0003A'
+          ? [`${s.fullPartNumber}.png`, `${s.fullPartNumber}.pdf`, `${s.fullPartNumber}_drawing.png`]
+          : [`${s.fullPartNumber}.png`],
+      })),
+    };
+  },
+  extra: [
+    { method: 'GET', path: /^\/api\/pictures\/drawing\/HAR-\d+$/, respond: pngFixture('drawing-plate.png') },
+    { method: 'GET', path: /^\/api\/pictures\/(part|build)\/HAR-\d+$/, respond: pngFixture('part-iso.png') },
+    { method: 'GET', path: '/api/epics/HAR-2030/purchased-parts', respond: () => ({ status: 200, body: { parts: [] } }) },
+  ],
+});
+
 /** @type {Scenario[]} */
 const INC7_SCENARIOS = [
+  {
+    inc: 'INC-7',
+    name: 'assembly-drawings-phone',
+    // On a phone each Part is a card: the drawing and picture stay side by
+    // side, and nothing makes the page scroll sideways.
+    url: ASSEMBLE_URL,
+    viewport: 'phone',
+    bom: true,
+    assemble: true,
+    api: drawingsApi(),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page, ctx) {
+      const plate = inBuildRow(page, 'HAR-2033');
+      await plate.locator('img[src="/api/pictures/drawing/HAR-2033"]').waitFor();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assertTrue(overflow <= 0, `the page does not scroll sideways (${overflow}px over)`);
+      await plate.scrollIntoViewIfNeeded();
+      await ctx.shot('assembly-drawings-phone-row');
+      await plate.locator('img[src="/api/pictures/drawing/HAR-2033"]').click();
+      await page.locator('dialog[open] img').waitFor();
+      const box = await page.locator('dialog[open] img').boundingBox();
+      assertTrue(box && box.width <= 390, 'the enlarged drawing fits the screen');
+      await ctx.shot('assembly-drawings-phone-open');
+    },
+  },
+  {
+    inc: 'INC-7',
+    name: 'assembly-drawings',
+    // A plate's drawing sits left of its picture and opens large; a Part with
+    // none keeps the space blank. No Current? column, no board names.
+    url: ASSEMBLE_URL,
+    bom: true,
+    assemble: true,
+    api: drawingsApi(),
+    waitFor: 'tbody.parts-group-in tr.part-row',
+    async run(page, ctx) {
+      const plate = inBuildRow(page, 'HAR-2033');
+      await plate.locator('img.part-thumb').first().waitFor();
+      assertEqual(await plate.locator('img[src="/api/pictures/drawing/HAR-2033"]').count(), 1, 'the plate shows its drawing');
+      assertEqual(await inBuildRow(page, 'HAR-2031').locator('img[src^="/api/pictures/drawing/"]').count(), 0, 'a Part with no drawing shows none');
+      assertEqual(await page.getByRole('columnheader', { name: 'Current?' }).count(), 0, 'no Current? column');
+      await expectNoText(page, 'board ·');
+      await ctx.shot('assembly-drawings-table');
+      await plate.locator('img[src="/api/pictures/drawing/HAR-2033"]').click();
+      await page.locator('dialog[open] img').waitFor();
+      await ctx.shot('assembly-drawing-open');
+    },
+  },
   {
     inc: 'INC-7',
     name: 'assembly-view-only',
@@ -939,7 +1014,7 @@ const INC7_SCENARIOS = [
       assertEqual(await panel.getAttribute('aria-labelledby'), 'build-tab-HAR-2052', 'tabpanel names its tab');
       await inBuildRow(page, 'HAR-2031').waitFor();
       await inBuildRow(page, 'HAR-2033').waitFor();
-      await expectText(page, 'Build 3 is newer');
+      assertEqual(await page.getByRole('columnheader', { name: 'Current?' }).count(), 0, 'no Current? column');
       await expectNoText(page, 'Parts in other Builds');
       assertEqual(await otherRow(page, 'HAR-2032').count(), 0, 'a Part only in Build 1 is not listed');
       assertEqual(await otherRow(page, 'HAR-2035').count(), 0, 'a Part only in Build 3 is not listed');
@@ -2063,6 +2138,11 @@ async function installRoutes(context, scenario, state) {
     const answer = match.respond
       ? await match.respond({ url, body, calls, requests: state.requests })
       : fixture(match.fixture);
+    // A picture: `{ status, contentType, raw }` with the bytes.
+    if (answer.raw) {
+      await route.fulfill({ status: answer.status, contentType: answer.contentType, body: answer.raw });
+      return;
+    }
     await route.fulfill({
       status: answer.status,
       contentType: 'application/json',

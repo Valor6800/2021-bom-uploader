@@ -2,9 +2,9 @@
  * Where a Part is in manufacturing, from its tracker status, in words an
  * assembly mentor can act on. Pure.
  *
- * The Part workflow runs across two boards:
- *   Manufacturing: Backlog → Ready to Fabricate → Manufacturing → Post Processing → Needs Mentor Approval
- *   Assembly:      Mentor Approved → Powder Coat → Assembly → Assembled
+ * The Part workflow, on the Parts board:
+ *   Backlog → Ready to Fabricate → Manufacturing → Post Processing → Needs Mentor Approval
+ *   → Mentor Approved → Powder Coat → Assembly → Assembled
  */
 
 export const Stage = Object.freeze({
@@ -47,18 +47,6 @@ export function stageOf(status) {
   const [id, order] = STATUS[status] ?? [Stage.UNKNOWN, 99];
   const stage = STAGES.find((s) => s.id === id);
   return { ...stage, order, status: status ?? null };
-}
-
-/**
- * Where the status sits on the boards, e.g. "Assembly board · Powder Coat".
- *
- * @param {string|null} statusId
- * @param {Record<string, { board: string, column: string }>} columns  From GET /api/boards/columns
- * @returns {string|null}
- */
-export function boardPlaceOf(statusId, columns) {
-  const place = statusId ? columns?.[statusId] : null;
-  return place ? `${place.board} board · ${place.column}` : null;
 }
 
 /**

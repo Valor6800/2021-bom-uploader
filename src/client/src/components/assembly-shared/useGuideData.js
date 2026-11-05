@@ -1,20 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchBoardColumns, fetchGuide, lookupVendorParts } from '../../api/client.js';
-
-/** Board columns are the same for every page: read once per load. */
-let columnsPromise = null;
-
-/** `{ [statusId]: { board, column } }`, or {} until (or unless) it loads. */
-export function useBoardColumns() {
-  const [columns, setColumns] = useState({});
-  useEffect(() => {
-    let live = true;
-    columnsPromise ??= fetchBoardColumns().catch(() => { columnsPromise = null; return { columns: {} }; });
-    columnsPromise.then((res) => { if (live) setColumns(res.columns ?? {}); });
-    return () => { live = false; };
-  }, []);
-  return columns;
-}
+import { fetchGuide, lookupVendorParts } from '../../api/client.js';
 
 /**
  * Order tickets and vendor listings for these SKUs, by SKU. Empty until

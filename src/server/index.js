@@ -30,7 +30,6 @@ import { PurchasingService } from './services/purchasingService.js';
 import { ReceivingService } from './services/receivingService.js';
 import { AssemblyGuides } from './services/assemblyGuides.js';
 import { VendorCatalog } from './services/vendorCatalog.js';
-import { BoardColumns } from './services/boardColumns.js';
 import { onshapeUsage } from './utils/onshapeUsage.js';
 
 // Routes
@@ -105,7 +104,6 @@ const buildService = new BuildService({
 const epicService = new EpicService({ jiraClient, onshapeClient, buildService, bomService });
 const guides = new AssemblyGuides({ jiraClient, onshapeClient, bomService, epicService });
 const vendorCatalog = new VendorCatalog({ jiraClient });
-const boardColumns = new BoardColumns({ jiraClient });
 
 const orderSheetService = sheetsClient ? new OrderSheetService({ sheetsClient }) : null;
 const purchasingService = orderSheetService
@@ -184,7 +182,7 @@ app.use(teamGate);
 app.use('/api/epics', epicRoutes({ epicService }));
 app.use('/api/builds', buildRoutes({ buildService }));
 app.use('/api/pictures', pictureRoutes({ pictures, fileJobs }));
-app.use('/api', guideRoutes({ guides, vendorCatalog, boardColumns }));
+app.use('/api', guideRoutes({ guides, vendorCatalog }));
 app.use('/api/revisions', revisionRoutes({ revisionService }));
 app.use('/api', partRoutes({ partService, exportService }));
 app.use('/api/bom', bomRoutes({ bomService }));

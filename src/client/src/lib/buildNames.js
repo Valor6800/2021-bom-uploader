@@ -81,19 +81,6 @@ export function defaultAssembleBuildKey(builds, requested) {
 }
 
 /**
- * The Build a Part counts as current in: the highest-numbered of the
- * Builds it is linked to, among `builds`. Null when it is in none of them.
- *
- * @param {Iterable<string>} partBuildKeys
- * @param {object[]} builds
- * @returns {object|null}
- */
-export function currentBuildOf(partBuildKeys, builds) {
-  const linked = new Set(partBuildKeys ?? []);
-  return [...(builds ?? [])].filter((b) => linked.has(b.key)).sort(byNumberDesc)[0] ?? null;
-}
-
-/**
  * Append Builds that search hasn't returned yet. The fetched copy wins
  * when a key is in both, since it is fresher.
  *

@@ -53,6 +53,23 @@ describe('Pictures.partImage', () => {
   });
 });
 
+describe('Pictures.partDrawing', () => {
+  it("reads the Part's drawing picture, not its iso picture", async () => {
+    const { pictures } = make({ issues: { 'HAR-9': part([att(2, 'VR27P-1101A.png'), att(3, 'VR27P-1101A_drawing.png')]) } });
+    expect((await pictures.partDrawing('HAR-9')).toString()).toContain('/secure/attachment/3/VR27P-1101A_drawing.png');
+    expect((await pictures.partImage('HAR-9')).toString()).toContain('/secure/attachment/2/VR27P-1101A.png');
+  });
+
+  it('answers 404 for a Part with no drawing, and 400 for a ticket that is not a Part', async () => {
+    const { pictures } = make({ issues: {
+      'HAR-9': part([att(2, 'VR27P-1101A.png')]),
+      'HAR-30': { issuetype: { name: 'Assembly' }, summary: 'x', attachment: [] },
+    } });
+    await expect(pictures.partDrawing('HAR-9')).rejects.toMatchObject({ status: 404 });
+    await expect(pictures.partDrawing('HAR-30')).rejects.toMatchObject({ status: 400 });
+  });
+});
+
 describe('Pictures.buildImage', () => {
   const issues = (b) => ({ 'HAR-52': b, 'HAR-30': assembly });
 
@@ -152,6 +169,16 @@ describe('picture routes', () => {
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toBe('image/png');
     expect(res.headers['cache-control']).toBe('private, max-age=3600');
+  });
+
+  it('serves a Part drawing as a PNG, and refuses a bad key', async () => {
+    const pictures = { partDrawing: jest.fn().mockResolvedValue(Buffer.from('PNG')) };
+    const res = await request(app(pictures)).get('/api/pictures/drawing/VAL-9');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(pictures.partDrawing).toHaveBeenCalledWith('VAL-9');
+    expect((await request(app(pictures)).get('/api/pictures/drawing/har-1')).status).toBe(400);
   });
 
   it('tells the browser not to keep a Draft\'s picture, and passes fresh through', async () => {

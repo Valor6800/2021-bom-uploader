@@ -2,6 +2,7 @@
  * Picture Routes — the images the tool shows.
  *
  * GET /api/pictures/part/:key    a Part's picture (the PNG on its ticket)
+ * GET /api/pictures/drawing/:key a Part's drawing (the `_drawing.png` on its ticket)
  * GET /api/pictures/build/:key   a Build's Assembly picture (?fresh=1 draws a Draft again)
  * GET /api/pictures/status?keys= where the background file jobs for Part tickets stand
  */
@@ -37,6 +38,15 @@ export default function pictureRoutes({ pictures, fileJobs }) {
     const image = await pictures.partImage(req.params.key);
     res.set('Content-Type', 'image/png');
     res.set('Cache-Control', 'private, max-age=3600');
+    res.send(image);
+  }));
+
+  router.get('/drawing/:key', asyncHandler(async (req, res) => {
+    requireKey(req.params.key);
+    const image = await pictures.partDrawing(req.params.key);
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.set('X-Content-Type-Options', 'nosniff');
     res.send(image);
   }));
 

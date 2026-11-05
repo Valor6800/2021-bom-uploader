@@ -84,10 +84,10 @@ function LineWhat({ line, part, stepsById }) {
   }
 }
 
-function LineStatus({ line, part, vendor, columns }) {
+function LineStatus({ line, part, vendor }) {
   if (line.kind === 'made') {
     if (!part) return <span className="status-detail">No Part ticket for {line.number ? `number ${line.number}` : 'this part'} yet</span>;
-    return <StageChip status={part.status} statusId={part.statusId} columns={columns} />;
+    return <StageChip status={part.status} />;
   }
   if (line.kind === 'vendor') return <VendorInfo sku={line.sku} info={vendor} vendor={line.vendor} need={line.total} />;
   if (line.kind === 'hardware') {
@@ -110,12 +110,11 @@ function LineStatus({ line, part, vendor, columns }) {
  * @param {{ guide: object|null, error: Error|null, loading: boolean, retry: Function }} props.guideState
  * @param {Map<string, object>} props.partsByNumber  4-digit number -> the Build's Part
  * @param {object[]} props.buildParts  The Build's Parts, for the readiness summary
- * @param {object} props.columns
  * @param {string} props.backTo
  * @param {string} props.kitTo
  */
 export default function BuildGuide({
-  build, buildName, guideState, partsByNumber, buildParts, columns, backTo, kitTo,
+  build, buildName, guideState, partsByNumber, buildParts, backTo, kitTo,
 }) {
   const { guide, error, loading, retry } = guideState;
   const lines = guide?.steps.flatMap((s) => s.lines) ?? [];
@@ -194,7 +193,7 @@ export default function BuildGuide({
                           </th>
                           {step.count > 1 && <td className="cell-num" data-label="Each">{line.perUnit}</td>}
                           <td className="cell-num" data-label="Total">{line.total}</td>
-                          <td className="cell-line-status"><LineStatus line={line} part={part} vendor={vendor} columns={columns} /></td>
+                          <td className="cell-line-status"><LineStatus line={line} part={part} vendor={vendor} /></td>
                         </tr>
                       );
                     })}

@@ -4,6 +4,7 @@ import { PartService } from '../../src/server/services/partService.js';
 import { BuildService } from '../../src/server/services/buildService.js';
 import { BOMService } from '../../src/server/services/bomService.js';
 import { PartNumbers } from '../../src/server/services/partNumbers.js';
+import { roundAxle } from '../fixtures/axleBody.js';
 
 // A 100 x 50 x 3.175 mm plate with one hole, in OnShape's body-details shape (metres).
 const w = 0.1;
@@ -62,10 +63,15 @@ describe('PartFiles.thicknessOf', () => {
 });
 
 describe('PartFiles.attach', () => {
-  it('attaches the picture, the STEP and one DXF of the largest side when the Part has a Thickness', async () => {
+  it('attaches the picture, the STEP, one DXF of the largest side and a drawing when the Part has a Thickness', async () => {
     const { files, jiraClient, onshapeClient } = make();
     const result = await files.attach({ key: 'HAR-9', partNumber: 'VR27P-1103A', origin, thickness: '0.125' });
-    expect(result).toEqual({ attached: ['VR27P-1103A.png', 'VR27P-1103A.step', 'VR27P-1103A.dxf'], problems: [] });
+    expect(result).toEqual({
+      attached: ['VR27P-1103A.png', 'VR27P-1103A.step', 'VR27P-1103A.dxf', 'VR27P-1103A.pdf', 'VR27P-1103A_drawing.png'], problems: [],
+    });
+    const [, pdfName, pdfBody] = jiraClient.addAttachment.mock.calls[3];
+    expect(pdfName).toBe('VR27P-1103A.pdf');
+    expect(Buffer.from(pdfBody).subarray(0, 5).toString()).toBe('%PDF-');
     expect(onshapeClient.getPartImage).toHaveBeenCalledWith(origin);
     expect(onshapeClient.exportPartStep).toHaveBeenCalledWith(origin);
     const [[, pngName, pngBody], [, stepName, stepBody], [, dxfName, dxfBody]] = jiraClient.addAttachment.mock.calls;
@@ -95,7 +101,7 @@ describe('PartFiles.attach', () => {
   });
 
   it('adds only what the ticket is missing', async () => {
-    const { files, jiraClient } = make({ attachments: ['VR27P-1103A.step', 'VR27P-1103A.png'] });
+    const { files, jiraClient } = make({ attachments: ['VR27P-1103A.step', 'VR27P-1103A.png', 'VR27P-1103A.pdf', 'VR27P-1103A_drawing.png'] });
     const result = await files.attach({ key: 'HAR-9', partNumber: 'VR27P-1103A', origin, thickness: '0.125' });
     expect(result.attached).toEqual(['VR27P-1103A.dxf']);
     expect(jiraClient.addAttachment).toHaveBeenCalledTimes(1);
@@ -108,12 +114,49 @@ describe('PartFiles.attach', () => {
     expect(jiraClient.addAttachment).toHaveBeenCalledTimes(2);
   });
 
+  it('puts the drawing on as a picture too, made from the same page', async () => {
+    const { files, jiraClient } = make({ attachments: ['VR27P-1103A.step', 'VR27P-1103A.png', 'VR27P-1103A.dxf', 'VR27P-1103A.pdf'] });
+    const result = await files.attach({ key: 'HAR-9', partNumber: 'VR27P-1103A', origin, thickness: '0.125' });
+    expect(result).toEqual({ attached: ['VR27P-1103A_drawing.png'], problems: [] });
+    const [[, name, body]] = jiraClient.addAttachment.mock.calls;
+    expect(name).toBe('VR27P-1103A_drawing.png');
+    expect(Buffer.from(body).subarray(1, 4).toString()).toBe('PNG');
+  });
+
+  it('adds only the drawing in a backfill, with no picture or STEP call', async () => {
+    const { files, onshapeClient } = make();
+    const result = await files.attach({ key: 'HAR-9', partNumber: 'VR27P-1103A', origin, thickness: '0.125', drawingOnly: true });
+    expect(result).toEqual({ attached: ['VR27P-1103A.pdf', 'VR27P-1103A_drawing.png'], problems: [] });
+    expect(onshapeClient.getPartImage).not.toHaveBeenCalled();
+    expect(onshapeClient.exportPartStep).not.toHaveBeenCalled();
+  });
+
+  it('draws a round axle, though it has no flat side for a DXF', async () => {
+    const m = (inch) => inch * 0.0254;
+    const axle = { ...roundAxle({ L: m(4), lengths: [{ from: 0, to: m(4), d: m(0.5) }] }), id: 'JAX' };
+    const { files, jiraClient, onshapeClient } = make({ bodies: [PLATE, axle] });
+    const result = await files.attach({ key: 'HAR-9', partNumber: 'VR27P-1105A', origin: { ...origin, partId: 'JAX' }, thickness: 'None' });
+    expect(result).toEqual({ attached: ['VR27P-1105A.png', 'VR27P-1105A.step', 'VR27P-1105A.pdf', 'VR27P-1105A_drawing.png'], problems: [] });
+    expect(Buffer.from(jiraClient.addAttachment.mock.calls[2][2]).subarray(0, 5).toString()).toBe('%PDF-');
+    expect(onshapeClient.getBodyDetails).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the plate face\'s curves once for its DXF and its drawing', async () => {
+    const { files, onshapeClient } = make();
+    const spline = { id: 'b', curve: { type: 'spline' }, geometry: { startPoint: [0, 0, t], endPoint: [w, 0, t] } };
+    const bodies = [{ ...PLATE, edges: PLATE.edges.map((e) => (e.id === 'b' ? spline : e)) }];
+    onshapeClient.getBodyDetails.mockResolvedValue(bodies);
+    const result = await files.attach({ key: 'HAR-9', partNumber: 'VR27P-1103A', origin, thickness: '0.125' });
+    expect(result.attached).toEqual(['VR27P-1103A.png', 'VR27P-1103A.step', 'VR27P-1103A.dxf', 'VR27P-1103A.pdf', 'VR27P-1103A_drawing.png']);
+    expect(onshapeClient.getTessellatedEdges).toHaveBeenCalledTimes(1);
+  });
+
   it('still attaches the others when the picture fails, and says which failed', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const { files, onshapeClient } = make();
     onshapeClient.getPartImage.mockRejectedValue(Object.assign(new Error('boom'), { name: 'OnshapeApiError', status: 502 }));
     const result = await files.attach({ key: 'HAR-9', partNumber: 'VR27P-1103A', origin, thickness: '0.125' });
-    expect(result.attached).toEqual(['VR27P-1103A.step', 'VR27P-1103A.dxf']);
+    expect(result.attached).toEqual(['VR27P-1103A.step', 'VR27P-1103A.dxf', 'VR27P-1103A.pdf', 'VR27P-1103A_drawing.png']);
     expect(result.problems).toEqual(["VR27P-1103A.png: OnShape didn't respond (502)"]);
     warn.mockRestore();
   });
@@ -123,7 +166,7 @@ describe('PartFiles.attach', () => {
     const failure = Object.assign(new Error('boom'), { name: 'OnshapeApiError', status: 502 });
     const { files } = make({ exportStep: jest.fn().mockRejectedValue(failure) });
     const result = await files.attach({ key: 'HAR-9', partNumber: 'VR27P-1103A', origin, thickness: '0.125' });
-    expect(result.attached).toEqual(['VR27P-1103A.png', 'VR27P-1103A.dxf']);
+    expect(result.attached).toEqual(['VR27P-1103A.png', 'VR27P-1103A.dxf', 'VR27P-1103A.pdf', 'VR27P-1103A_drawing.png']);
     expect(result.problems).toEqual(["VR27P-1103A.step: OnShape didn't respond (502)"]);
     warn.mockRestore();
   });

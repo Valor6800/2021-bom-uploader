@@ -2179,6 +2179,10 @@ a { color: inherit; text-decoration: none; }
   .part-key { min-width: 0; }
   .stage-detail, .vendor-line { white-space: normal; }
   .part-cell .part-number, .part-cell .part-name { display: inline; }
+  /* Drawing and picture side by side leave the name less room: smaller thumbs, and words break only when they must. */
+  .part-cell { gap: var(--space-2); }
+  .part-cell .part-thumb { width: 3.5rem; height: 2.6rem; }
+  .assembly-table tr.part-row > .cell-part { overflow-wrap: break-word; }
 
   /* A card never grows wider than the screen, whatever its text. */
   .guide-step, .guide-step-body, .guide-table, .assembly-table, .parts-table-wrap { min-width: 0; max-width: 100%; }

@@ -13,7 +13,7 @@ afterAll(() => {
 
 const app = (deps) => {
   const a = express();
-  a.use('/api', guideRoutes({ guides: {}, vendorCatalog: {}, boardColumns: {}, ...deps }));
+  a.use('/api', guideRoutes({ guides: {}, vendorCatalog: {}, ...deps }));
   a.use(errorHandler);
   return a;
 };
@@ -58,11 +58,5 @@ describe('guide routes', () => {
     expect(hit.headers['content-type']).toBe('image/jpeg');
     expect(hit.headers['x-content-type-options']).toBe('nosniff');
     expect((await request(app({ vendorCatalog })).get('/api/vendor/image/WCP-1707')).status).toBe(404);
-  });
-
-  it('answers the board columns', async () => {
-    const boardColumns = { get: jest.fn().mockResolvedValue({ columns: { 1: { board: 'B', column: 'C' } } }) };
-    const res = await request(app({ boardColumns })).get('/api/boards/columns');
-    expect(res.body).toEqual({ columns: { 1: { board: 'B', column: 'C' } } });
   });
 });
