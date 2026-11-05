@@ -56,10 +56,14 @@ describe('OnshapeWriter', () => {
   const cad = { documentId: 'd', workspaceId: 'w', elementId: 'e', partId: 'JVD', configuration: 'List_a=X' };
   const assembly = { fields: { summary: 'VR27A-1000A Chassis', customfield_10300: 'd', customfield_10301: 'w', customfield_10302: 'e' } };
 
-  function make(parts, { updatePartMetadata = jest.fn().mockResolvedValue({}) } = {}) {
+  function make(parts, {
+    updatePartMetadata = jest.fn().mockResolvedValue({}),
+    updatePartsMetadata = jest.fn().mockResolvedValue({ status: 'OK' }),
+  } = {}) {
     const bomService = { getBOMReport: jest.fn().mockResolvedValue({ parts, unidentified: [], subAssemblies: [] }) };
     const jiraClient = { getIssue: jest.fn().mockResolvedValue(assembly) };
-    return { writer: new OnshapeWriter({ jiraClient, onshapeClient: { updatePartMetadata }, bomService }), updatePartMetadata, bomService };
+    const onshapeClient = { updatePartMetadata, updatePartsMetadata };
+    return { writer: new OnshapeWriter({ jiraClient, onshapeClient, bomService }), updatePartMetadata, updatePartsMetadata, bomService };
   }
 
   it('writes the number, Revision A and the season as Project, on the part\'s configuration', async () => {
@@ -98,24 +102,42 @@ describe('OnshapeWriter', () => {
       { fullPartNumber: 'VR27P-0002A', cad: { ...cad, partId: 'J2D' }, cadRevision: '' },
       { fullPartNumber: 'VR27P-0003A', cad: null, cadRevision: 'A' },
     ];
-    const { writer, updatePartMetadata, bomService } = make(parts);
+    const { writer, updatePartsMetadata, bomService } = make(parts);
     const wanted = new Map([['R27-0001', 'A'], ['R27-0002', 'B'], ['R27-0003', 'B']]);
     expect(await writer.setRevisions('HAR-1', wanted)).toEqual({ written: 1 });
-    expect(updatePartMetadata).toHaveBeenCalledTimes(1);
-    expect(updatePartMetadata).toHaveBeenCalledWith(expect.objectContaining({
-      partId: 'J2D', properties: [{ propertyId: OnshapeProperty.REVISION, value: 'B' }],
-    }));
+    expect(updatePartsMetadata).toHaveBeenCalledTimes(1);
+    expect(updatePartsMetadata).toHaveBeenCalledWith(expect.objectContaining({ elementId: cad.elementId }), [
+      { partId: 'J2D', properties: [{ propertyId: OnshapeProperty.REVISION, value: 'B' }] },
+    ]);
     expect(bomService.getBOMReport.mock.calls[0][5]).toEqual({ fresh: true });
+  });
+
+  it('writes all of a Part Studio\'s Revisions in one call', async () => {
+    const parts = ['J1D', 'J2D', 'J3D'].map((partId, i) => ({ fullPartNumber: `VR27P-000${i + 1}A`, cad: { ...cad, partId }, cadRevision: 'A' }));
+    const { writer, updatePartsMetadata } = make(parts);
+    const wanted = new Map([['R27-0001', 'B'], ['R27-0002', 'B'], ['R27-0003', 'B']]);
+    expect(await writer.setRevisions('HAR-1', wanted)).toEqual({ written: 3 });
+    expect(updatePartsMetadata).toHaveBeenCalledTimes(1);
+    expect(updatePartsMetadata.mock.calls[0][1].map((i) => i.partId)).toEqual(['J1D', 'J2D', 'J3D']);
   });
 
   it('names the parts OnShape refused and throws', async () => {
     const refuse = Object.assign(new Error('no'), { name: 'OnshapeApiError', status: 403 });
     const { writer } = make(
       [{ fullPartNumber: 'VR27P-0002A', cad, cadRevision: 'A' }],
-      { updatePartMetadata: jest.fn().mockRejectedValue(refuse) },
+      { updatePartsMetadata: jest.fn().mockRejectedValue(refuse) },
     );
     await expect(writer.setRevisions('HAR-1', new Map([['R27-0002', 'B']])))
       .rejects.toMatchObject({ status: 502, message: expect.stringContaining('VR27P-0002A') });
+  });
+
+  it('names a part OnShape answered with an error for, though the call itself went through', async () => {
+    const answer = {
+      items: [{ href: `https://cad.onshape.com/api/metadata/d/x/w/y/e/z/p/${cad.partId}`, properties: [{ status: 'ERROR', errorMessage: 'locked' }] }],
+    };
+    const { writer } = make([{ fullPartNumber: 'VR27P-0002A', cad, cadRevision: 'A' }], { updatePartsMetadata: jest.fn().mockResolvedValue(answer) });
+    await expect(writer.setRevisions('HAR-1', new Map([['R27-0002', 'B']])))
+      .rejects.toMatchObject({ status: 502, message: expect.stringContaining('locked') });
   });
 });
 

@@ -1,5 +1,7 @@
+import fs from 'node:fs';
 import {
-  analyzeBody, curvedEdgeIds, dxfOfFace, sideViews, thicknessOption,
+  analyzeBody, curvedEdgeIds, depthName, dxfOfFace, faceLayout, plateThickness, plateViews, pocketsOf,
+  sideViews, thicknessOption,
 } from '../../src/server/utils/partGeometry.js';
 
 // ---------------------------------------------------------------- a plate, in OnShape's body-details shape (metres)
@@ -291,5 +293,65 @@ describe('dxfOfFace', () => {
     const curves = new Map([['Tt', [[0.1, 0.05, 0.003175], [0.05, 0.055, 0.003175], [0, 0.05, 0.003175]]]]);
     const entities = readDxf(dxfOfFace(body, { ...analysis, face: top, outward: [0, 0, 1], longAxis: [1, 0, 0] }, curves));
     expect(count(entities, 'LINE')).toBe(3 + 2);
+  });
+});
+
+describe('plateThickness', () => {
+  const IN = 0.0254;
+  it('takes a broad, thin part as plate stock', () => {
+    expect(plateThickness({ dimensions: [4 * IN, 2 * IN, 0.25 * IN], thickness: 0.25 * IN })).toBe('0.250');
+  });
+  it('turns down a 1/4 in hex shaft and a narrow bar, though 0.250 is a stock thickness', () => {
+    expect(plateThickness({ dimensions: [6 * IN, 0.2887 * IN, 0.25 * IN], thickness: 0.25 * IN })).toBeNull();
+    expect(plateThickness({ dimensions: [6 * IN, 0.5 * IN, 0.25 * IN], thickness: 0.25 * IN })).toBeNull();
+  });
+});
+
+describe('pockets (real plate VR26P-2204C: 3/8 thick, pocketed from one side)', () => {
+  const POCKETED = JSON.parse(fs.readFileSync(new URL('../fixtures/pocketedPlate.json', import.meta.url)));
+  const GEARBOX = JSON.parse(fs.readFileSync(new URL('../fixtures/gearboxBodies.json', import.meta.url))).GearboxPlateOuterLeft;
+  const analysis = analyzeBody(POCKETED);
+
+  it('finds each pocket depth, measured from the side it is cut from', () => {
+    const levels = pocketsOf(POCKETED, analysis);
+    expect(levels.map((l) => depthName(l.depth))).toEqual(['0.125', '0.250', '0.3125']);
+    expect(new Set(levels.map((l) => l.side.join())).size).toBe(1);
+  });
+
+  it('sees the profile and every pocket from the pocket side, with one 0,0', () => {
+    const { profile, pockets } = plateViews(POCKETED, analysis);
+    expect(pockets.every((p) => !p.back)).toBe(true);
+    expect(pockets.every((p) => p.view.outward.join() === profile.outward.join())).toBe(true);
+    const main = faceLayout(POCKETED, profile);
+    expect([main.width / 25.4, main.height / 25.4].map((v) => v.toFixed(3))).toEqual(['19.000', '14.000']);
+    for (const p of pockets) {
+      const layer = faceLayout(POCKETED, p.view, undefined, { origin: main.origin });
+      // Every pocket outline sits inside the profile.
+      for (const [kind, ...args] of layer.entities) {
+        const pts = kind === 'LINE' ? args : [args[0]];
+        for (const [x, y] of pts) {
+          expect(x).toBeGreaterThanOrEqual(-0.01);
+          expect(y).toBeGreaterThanOrEqual(-0.01);
+          expect(x).toBeLessThanOrEqual(main.width + 0.01);
+          expect(y).toBeLessThanOrEqual(main.height + 0.01);
+        }
+      }
+    }
+  });
+
+  it('keeps the profile to the outline and through holes', () => {
+    const main = faceLayout(POCKETED, plateViews(POCKETED, analysis).profile);
+    expect(main.holes).toHaveLength(76);
+  });
+
+  it('leaves a plate with no pockets as it was', () => {
+    const plain = analyzeBody(GEARBOX);
+    expect(pocketsOf(GEARBOX, plain)).toEqual([]);
+    expect(plateViews(GEARBOX, plain)).toEqual({ profile: plain, pockets: [] });
+  });
+
+  it('names a DXF on the pocket\'s own layer', () => {
+    const { pockets } = plateViews(POCKETED, analysis);
+    expect(dxfOfFace(POCKETED, pockets[0].view, undefined, { layer: 'POCKET_0.125' })).toContain('\r\n8\r\nPOCKET_0.125\r\n');
   });
 });

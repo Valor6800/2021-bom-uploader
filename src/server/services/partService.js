@@ -64,18 +64,15 @@ export class PartService {
    *   Proposes numbers for CAD rows that have none.
    * @param {import('./partDiff.js').PartDiff} [deps.partDiff]
    *   Finds Parts that changed since the last cut Build.
-   * @param {import('./partFiles.js').PartFiles} [deps.partFiles]
-   *   Measures new Parts for their Thickness.
    */
   constructor({
-    jiraClient, bomService, revisionService, partNumbers, partDiff, partFiles,
+    jiraClient, bomService, revisionService, partNumbers, partDiff,
   }) {
     this.jiraClient = jiraClient;
     this.bomService = bomService;
     this.revisionService = revisionService;
     this.partNumbers = partNumbers;
     this.partDiff = partDiff;
-    this.partFiles = partFiles;
   }
 
   /**
@@ -310,7 +307,6 @@ export class PartService {
     }
     const unnumberable = await this._proposeNumbers(newParts, bomItems, assemblyNumber);
     unidentified.push(...unnumberable);
-    await this._seedThickness(newParts);
 
     const duplicates = this.detectDuplicates(bomItems);
 
@@ -366,25 +362,6 @@ export class PartService {
       revisions.push(next);
     }
     return { baseline, revisions };
-  }
-
-  /**
-   * Fill in Thickness on new Parts from the part's smallest dimension, when
-   * it matches a stock thickness. A 3D print has none, and a new Revision
-   * keeps the old Part's.
-   * @private
-   */
-  async _seedThickness(newParts) {
-    if (!this.partFiles) return;
-    const todo = newParts.filter((p) => p.origin && !p.revises
-      && p.thickness === Thickness.NONE && p.machinery !== Machinery.THREE_D_PRINTER);
-    for (let i = 0; i < todo.length; i += 6) {
-      // eslint-disable-next-line no-await-in-loop
-      await Promise.all(todo.slice(i, i + 6).map(async (part) => {
-        const option = await this.partFiles.thicknessOf(part.origin);
-        if (option) part.thickness = option;
-      }));
-    }
   }
 
   /**

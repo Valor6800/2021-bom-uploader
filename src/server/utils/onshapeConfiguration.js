@@ -14,6 +14,11 @@ const LINE = /^[ \t]*Onshape configuration:[ \t]*(\S.*?)[ \t]*$/im;
 /** What OnShape puts in a configuration: names, `=`, `;`, and the odd unit or space. Nothing that could break out of a query string. */
 const VALID = /^[A-Za-z0-9_=;:.\-+% ,()]{1,2000}$/;
 
+/** True for text OnShape could have as a configuration ("default" included). */
+export function isConfigurationText(value) {
+  return VALID.test(String(value ?? ''));
+}
+
 /**
  * @returns {string|null} A configuration, or null when it is empty, has odd
  *   characters, or is "default" (what OnShape calls an assembly that isn't configured)

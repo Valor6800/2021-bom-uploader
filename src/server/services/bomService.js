@@ -177,6 +177,17 @@ export class BOMService {
     return promise;
   }
 
+  /**
+   * Read a workspace BOM afresh into the cache, for a reader about to need
+   * it (`getBOMReport` without `fresh` then shares this read).
+   * @returns {Promise<object>}
+   */
+  prefetch(documentId, workspaceId, elementId, configuration = null) {
+    const cacheKey = `${documentId}:${workspaceId}:${elementId}:${configuration ?? ''}`;
+    BOM_CACHE.delete(cacheKey);
+    return this._workspaceBOM(cacheKey, documentId, workspaceId, elementId, configuration);
+  }
+
   /** The raw BOM at a version: fetched once per version, ever, shared the same way. */
   _versionBOM(cacheKey, documentId, versionId, elementId, configuration) {
     const hit = VERSION_CACHE.get(cacheKey);
@@ -579,6 +590,9 @@ export class BOMService {
       // print is not powdercoated). It only seeds a new Part: once a Part
       // exists the student's choice stands.
       if (ALUMINIUM.has(part.material)) part.powdercoat = powdercoatFromAppearance(item.appearance);
+      // Its colour in OnShape, for its picture.
+      const rgb = item.appearance?.color;
+      part.color = rgb && [rgb.red, rgb.green, rgb.blue].every(Number.isFinite) ? [rgb.red, rgb.green, rgb.blue] : null;
 
       // What a new Part needs before the tool will make it.
       part.missing = [];

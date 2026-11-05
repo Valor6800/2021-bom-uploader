@@ -1,7 +1,7 @@
 /**
- * A drawing's first page as a PNG, for the Part's ticket and the Assembly
- * page: the PDF from `partDrawing` drawn by pdf.js onto a canvas, so the
- * picture is exactly what prints. Its text is drawn from pdf.js's own font
+ * A drawing as one PNG, for the Part's ticket and the Assembly page: every
+ * page of the PDF from `partDrawing` drawn by pdf.js onto one canvas, one
+ * under the other (a long hole chart carries on below). Its text is drawn from pdf.js's own font
  * files, so the server needs no fonts installed.
  */
 
@@ -32,13 +32,31 @@ export async function pngOfPdf(pdf, { scale = 2 } = {}) {
     verbosity: 0,
   }).promise;
   try {
-    const page = await doc.getPage(1);
-    const viewport = page.getViewport({ scale });
-    const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+    const pages = [];
+    for (let i = 1; i <= doc.numPages; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const page = await doc.getPage(i);
+      pages.push({ page, viewport: page.getViewport({ scale }) });
+    }
+    const width = Math.ceil(Math.max(...pages.map((p) => p.viewport.width)));
+    const height = Math.ceil(pages.reduce((h, p) => h + p.viewport.height, 0));
+    const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    ctx.fillRect(0, 0, width, height);
+    // Each page on its own canvas (pdf.js paints a page's background over
+    // the whole canvas), then copied in under the one before.
+    let top = 0;
+    for (const { page, viewport } of pages) {
+      const sheet = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+      const sctx = sheet.getContext('2d');
+      sctx.fillStyle = '#ffffff';
+      sctx.fillRect(0, 0, sheet.width, sheet.height);
+      // eslint-disable-next-line no-await-in-loop
+      await page.render({ canvasContext: sctx, viewport }).promise;
+      ctx.drawImage(sheet, 0, top);
+      top += sheet.height;
+    }
     return canvas.toBuffer('image/png');
   } finally {
     await doc.destroy();

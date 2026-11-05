@@ -81,12 +81,11 @@ describe('PartDiff.changedNumbers', () => {
   });
 
   function make({ before, shapes }) {
+    // One read per Part Studio; a part it can't measure is missing from the answer.
     const onshapeClient = {
-      getPartShape: jest.fn(async (origin) => {
-        const value = shapes[`${origin.wvmType}:${origin.partId}`];
-        if (value instanceof Error) throw value;
-        return value;
-      }),
+      getPartStudioShapes: jest.fn(async (studio, partIds) => new Map(partIds
+        .map((id) => [id, shapes[`${studio.wvmType}:${id}`]])
+        .filter(([, value]) => value && !(value instanceof Error)))),
     };
     const bomService = { getVersionReport: jest.fn().mockResolvedValue({ parts: before }) };
     return { diff: new PartDiff({ jiraClient: {}, onshapeClient, bomService }), onshapeClient };
@@ -100,7 +99,7 @@ describe('PartDiff.changedNumbers', () => {
     });
     const changed = await diff.changedNumbers(baseline, [part('1101', { origin: { ...part('1101').origin, microversionId: 'same' } })], null);
     expect([...changed]).toEqual(['R27-1101']);
-    expect(onshapeClient.getPartShape).toHaveBeenCalledTimes(2);
+    expect(onshapeClient.getPartStudioShapes).toHaveBeenCalledTimes(2);
   });
 
   it('ignores a difference inside the tolerance', async () => {
@@ -115,9 +114,19 @@ describe('PartDiff.changedNumbers', () => {
     const { diff, onshapeClient } = make({ before: [then('1101')], shapes: { 'w:1101': shape(), 'v:1101': shape() } });
     await diff.changedNumbers(baseline, [part('1101')], null);
     await diff.changedNumbers(baseline, [part('1101')], null);
-    expect(onshapeClient.getPartShape).toHaveBeenCalledTimes(2);
+    expect(onshapeClient.getPartStudioShapes).toHaveBeenCalledTimes(2);
     await diff.changedNumbers(baseline, [part('1101', { origin: { ...part('1101').origin, microversionId: 'edited' } })], null);
-    expect(onshapeClient.getPartShape).toHaveBeenCalledTimes(3);
+    expect(onshapeClient.getPartStudioShapes).toHaveBeenCalledTimes(3);
+  });
+
+  it('reads all the parts of a Part Studio in one call, now and at the cut', async () => {
+    const { diff, onshapeClient } = make({
+      before: [then('1101'), then('1102'), then('1103')],
+      shapes: { 'w:1101': shape(), 'v:1101': shape(), 'w:1102': shape(), 'v:1102': shape(), 'w:1103': shape(), 'v:1103': shape() },
+    });
+    await diff.changedNumbers(baseline, [part('1101'), part('1102'), part('1103')], null);
+    expect(onshapeClient.getPartStudioShapes).toHaveBeenCalledTimes(2);
+    expect(onshapeClient.getPartStudioShapes.mock.calls.map(([, ids]) => ids)).toEqual([['1101', '1102', '1103'], ['1101', '1102', '1103']]);
   });
 
   it('compares shapes when the Part Studio changed, and flags only the Part whose shape moved', async () => {
@@ -133,7 +142,7 @@ describe('PartDiff.changedNumbers', () => {
     const { diff, onshapeClient } = make({ before: [then('1101')], shapes: {} });
     const changed = await diff.changedNumbers(baseline, [part('1101', { material: 'AL 7075' })], null);
     expect([...changed]).toEqual(['R27-1101']);
-    expect(onshapeClient.getPartShape).not.toHaveBeenCalled();
+    expect(onshapeClient.getPartStudioShapes).not.toHaveBeenCalled();
   });
 
   it('ignores a Part that was not in the cut Build: that one is new, not changed', async () => {

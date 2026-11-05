@@ -3,7 +3,7 @@ import Badge from '../ui/Badge.jsx';
 import Button from '../ui/Button.jsx';
 import { TrackerKey } from '../assembly-shared/AssemblyHeader.jsx';
 import PartThumb from '../assembly-shared/PartThumb.jsx';
-import { MATERIALS, MACHINERY, POWDERCOAT, TAPPING, THICKNESS, PRIORITIES } from '../../api/client.js';
+import { MATERIALS, MACHINERY, POWDERCOAT, PRIORITIES, cadPictureUrl } from '../../api/client.js';
 
 /** Material from OnShape as text; one that isn't on the list says where to fix it. */
 function MaterialCell({ value, invalid }) {
@@ -16,14 +16,13 @@ function MaterialCell({ value, invalid }) {
 }
 
 // Material is not here: OnShape sets it, so it is always plain text.
+// Tapping and Thickness aren't either: the tool sets them when the Build is cut.
 const SELECTS = [
   ['machinery', 'Machinery', MACHINERY],
   ['powdercoat', 'Powdercoat', POWDERCOAT],
-  ['tapping', 'Tapping', TAPPING],
-  ['thickness', 'Thickness', THICKNESS],
 ];
 
-export const COLUMN_COUNT = 10;
+export const COLUMN_COUNT = 8;
 
 const BADGE_WORDS = new Set(['New', 'Changed', 'In Build', 'Saved', 'Error', 'Not in any Build']);
 
@@ -82,7 +81,12 @@ export default function DesignerPartRow({
         </td>
         <th scope="row" className="cell-part">
           <span className="part-cell">
-            <PartThumb partKey={row.imageKey} refresh={thumbStamp} title={[row.fullPartNumber, row.name ?? row.summary].filter(Boolean).join(' ') || undefined} />
+            <PartThumb
+              partKey={row.imageKey}
+              src={row.cadPart ? cadPictureUrl(row.cadPart.origin, row.cadPart.color) : null}
+              refresh={thumbStamp}
+              title={[row.fullPartNumber, row.name ?? row.summary].filter(Boolean).join(' ') || undefined}
+            />
             <span>
               <span className="part-key">{row.key ? <TrackerKey issueKey={row.key} /> : <span className="text-muted">New</span>}</span>
               <span className="mono-key part-number">{row.fullPartNumber}</span>
@@ -123,7 +127,7 @@ export default function DesignerPartRow({
               invalid={!!row.values.material && !MATERIALS.includes(row.values.material)}
             />
             {SELECTS.map(([field, fieldLabel, options]) => {
-              const value = row.values[field] ?? (field === 'tapping' ? 'No' : 'None');
+              const value = row.values[field] ?? 'None';
               const unlisted = !options.includes(value);
               return (
                 <td key={field} className="cell-select">

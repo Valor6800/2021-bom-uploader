@@ -3,6 +3,8 @@
  *
  * GET /api/pictures/part/:key    a Part's picture (the PNG on its ticket)
  * GET /api/pictures/drawing/:key a Part's drawing (the `_drawing.png` on its ticket)
+ * GET /api/pictures/cad?d&wvm&wvmid&e&p[&c][&mv][&rgb]
+ *                                a part as it is in OnShape now, drawn from its shape (the Designer's)
  * GET /api/pictures/build/:key   a Build's Assembly picture (?fresh=1 draws a Draft again)
  * GET /api/pictures/status?keys= where the background file jobs for Part tickets stand
  */
@@ -11,6 +13,30 @@ import { Router } from 'express';
 import { validateIssueKey } from '../utils/validators.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { badRequest } from '../middleware/httpError.js';
+import { isConfigurationText } from '../utils/onshapeConfiguration.js';
+
+const ID = /^[a-f0-9]{24}$/i;
+const PART_ID = /^[A-Za-z0-9+/=_-]{1,32}$/;
+const RGB = /^[a-f0-9]{6}$/i;
+
+/** The part a live picture is of, from the query, or a 400. */
+function cadOrigin(q) {
+  const one = (v) => (Array.isArray(v) ? undefined : v);
+  const [d, wvm, wvmid, e, p, c, mv, rgb] = ['d', 'wvm', 'wvmid', 'e', 'p', 'c', 'mv', 'rgb'].map((k) => one(q[k]));
+  if (![d, wvmid, e].every((v) => ID.test(v ?? '')) || !['w', 'v', 'm'].includes(wvm) || !PART_ID.test(p ?? '')) {
+    throw badRequest('Not an OnShape part.');
+  }
+  if (c !== undefined && !isConfigurationText(c)) throw badRequest('Not an OnShape configuration.');
+  if (mv !== undefined && !ID.test(mv)) throw badRequest('Not an OnShape version.');
+  if (rgb !== undefined && !RGB.test(rgb)) throw badRequest('Not a colour.');
+  return {
+    origin: {
+      documentId: d.toLowerCase(), wvmType: wvm, wvmId: wvmid.toLowerCase(), elementId: e.toLowerCase(), partId: p,
+      configuration: c ?? null, microversionId: mv ? mv.toLowerCase() : null,
+    },
+    color: rgb ? [0, 2, 4].map((i) => parseInt(rgb.slice(i, i + 2), 16)) : null,
+  };
+}
 
 function requireKey(value) {
   const check = validateIssueKey(value);
@@ -46,6 +72,16 @@ export default function pictureRoutes({ pictures, fileJobs }) {
     const image = await pictures.partDrawing(req.params.key);
     res.set('Content-Type', 'image/png');
     res.set('Cache-Control', 'private, max-age=3600');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.send(image);
+  }));
+
+  router.get('/cad', asyncHandler(async (req, res) => {
+    const { origin, color } = cadOrigin(req.query);
+    const image = await pictures.cadPicture(origin, color);
+    res.set('Content-Type', 'image/png');
+    // A Part Studio version never changes, and the link names it.
+    res.set('Cache-Control', origin.microversionId || origin.wvmType === 'v' ? 'private, max-age=86400' : 'private, max-age=60');
     res.set('X-Content-Type-Options', 'nosniff');
     res.send(image);
   }));

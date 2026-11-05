@@ -3,7 +3,8 @@
  *
  * - A Part's picture is the `<Part number>.png` attached to its ticket when
  *   the Part was made; its drawing (plates and axles) is the
- *   `<Part number>_drawing.png` attached when its Build was cut.
+ *   `<Part number>_drawing.png` attached when its Build was cut (for a part
+ *   with only side views, the first `_drawing_<SIDE>.png`).
  * - A Build's picture is its Assembly in OnShape's isometric view. A cut Build
  *   gets one attached to its ticket, rendered from the version it was cut at
  *   (so it never changes). A Draft has none yet: it is rendered live from the
@@ -19,6 +20,8 @@ import { describeUpstreamError } from '../utils/upstreamError.js';
 import { configurationFrom } from '../utils/onshapeConfiguration.js';
 
 const PNG = /\.png$/i;
+/** Side views in the order a Part's drawings list them. */
+const SIDE_ORDER = ['TOP', 'BOTTOM', 'RIGHT', 'LEFT', 'FRONT', 'BACK'];
 const VERSION_LINK_RE = /\/documents\/([a-f0-9]{24})\/v\/([a-f0-9]{24})\/e\/([a-f0-9]{24})/i;
 
 /** A live render is reused this long (an assembly takes several seconds to draw). */
@@ -32,10 +35,14 @@ export class Pictures {
    * @param {object} deps
    * @param {import('../clients/jiraClient.js').JiraClient} deps.jiraClient
    * @param {import('../clients/onshapeClient.js').OnshapeClient} deps.onshapeClient
+   * @param {import('./partFiles.js').PartFiles} [deps.partFiles]  Draws a part from its shape (live pictures)
    */
-  constructor({ jiraClient, onshapeClient }) {
+  constructor({ jiraClient, onshapeClient, partFiles = null }) {
     this.jiraClient = jiraClient;
     this.onshapeClient = onshapeClient;
+    this.partFiles = partFiles;
+    /** live picture key -> PNG, newest last */
+    this._live = new Map();
     /** attachment id -> bytes */
     this._files = new Map();
     /** render key -> { at, promise } */
@@ -88,23 +95,55 @@ export class Pictures {
   }
 
   /**
+   * A part's picture as it is in OnShape now, for the Designer, drawn from
+   * its Part Studio's shape. The shape read is kept per Part Studio version,
+   * so it is read again only after the Part Studio changes (the caller names
+   * the version it saw in the BOM, `microversionId`).
+   *
+   * @param {{ documentId: string, wvmType: string, wvmId: string, elementId: string, partId: string,
+   *   configuration?: string|null, microversionId?: string|null }} origin
+   * @param {number[]|null} [color]
+   * @returns {Promise<Buffer>}
+   * @throws {HttpError} 404 for a part OnShape doesn't list
+   */
+  async cadPicture(origin, color = null) {
+    if (!this.partFiles) throw new HttpError(404, 'Live pictures are off.');
+    const key = JSON.stringify([origin, color]);
+    if (origin.microversionId || origin.wvmType === 'v') {
+      const hit = this._live.get(key);
+      if (hit) return hit;
+    }
+    const png = await this.partFiles.pictureOf(origin, color);
+    if (!png) throw new HttpError(404, 'OnShape has no such part.');
+    if (origin.microversionId || origin.wvmType === 'v') {
+      this._live.set(key, png);
+      if (this._live.size > MAX_FILES) this._live.delete(this._live.keys().next().value);
+    }
+    return png;
+  }
+
+  /**
    * A Part's drawing, as a picture.
    * @param {string} key
    * @returns {Promise<Buffer>}
    * @throws {HttpError} 400 for a ticket that is not a Part, 404 when it has no drawing
    */
   async partDrawing(key) {
-    return this._partFile(key, '_drawing.png', 'This Part has no drawing.');
+    // A plate's or axle's own drawing, else its first side view's.
+    return this._partFile(key, ['_drawing.png', ...SIDE_ORDER.map((s) => `_drawing_${s}.png`)], 'This Part has no drawing.');
   }
 
-  /** The `<Part number><suffix>` attached to a Part's ticket. */
-  async _partFile(key, suffix, missing) {
+  /** The first of `<Part number><suffix>` attached to a Part's ticket. */
+  async _partFile(key, suffixes, missing) {
     const issue = await this._issue(key, ['issuetype', 'summary', 'attachment']);
     if (issue?.fields?.issuetype?.name !== 'Part') throw badRequest(`"${key}" is not a Part`);
     const number = applyPartMask(issue.fields.summary ?? '')?.fullPartNumber;
-    const attachment = (issue.fields.attachment ?? []).find((a) => a.filename === `${number}${suffix}`);
-    if (!attachment) throw new HttpError(404, missing);
-    return this._attachment(attachment);
+    const files = issue.fields.attachment ?? [];
+    for (const suffix of [suffixes].flat()) {
+      const attachment = files.find((a) => a.filename === `${number}${suffix}`);
+      if (attachment) return this._attachment(attachment);
+    }
+    throw new HttpError(404, missing);
   }
 
   /**

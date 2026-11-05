@@ -6,13 +6,13 @@
  */
 
 import {
-  sanitizeJQL, validateMaterial, validateMachinery, validatePowdercoat, validateTapping, validateThickness, validateQuantity, validatePriority,
+  sanitizeJQL, validateMaterial, validateMachinery, validatePowdercoat, validateQuantity, validatePriority,
 } from '../utils/validators.js';
 import {
   BuildField, BuildStatus, BuildTransition, LinkType, usedInLinkedClause,
 } from '../utils/buildConstants.js';
 import { applyPartMask, formatPartNumber } from '../utils/partMask.js';
-import { Powdercoat, Tapping, Thickness } from '../utils/bomConstants.js';
+import { Powdercoat } from '../utils/bomConstants.js';
 import { badRequest, conflict, HttpError } from '../middleware/httpError.js';
 import { describeUpstreamError, jiraErrorsForLog, upstreamSource } from '../utils/upstreamError.js';
 import { baseNumber, preferNewestRevision } from '../utils/partChain.js';
@@ -34,8 +34,6 @@ const FIELD_CHECKS = [
   ['material', 'Material', validateMaterial],
   ['machinery', 'Machinery', validateMachinery],
   ['powdercoat', 'Powdercoat', validatePowdercoat],
-  ['tapping', 'Needs tapping', validateTapping],
-  ['thickness', 'Thickness', validateThickness],
 ];
 
 /** Read `fn(item)` for each item, at most READ_BATCH at a time. */
@@ -70,9 +68,10 @@ function hasUsedInLink(issuelinks, buildKey) {
 }
 
 /**
- * The BOM values a save writes, with None for an absent Powdercoat/Thickness
- * and No for an absent Needs Tapping.
- * Priority is included only when the item carries one.
+ * The BOM values a save writes, with None for an absent Powdercoat.
+ * Priority is included only when the item carries one. Needs Tapping? and
+ * Thickness are never saved: the tool sets them when the Build is cut
+ * (PartFiles), so a save leaves them as they are.
  */
 function bomValues(item) {
   return {
@@ -80,8 +79,6 @@ function bomValues(item) {
     material: item.material,
     machinery: item.machinery,
     powdercoat: item.powdercoat ?? Powdercoat.NONE,
-    tapping: item.tapping ?? Tapping.NO,
-    thickness: item.thickness ?? Thickness.NONE,
     ...(item.priority !== undefined && item.priority !== null ? { priority: item.priority } : {}),
   };
 }
@@ -480,7 +477,7 @@ export class BuildService {
       try {
         const superseded = await this._supersedeActiveSiblings(buildKey, assemblyKey);
         this._pictureOf(buildKey, number, assemblyKey, stored);
-        this._queuePartFiles(buildKey, assemblyKey);
+        this._queuePartFiles(buildKey, assemblyKey, stored);
         return { onshapeVersionLink: stored, superseded, resumed: true };
       } catch (err) {
         console.warn('[cut]', buildKey, 'stage', err?.details?.cutStage,
@@ -513,7 +510,7 @@ export class BuildService {
         buildKey, assemblyKey, onshapeVersionLink, storedLink: stored,
       });
       this._pictureOf(buildKey, number, assemblyKey, onshapeVersionLink);
-      this._queuePartFiles(buildKey, assemblyKey);
+      this._queuePartFiles(buildKey, assemblyKey, onshapeVersionLink);
       return { onshapeVersionLink, superseded, resumed };
     } catch (err) {
       console.warn('[cut]', buildKey, 'stage', err?.details?.cutStage,
@@ -851,7 +848,7 @@ export class BuildService {
         base.reused = true;
         // Both sides with the same defaults, so an unset field equals its None/No.
         const stored = bomValues(existing);
-        const differs = ['quantity', 'material', 'machinery', 'powdercoat', 'tapping', 'thickness']
+        const differs = ['quantity', 'material', 'machinery', 'powdercoat']
           .some((f) => stored[f] !== values[f]);
         if (differs) {
           let cut;
@@ -1043,7 +1040,7 @@ export class BuildService {
    * failed is handled by FileJobs' own dedup; this never waits for them.
    * @private
    */
-  _queuePartFiles(buildKey, assemblyKey) {
+  _queuePartFiles(buildKey, assemblyKey, versionLink = null) {
     if (!this.fileJobs || !this.partService) return undefined;
     // Returns the promise so a test (or a future caller) can await it;
     // _cutOnce itself does not, since the cut shouldn't wait on it.
@@ -1057,8 +1054,10 @@ export class BuildService {
             partNumber: story.fullPartNumber,
             thickness: story.thickness,
             material: story.material,
+            machinery: story.machinery,
             tapping: story.tapping,
             assemblyKey,
+            versionLink,
           });
         }
       })

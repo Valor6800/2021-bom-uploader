@@ -14,7 +14,6 @@
  */
 
 import PDFDocument from 'pdfkit';
-import { threadMajor } from './partFeatures.js';
 
 const MM_PER_INCH = 25.4;
 const PAGE = { w: 792, h: 612 };
@@ -25,8 +24,12 @@ const PART = 0.9;
 const INK = '#000000';
 const DIM = '#1f4e9a';
 const WARN = '#b00020';
+/** A colour per pocket depth, shallowest first. */
+const POCKET_INK = ['#2e7d32', '#ef6c00', '#6a1b9a', '#00838f', '#ad1457'];
 
 const inches = (mm) => mm / MM_PER_INCH;
+/** As the pocket DXFs are named: "0.125", "0.3125". */
+const depthLabel = (mm) => { const s4 = inches(mm).toFixed(4); return s4.endsWith('0') ? s4.slice(0, -1) : s4; };
 const fmt = (mm) => inches(mm).toFixed(3);
 
 /** "1/2" for 0.5 in, when a size is a whole number of sixteenths; else "0.531". */
@@ -42,50 +45,45 @@ export function fraction(mm) {
   return whole ? `${whole} ${n}/${d}` : `${n}/${d}`;
 }
 
-const tapped = (tapping) => tapping === 'Yes';
-
-/** What a tap-drill-size hole is for: "Tap 1/4-20" when the Part needs tapping, else only its size. */
-function holeNote(tap, tapping, { bothEnds = false } = {}) {
-  if (!tap) return '';
-  if (!tapped(tapping)) return `${tap} tap drill size`;
-  return bothEnds ? `Tap ${tap} both ends` : `Tap ${tap}`;
+/** A tapped hole's callout: "Tap 1/4-20 through", "Tap #10-32 x 0.500 deep". */
+function holeNote(h, { bothEnds = false } = {}) {
+  if (!h?.tap) return '';
+  const depth = h.tapDepth ? ` x ${fmt(h.tapDepth)} deep` : ' through';
+  return `Tap ${h.tap}${bothEnds && h.tapDepth ? ' both ends' : ''}${depth}`;
 }
 
 /**
- * What the drawing says about tapping, from the holes and the Part's Needs
- * Tapping?. The model holds a tapped hole at its tap drill size, so the size
- * says a hole could be tapped; the Part says whether it is. When they
- * disagree, the drawing says so, so the shop asks before cutting.
+ * What the drawing says about tapping. Which holes are tapped comes from
+ * OnShape's Hole feature, never a hole's size (0.201 in is a 1/4-20 tap
+ * drill and a #10 clearance hole). The cut sets Needs Tapping? to Yes when
+ * the Hole feature has a tapped hole, so the two can only disagree when
+ * the Part says Yes and the model has none: then the drawing says so.
  *
  * @param {object} f        From `plateFeatures` or `axleFeatures`
- * @param {string} [tapping]  "Yes" or "No"
+ * @param {string} [tapping]  The Part's Needs Tapping?: "Yes" or "No"
  * @returns {{ text: string, warn?: boolean }[]}
  */
 export function tapNotes(f, tapping) {
-  const found = f.kind === 'plate'
-    ? f.groups.filter((g) => g.tap).map((g) => ({ what: `${g.count} ${g.letter} hole${g.count === 1 ? '' : 's'}`, tap: g.tap, d: g.d, count: g.count }))
+  const found = f.kind !== 'axle'
+    ? f.groups.filter((g) => g.tap).map((g) => ({ what: `${g.count} ${g.letter} hole${g.count === 1 ? '' : 's'}`, h: g }))
     : [
-      ...f.bores.filter((b) => b.tap).map((b) => ({ what: b.end === 'through' ? 'the bore' : `the ${b.end} end bore`, tap: b.tap, d: b.d, through: b.end === 'through', count: 1 })),
-      ...f.crossHoles.filter((h) => h.tap).map((h) => ({ what: `the cross hole at ${fmt(h.at)}`, tap: h.tap, d: h.d, count: 1 })),
+      ...f.bores.filter((b) => b.tap).map((b) => ({ what: b.end === 'through' ? 'the bore' : `the ${b.end} end bore`, h: b, bothEnds: b.end === 'through' })),
+      ...f.crossHoles.filter((h) => h.tap).map((h) => ({ what: `the cross hole at ${fmt(h.at)}`, h })),
     ];
-  const holes = found.reduce((n, h) => n + h.count, 0);
-  if (tapped(tapping)) {
-    if (!found.length) {
-      return [{ text: 'Needs Tapping? is Yes, but no hole is a tap drill size: ask the designer which holes to tap.', warn: true }];
-    }
-    const lines = found.map((h) => ({ text: `Tap ${h.what} ${h.tap} (drilled Ø${fmt(h.d)}).` }));
-    if (f.kind === 'plate') lines.push({ text: 'Tapped holes go through the plate unless the designer says otherwise.' });
-    if (found.some((h) => h.through)) {
-      lines.push({ text: 'The bore is tapped at both ends. How deep is not in the model: ask the designer.' });
-    }
-    return lines;
+  if (found.length) {
+    return found.map(({ what, h, bothEnds }) => ({
+      text: `${holeNote(h, { bothEnds }).replace(/^Tap /, `Tap ${what} `)} (drilled Ø${fmt(h.d)}).`,
+    }));
   }
-  if (!found.length) return [];
-  const threads = [...new Set(found.map((h) => h.tap))].join(', ');
-  return [{
-    text: `${holes} hole${holes === 1 ? ' is' : 's are'} tap drill size (${threads}), but Needs Tapping? is No. Ask the designer before cutting.`,
-    warn: true,
-  }];
+  if (tapping === 'Yes') {
+    return [{
+      text: f.holeData
+        ? 'Needs Tapping? is Yes, but no hole in the model is a tapped Hole: ask the designer which holes to tap.'
+        : 'Needs Tapping? is Yes, but the model could not be read for its tapped holes: ask the designer which to tap.',
+      warn: true,
+    }];
+  }
+  return [];
 }
 
 /** Set the font and size, smaller until `text` fits `width`; cut short with "..." if it still doesn't. */
@@ -154,8 +152,9 @@ function dimV(doc, y1, y2, x, fromX, text) {
 }
 
 /** Draw `partGeometry.faceLayout` entities (mm, y up) with a placement. */
-function drawEntities(doc, entities, px, py, k) {
-  doc.save().lineWidth(PART).strokeColor(INK);
+function drawEntities(doc, entities, px, py, k, { width = PART, color = INK, dash = false } = {}) {
+  doc.save().lineWidth(width).strokeColor(color);
+  if (dash) doc.dash(3, { space: 2 });
   for (const [kind, ...args] of entities) {
     if (kind === 'LINE') {
       const [a, b] = args;
@@ -236,9 +235,12 @@ function table(doc, { x, y, columns, rows, bottom, title }) {
     cx = x;
     row.forEach((cell, i) => {
       const c = columns[i];
-      doc.text(String(cell ?? ''), cx + 2, cy + 1.5, { width: c.w - 4, align: c.align ?? 'left', lineBreak: false });
+      const text = typeof cell === 'object' && cell ? cell.text : String(cell ?? '');
+      doc.fillColor(cell?.color ?? INK)
+        .text(text, cx + 2, cy + 1.5, { width: c.w - 4, align: c.align ?? 'left', lineBreak: false });
       cx += c.w;
     });
+    doc.fillColor(INK);
     cy += rowH;
     fitted += 1;
   }
@@ -254,12 +256,18 @@ const HOLE_COLUMNS = [
   { label: 'SIZE', w: 46, align: 'right' },
 ];
 
+/** What a plate or face drawing is of, for its title block. */
+function sheetName(f, meta) {
+  const material = meta.material ? `, ${meta.material}` : '';
+  if (f.kind === 'plate') {
+    return `Plate, ${fraction(f.thickness)} in thick${material}${f.rear ? ', rear side' : ''}. ${fmt(f.width)} x ${fmt(f.height)}.`;
+  }
+  const stock = f.stock?.length ? ` Stock ${f.stock.map(fmt).join(' x ')}${material}.` : '';
+  return `${f.side ?? 'Face'} side, ${fmt(f.width)} x ${fmt(f.height)}.${stock}`;
+}
+
 function drawPlate(doc, f, meta) {
-  frame(doc, {
-    ...meta,
-    description: `Plate, ${fraction(f.thickness)} in thick`
-      + `${meta.material ? `, ${meta.material}` : ''}. ${fmt(f.width)} x ${fmt(f.height)}.`,
-  });
+  frame(doc, { ...meta, description: sheetName(f, meta) });
 
   // The hole chart down the right; the plate to scale in what's left.
   const chartX = PAGE.w - M - 8 - HOLE_COLUMNS.reduce((s, c) => s + c.w, 0) - 60;
@@ -270,12 +278,17 @@ function drawPlate(doc, f, meta) {
   const px = (x) => ox + x * k;
   const py = (y) => oy - y * k;
 
+  // Pocket floors, thin and shaded by depth, under the outline.
+  const pockets = f.pockets ?? [];
+  pockets.forEach((p, i) => {
+    drawEntities(doc, p.entities, px, py, k, { width: THIN, color: POCKET_INK[i % POCKET_INK.length], dash: p.back });
+  });
   drawEntities(doc, f.entities, px, py, k);
   doc.font('Helvetica').fontSize(Math.max(4.5, Math.min(7, k * 2)));
   for (const h of f.holes) {
     const r = (h.d / 2) * k;
     centreMark(doc, px(h.x), py(h.y), Math.max(2, r * 0.6));
-    if (h.tap && tapped(meta.tapping)) threadMark(doc, px(h.x), py(h.y), (threadMajor(h.tap) / 2) * k);
+    if (h.tap && h.major) threadMark(doc, px(h.x), py(h.y), (h.major / 2) * k);
     doc.fillColor(DIM).text(h.tag, px(h.x) + r * 0.75 + 0.5, py(h.y) - r * 0.75 - 6, { lineBreak: false });
   }
   // The origin every hole is measured from.
@@ -286,32 +299,54 @@ function drawPlate(doc, f, meta) {
   dimV(doc, py(0), py(f.height), px(0) - 26, px(0) - 12, fmt(f.height));
 
   const groups = f.groups.map((g) => [
-    g.letter, `Ø${fmt(g.d)}`, `x${g.count}`, holeNote(g.tap, meta.tapping),
+    g.letter, `Ø${fmt(g.d)}`, `x${g.count}`, holeNote(g),
   ]);
   const sizeColumns = [
     { label: 'HOLE', w: 34 }, { label: 'SIZE', w: 50, align: 'right' },
     { label: 'QTY', w: 30, align: 'right' }, { label: 'NOTE', w: 118 },
   ];
   const chartTop = M + 14;
-  table(doc, { x: chartX, y: chartTop, columns: sizeColumns, rows: groups, bottom: TITLE.y - 10, title: 'HOLE SIZES' });
-  const locTop = chartTop + 24 + groups.length * 9 + 10;
+  let locTop = chartTop;
+  if (groups.length) {
+    table(doc, { x: chartX, y: chartTop, columns: sizeColumns, rows: groups, bottom: TITLE.y - 10, title: 'HOLE SIZES' });
+    locTop += 24 + groups.length * 9 + 10;
+  }
+  if (pockets.length) {
+    const rows = pockets.map((p, i) => [
+      { text: `${depthLabel(p.depth)} deep`, color: POCKET_INK[i % POCKET_INK.length] },
+      p.back ? 'from the back' : 'from this side',
+      `_${p.file ?? `POCKET_${depthLabel(p.depth)}.dxf`}`,
+    ]);
+    table(doc, {
+      x: chartX, y: locTop, title: 'POCKETS (OUTLINES IN COLOUR)',
+      columns: [{ label: 'DEPTH', w: 64 }, { label: 'CUT', w: 64 }, { label: 'DXF', w: 104 }],
+      rows, bottom: TITLE.y - 10,
+    });
+    locTop += 24 + pockets.length * 9 + 10;
+  }
   const rows = f.holes.map((h) => [h.tag, fmt(h.x), fmt(h.y), `Ø${fmt(h.d)}`]);
-  let done = table(doc, {
+  let done = rows.length ? table(doc, {
     x: chartX, y: locTop, columns: HOLE_COLUMNS, rows, bottom: TITLE.y - 10, title: 'HOLE CENTRES FROM 0,0',
-  });
+  }) : 0;
 
   const lines = [
-    'Hole centres are measured from 0,0, the lower left of the part (the DXF\'s origin).',
+    f.kind === 'face' && f.plain
+      ? 'Nothing to cut on this side (no DXF): it shows the size of the stock.'
+      : null,
+    f.kind === 'face' ? `Seen from the ${String(f.side ?? 'face').toLowerCase()} side of the part.` : null,
+    f.holes.length ? 'Hole centres are measured from 0,0, the lower left of the part (the DXF\'s origin).' : null,
+    f.rear ? 'Seen from the rear: what is cut from the back. Its DXFs (_REAR, _REAR_POCKET_…) are seen from here too.' : null,
+    pockets.length && !f.rear ? 'Seen from the side the pockets are cut from. Pocket depths are from that face; each depth\'s outline is its own DXF.' : null,
     f.cutouts ? `${f.cutouts} cutout${f.cutouts === 1 ? '' : 's'} other than round holes ${f.cutouts === 1 ? 'is' : 'are'} not dimensioned: cut from the DXF.` : null,
     ...tapNotes(f, meta.tapping),
-    done < rows.length ? `The hole chart continues on the next page (${rows.length} holes).` : null,
+    done < rows.length ? `The hole chart continues below (${rows.length} holes).` : null,
   ].filter(Boolean);
   notes(doc, lines, PAGE.h - M - 8);
 
   // More holes than fit: carry on, three columns a page.
   while (done < rows.length) {
     doc.addPage();
-    frame(doc, { ...meta, description: `Plate, ${fraction(f.thickness)} in thick. Hole chart, continued.` });
+    frame(doc, { ...meta, description: `${sheetName(f, meta)} Hole chart, continued.` });
     for (let col = 0; col < 3 && done < rows.length; col += 1) {
       done += table(doc, {
         x: M + 16 + col * 190, y: M + 14, columns: HOLE_COLUMNS, rows: rows.slice(done),
@@ -438,10 +473,10 @@ function drawAxle(doc, f, meta) {
     doc.fillColor(INK).font('Helvetica-Bold').fontSize(7.5).text('END VIEW (LEFT END, ENLARGED)', box.x, side.y - 14, { lineBreak: false });
     drawEntities(doc, ev.entities, (x) => ex + x * k2, (y) => ey - y * k2, k2);
     // A tapped bore shows its thread.
-    const bore = f.bores.find((b) => b.tap && b.end !== 'right');
-    if (bore && tapped(meta.tapping)) {
+    const bore = f.bores.find((b) => b.tap && b.major && b.end !== 'right');
+    if (bore) {
       for (const h of ev.holes.filter((e) => Math.abs(e.d - bore.d) < 0.05)) {
-        threadMark(doc, ex + h.x * k2, ey - h.y * k2, (threadMajor(bore.tap) / 2) * k2);
+        threadMark(doc, ex + h.x * k2, ey - h.y * k2, (bore.major / 2) * k2);
       }
     }
     const end = f.sections[0];
@@ -459,9 +494,9 @@ function drawAxle(doc, f, meta) {
   for (const b of f.bores) {
     const where = { through: 'Through bore', left: 'Bore, left end', right: 'Bore, right end' }[b.end];
     rows.push([where, `Ø${fmt(b.d)}${b.end === 'through' ? ' through' : ` x ${fmt(b.depth)} deep`}`,
-      holeNote(b.tap, meta.tapping, { bothEnds: b.end === 'through' })]);
+      holeNote(b, { bothEnds: b.end === 'through' })]);
   }
-  for (const h of f.crossHoles) rows.push([`Cross hole at ${fmt(h.at)}`, `Ø${fmt(h.d)} through`, holeNote(h.tap, meta.tapping)]);
+  for (const h of f.crossHoles) rows.push([`Cross hole at ${fmt(h.at)}`, `Ø${fmt(h.d)} through`, holeNote(h)]);
   table(doc, {
     x: M + 40, y: ordinateY + 70, title: 'FEATURES (POSITIONS FROM THE LEFT END)',
     columns: [{ label: 'WHAT', w: 130 }, { label: 'SIZE', w: 290 }, { label: 'NOTE', w: 110 }],
@@ -478,17 +513,30 @@ function drawAxle(doc, f, meta) {
 // ---------------------------------------------------------------- the PDF
 
 /**
- * @param {object} features  From `plateFeatures` or `axleFeatures`
+ * One drawing as a PDF (a long hole chart runs onto more pages).
+ *
+ * @param {object} features  From `plateFeatures`, `faceFeatures` or `axleFeatures`
  * @param {object} meta
  * @param {string} meta.partNumber
  * @param {string} [meta.material]
- * @param {string} [meta.tapping]  The Part's Needs Tapping? ("Yes" says "Tap" on matching holes)
+ * @param {string} [meta.tapping]  The Part's Needs Tapping? (Yes with no tapped Hole in the model is flagged)
  * @param {Date}   [meta.date]
  * @returns {Promise<Buffer>}
  */
-export function drawingPdf(features, { partNumber, material, tapping, date = new Date() }) {
+export function drawingPdf(features, meta) {
+  return drawingsPdf([features], meta);
+}
+
+/**
+ * Every drawing of a part in one PDF, one after the other.
+ *
+ * @param {object[]} list  From `plateFeatures`, `faceFeatures` or `axleFeatures`
+ * @param {object} meta    As `drawingPdf`
+ * @returns {Promise<Buffer>}
+ */
+export function drawingsPdf(list, { partNumber, material, tapping, date = new Date() }) {
   const doc = new PDFDocument({
-    size: 'LETTER', layout: 'landscape', margin: 0, info: { Title: `${partNumber} drawing`, Creator: 'ValorBOM' },
+    size: 'LETTER', layout: 'landscape', margin: 0, info: { Title: `${partNumber} drawings`, Creator: 'ValorBOM' },
   });
   const chunks = [];
   doc.on('data', (c) => chunks.push(c));
@@ -497,8 +545,11 @@ export function drawingPdf(features, { partNumber, material, tapping, date = new
     doc.on('error', reject);
   });
   const meta = { partNumber, material, tapping, made: date.toISOString().slice(0, 10) };
-  if (features.kind === 'plate') drawPlate(doc, features, meta);
-  else drawAxle(doc, features, meta);
+  list.forEach((features, i) => {
+    if (i > 0) doc.addPage();
+    if (features.kind === 'axle') drawAxle(doc, features, meta);
+    else drawPlate(doc, features, meta);
+  });
   doc.end();
   return done;
 }

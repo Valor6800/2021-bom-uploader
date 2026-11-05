@@ -46,6 +46,7 @@ export const ThicknessEnum = Object.freeze({
   T_0125: '0.125',
   T_01875: '0.1875',
   T_0250: '0.250',
+  T_0375: '0.375',
 });
 
 /** Mirrors PRIORITIES in the server's bomConstants.js, highest first. */
@@ -424,6 +425,22 @@ export function exportSTL(params) {
 // ---------------------------------------------------------------------------
 // Assembly guide and vendor parts (read-only)
 // ---------------------------------------------------------------------------
+
+/**
+ * A part as it is in OnShape now, drawn by the server from its shape (no
+ * OnShape picture call). The link names the Part Studio version the BOM
+ * saw, so the browser keeps it until the part changes. Null without a location.
+ */
+export function cadPictureUrl(origin, color) {
+  if (!origin?.documentId || !origin?.partId) return null;
+  const q = new URLSearchParams({
+    d: origin.documentId, wvm: origin.wvmType, wvmid: origin.wvmId, e: origin.elementId, p: origin.partId,
+  });
+  if (origin.configuration) q.set('c', origin.configuration);
+  if (origin.microversionId) q.set('mv', origin.microversionId);
+  if (Array.isArray(color) && color.length === 3) q.set('rgb', color.map((v) => Number(v).toString(16).padStart(2, '0')).join(''));
+  return `/api/pictures/cad?${q}`;
+}
 
 /** A Part's drawing (plates and axles), as a picture. */
 export function partDrawingUrl(partKey) {

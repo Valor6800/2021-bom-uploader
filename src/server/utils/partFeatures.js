@@ -14,12 +14,13 @@
  * Lengths here are millimetres; the drawing shows inches.
  */
 
+import { tappedByEntity } from './holeFeatures.js';
+import { isPlain } from './partViews.js';
 import {
-  add, analyzeBody, bodyPoints, dot, edgePoints, faceLayout, length, scale, sub, unit,
+  add, analyzeBody, bodyPoints, depthName, dot, edgePoints, faceLayout, length, plateViews, scale, sub, unit,
 } from './partGeometry.js';
 
 const METRES_TO_MM = 1000;
-const MM_PER_INCH = 25.4;
 
 /** An axle is at least this many times longer than it is across. */
 const AXLE_ASPECT = 2;
@@ -37,90 +38,114 @@ const SAME_AT = 1e-5;
 /** Sizes closer than this (metres) are the same size. */
 const SAME_SIZE = 2e-5;
 
-/**
- * Tap drills for the threads the team uses, so a hole of that size can say
- * what it is likely for. Inches.
- */
-const TAP_DRILLS = [
-  { thread: '#4-40', drill: 0.089, major: 0.112 },
-  { thread: '#6-32', drill: 0.1065, major: 0.138 },
-  { thread: '#8-32', drill: 0.136, major: 0.164 },
-  { thread: '#10-24', drill: 0.1495, major: 0.19 },
-  { thread: '#10-32', drill: 0.159, major: 0.19 },
-  { thread: '1/4-20', drill: 0.201, major: 0.25 },
-  { thread: '5/16-18', drill: 0.257, major: 0.3125 },
-  { thread: '3/8-16', drill: 0.3125, major: 0.375 },
-];
-const TAP_TOLERANCE_IN = 0.002;
-
-/**
- * A thread's outside (major) diameter, for drawing it.
- * @param {string} thread  e.g. "1/4-20"
- * @returns {number|null}  Millimetres
- */
-export function threadMajor(thread) {
-  const hit = TAP_DRILLS.find((t) => t.thread === thread);
-  return hit ? hit.major * MM_PER_INCH : null;
-}
-
-/**
- * The thread a hole of this size is the tap drill for, if any.
- * @param {number} diameterMm
- * @returns {string|null}  e.g. "1/4-20"
- */
-export function tapFor(diameterMm) {
-  const inches = diameterMm / MM_PER_INCH;
-  const hit = TAP_DRILLS.find((t) => Math.abs(t.drill - inches) <= TAP_TOLERANCE_IN);
-  return hit?.thread ?? null;
+/** A tapped hole as the drawing shows it: its thread, its outside diameter and depth (mm; null: through). */
+function tapInfo(hole) {
+  if (!hole) return { tap: null, major: null, tapDepth: null };
+  return {
+    tap: hole.tapSize ?? 'tapped',
+    major: hole.major ? hole.major * METRES_TO_MM : null,
+    tapDepth: hole.through || !hole.depth ? null : hole.depth * METRES_TO_MM,
+  };
 }
 
 // ---------------------------------------------------------------- plates
 
 /**
- * A plate's outline and holes, laid out as its DXF is.
+ * A plate's outline, holes and pockets, laid out as its DXFs are (seen from
+ * the side its pockets are cut from, with the profile's 0,0).
  *
- * Holes are grouped by size, largest first, and tagged A, B, C… within which
- * each hole is numbered from the lower left (A1, A2…).
+ * Holes are the round through holes, grouped by size and thread (a tapped
+ * 0.201 is not a #10 clearance 0.201), largest first, and tagged A, B, C…
+ * within which each is numbered from the lower left (A1, A2…). Which are
+ * tapped comes from OnShape's Hole feature (`holes`, from `holeFeatures`);
+ * without it none is. Pockets are the partial-depth floors, one per depth.
  *
  * @param {object} body
  * @param {object} analysis  From `analyzeBody`
  * @param {Map<string, number[][]>} [curves]
+ * @param {object[]|null} [holes]  This part's hole faces from `holesByPart`; null: not read
  * @returns {{
  *   kind: 'plate', width: number, height: number, thickness: number,
- *   entities: Array, cutouts: number,
- *   holes: { tag: string, x: number, y: number, d: number, tap: string|null }[],
- *   groups: { letter: string, d: number, count: number, tap: string|null }[],
+ *   entities: Array, cutouts: number, holeData: boolean,
+ *   holes: { tag: string, x: number, y: number, d: number, tap: string|null, major: number|null, tapDepth: number|null }[],
+ *   groups: { letter: string, d: number, count: number, tap: string|null, major: number|null, tapDepth: number|null }[],
+ *   pockets: { depth: number, back: boolean, entities: Array }[],
  * }}
  */
-export function plateFeatures(body, analysis, curves) {
-  const layout = faceLayout(body, analysis, curves);
-  const sizes = [];
-  for (const hole of layout.holes) {
-    if (!sizes.some((d) => Math.abs(d - hole.d) < SAME_SIZE * METRES_TO_MM)) sizes.push(hole.d);
-  }
-  sizes.sort((a, b) => b - a);
-  const letter = (i) => (i < 26 ? String.fromCharCode(65 + i) : `Z${i - 25}`);
-  const groupOf = (d) => sizes.findIndex((s) => Math.abs(s - d) < SAME_SIZE * METRES_TO_MM);
+export function plateFeatures(body, analysis, curves, holeFaces = null, { rear = false } = {}) {
+  const { profile: main, pockets } = plateViews(body, analysis);
+  // The rear drawing is the same plate seen from the back.
+  const profile = rear ? { ...main, outward: main.outward.map((v) => -v) } : main;
+  const face = faceFeatures(body, profile, curves, holeFaces, analysis);
+  return {
+    ...face,
+    kind: 'plate',
+    rear,
+    thickness: analysis.thickness * METRES_TO_MM,
+    // Pockets cut from the other side are drawn where they are, seen through the plate.
+    pockets: pockets.map((p) => ({
+      depth: p.depth * METRES_TO_MM,
+      back: rear ? !p.back : p.back,
+      file: `${p.back ? 'REAR_' : ''}POCKET_${depthName(p.depth)}.dxf`,
+      entities: faceLayout(body, { ...p.view, outward: profile.outward }, curves, { origin: face.origin }).entities,
+    })),
+  };
+}
 
-  const ordered = [...layout.holes].sort((a, b) => groupOf(a.d) - groupOf(b.d)
-    || Math.round(a.y * 100) - Math.round(b.y * 100) || a.x - b.x);
+/**
+ * One face of a part, as a drawing shows it: its outline, its round holes
+ * tagged and grouped by size and thread (as `plateFeatures`), and the size
+ * of the part's box, for the stock to cut it from.
+ *
+ * @param {object} body
+ * @param {object} view       As `faceLayout` takes it (a side from `allSides`, or a plate's profile)
+ * @param {Map<string, number[][]>} [curves]
+ * @param {object[]|null} [holeFaces]  This part's hole faces from `holesByPart`; null: not read
+ * @param {object} [analysis]  From `analyzeBody`, for the stock size
+ * @returns {object}  `kind: 'face'`, with `side`, `plain` and `stock` (mm, largest first)
+ */
+export function faceFeatures(body, view, curves, holeFaces = null, analysis = analyzeBody(body)) {
+  const layout = faceLayout(body, view, curves);
+  const tapped = tappedByEntity(body, holeFaces);
+  const infoOf = (h) => tapInfo((h.edges ?? []).map((id) => tapped.get(id)).find(Boolean));
+
+  // One group per size and thread: largest first, a tapped one before a plain one.
+  const kinds = [];
+  const sameKind = (k, d, info) => Math.abs(k.d - d) < SAME_SIZE * METRES_TO_MM && k.tap === info.tap
+    && (k.tapDepth ?? 0) === (info.tapDepth ?? 0);
+  const found = layout.holes.map((h) => ({ h, info: infoOf(h) }));
+  for (const { h, info } of found) {
+    if (!kinds.some((k) => sameKind(k, h.d, info))) kinds.push({ d: h.d, ...info });
+  }
+  kinds.sort((a, b) => b.d - a.d || Number(!a.tap) - Number(!b.tap));
+  const letter = (i) => (i < 26 ? String.fromCharCode(65 + i) : `Z${i - 25}`);
+  const groupOf = ({ h, info }) => kinds.findIndex((k) => sameKind(k, h.d, info));
+
+  const ordered = [...found].sort((a, b) => groupOf(a) - groupOf(b)
+    || Math.round(a.h.y * 100) - Math.round(b.h.y * 100) || a.h.x - b.h.x);
   const counts = new Map();
-  const holes = ordered.map((h) => {
-    const g = groupOf(h.d);
+  const holes = ordered.map((entry) => {
+    const g = groupOf(entry);
     const n = (counts.get(g) ?? 0) + 1;
     counts.set(g, n);
-    return { tag: `${letter(g)}${n}`, x: h.x, y: h.y, d: sizes[g], tap: tapFor(sizes[g]) };
+    const k = kinds[g];
+    return { tag: `${letter(g)}${n}`, x: entry.h.x, y: entry.h.y, d: k.d, tap: k.tap, major: k.major, tapDepth: k.tapDepth };
   });
 
   return {
-    kind: 'plate',
+    kind: 'face',
+    side: view.name ?? null,
+    plain: isPlain(layout),
+    stock: (analysis?.dimensions ?? []).map((d) => d * METRES_TO_MM),
     width: layout.width,
     height: layout.height,
-    thickness: analysis.thickness * METRES_TO_MM,
+    origin: layout.origin,
     entities: layout.entities,
     cutouts: layout.cutouts,
+    holeData: holeFaces !== null,
     holes,
-    groups: sizes.map((d, i) => ({ letter: letter(i), d, count: counts.get(i) ?? 0, tap: tapFor(d) })),
+    groups: kinds.map((k, i) => ({ letter: letter(i), ...k, count: counts.get(i) ?? 0 })),
+    pockets: [],
   };
 }
 
@@ -150,8 +175,12 @@ function mergeSpans(items) {
   for (const item of [...items].sort((a, b) => a.from - b.from)) {
     const last = out.find((o) => Math.abs(o.d - item.d) < SAME_SIZE && item.from <= o.to + SAME_AT
       && (o.axis === undefined || o.axis === item.axis));
-    if (last) last.to = Math.max(last.to, item.to);
-    else out.push({ ...item });
+    if (last) {
+      last.to = Math.max(last.to, item.to);
+      last.faces = [...(last.faces ?? []), ...(item.faces ?? [])];
+    } else {
+      out.push({ ...item });
+    }
   }
   return out;
 }
@@ -234,8 +263,9 @@ function axisOf(body, analysis) {
  *
  * @param {object} body
  * @param {object} [analysis]  From `analyzeBody`
+ * @param {object[]|null} [holeFaces]  This part's hole faces from `holesByPart`; null: not read
  * @returns {null|{
- *   kind: 'axle', length: number,
+ *   kind: 'axle', length: number, holeData: boolean,
  *   stock: { shape: string, acrossFlats: number|null, diameter: number|null },
  *   sections: { from: number, to: number, shape: string, acrossFlats: number|null, diameter: number|null }[],
  *   bores: { end: 'left'|'right'|'through', d: number, depth: number, tap: string|null }[],
@@ -243,7 +273,7 @@ function axisOf(body, analysis) {
  *   endView: object|null,
  * }}  Millimetres, positions from the left end
  */
-export function axleFeatures(body, analysis = analyzeBody(body)) {
+export function axleFeatures(body, analysis = analyzeBody(body), holeFaces = null) {
   const axis = axisOf(body, analysis);
   if (!axis) return null;
   const { A, centre, start, L, sideways } = axis;
@@ -285,9 +315,12 @@ export function axleFeatures(body, analysis = analyzeBody(body)) {
       if (c > ALIGNED && offAxis(surf.origin) < SAME_SIZE) {
         // OnShape's cylinder points away from its axis: the face turned the
         // other way is the inside of a hole.
-        (face.orientation === false ? bores : rounds).push({ ...span(), d });
+        (face.orientation === false ? bores : rounds).push({ ...span(), d, faces: [face.id] });
       } else if (c < SQUARE && face.orientation === false) {
-        cross.push({ at: along(surf.origin), d, axis: axis.map((v) => Math.round(Math.abs(v) * 1e3)).join(), from: along(surf.origin), to: along(surf.origin) });
+        cross.push({
+          at: along(surf.origin), d, axis: axis.map((v) => Math.round(Math.abs(v) * 1e3)).join(),
+          from: along(surf.origin), to: along(surf.origin), faces: [face.id],
+        });
       } else {
         unexplained += area;
       }
@@ -325,12 +358,16 @@ export function axleFeatures(body, analysis = analyzeBody(body)) {
     let end = 'left';
     if (left && right) end = 'through';
     else if (right) end = 'right';
-    return { end, d: b.d, depth: b.to - b.from };
+    return { end, d: b.d, depth: b.to - b.from, faces: b.faces };
   });
   const crossList = [];
   for (const h of cross) {
-    if (!crossList.some((c) => Math.abs(c.at - h.at) < SAME_AT && Math.abs(c.d - h.d) < SAME_SIZE)) crossList.push(h);
+    const same = crossList.find((c) => Math.abs(c.at - h.at) < SAME_AT && Math.abs(c.d - h.d) < SAME_SIZE);
+    if (same) same.faces.push(...h.faces);
+    else crossList.push({ ...h, faces: [...h.faces] });
   }
+  const tapped = tappedByEntity(body, holeFaces);
+  const tapOf = (faces) => tapInfo(faces.map((id) => tapped.get(id)).find(Boolean));
 
   // Seen from the left end: the end face, flat, with the axle's flats square to the page.
   const leftEnd = ends.filter((e) => e.at < SAME_AT * 10)
@@ -352,9 +389,10 @@ export function axleFeatures(body, analysis = analyzeBody(body)) {
     length: mmOf(L),
     stock: (({ shape, acrossFlats, diameter }) => ({ shape, acrossFlats, diameter }))(sectionMm(stock)),
     sections: sections.map(sectionMm),
-    bores: boreList.map((b) => ({ ...b, d: mmOf(b.d), depth: mmOf(b.depth), tap: tapFor(mmOf(b.d)) })),
+    holeData: holeFaces !== null,
+    bores: boreList.map(({ faces, ...b }) => ({ ...b, d: mmOf(b.d), depth: mmOf(b.depth), ...tapOf(faces) })),
     crossHoles: crossList.sort((a, b) => a.at - b.at)
-      .map((h) => ({ at: mmOf(h.at), d: mmOf(h.d), tap: tapFor(mmOf(h.d)) })),
+      .map((h) => ({ at: mmOf(h.at), d: mmOf(h.d), ...tapOf(h.faces) })),
     endView,
   };
 }
