@@ -8,11 +8,17 @@
  */
 
 /** The BOM fields CAD sets and a row can differ on. Priority is separate (tracker-only). */
-export const PART_FIELDS = ['quantity', 'material', 'machinery', 'powdercoat', 'tapping', 'thickness'];
+export const PART_FIELDS = ['quantity', 'material', 'machinery', 'powdercoat'];
+
+/**
+ * Fields the tool sets when a Build is cut, from the part's shape: shown
+ * (the Assembly page), never edited or saved by the Designer.
+ */
+export const CUT_FIELDS = ['tapping', 'thickness'];
 
 /**
  * The fields CAD owns. Quantity and Material always follow CAD. The rest
- * (machinery, powdercoat, tapping, thickness, priority) are set when a Part is made
+ * (machinery, powdercoat, priority) are set when a Part is made
  * and are the student's from then on: CAD never overwrites them, so a saved
  * choice stays saved.
  */
@@ -29,13 +35,11 @@ const FIELD_LABELS = {
   material: 'Material',
   machinery: 'Machinery',
   powdercoat: 'Powdercoat',
-  tapping: 'Tapping',
-  thickness: 'Thickness',
 };
 
 function pickValues(source) {
   const out = {};
-  for (const f of PART_FIELDS) {
+  for (const f of [...PART_FIELDS, ...CUT_FIELDS]) {
     if (source && source[f] !== undefined) out[f] = source[f];
   }
   // Priority comes from the tracker, not CAD: a stored Part has one (or null),
@@ -391,6 +395,8 @@ export function deriveDesignerRows({
       revisionNote,
       // Spares share their original's picture.
       imageKey: originals.get(part.fullPartNumber)?.key ?? part.key,
+      // Where it is in OnShape now, and its colour, for its picture (when CAD lists it).
+      cadPart: cad?.origin ? { origin: cad.origin, color: cad.color ?? null } : null,
       group: inBuild ? 'inBuild' : 'other',
       buildKeys: [...partBuilds],
       otherBuildKeys,
@@ -430,6 +436,7 @@ export function deriveDesignerRows({
       // The tool numbers a part CAD has no number for: the number shown is
       // the next free one, and Save keeps it unless it was taken meanwhile.
       imageKey: null,
+      cadPart: item.origin ? { origin: item.origin, color: item.color ?? null } : null,
       cadRef: item.cadRef ?? null,
       proposedNumber: item.proposedNumber === true,
       revises: item.revises ?? null,

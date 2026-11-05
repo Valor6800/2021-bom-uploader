@@ -30,7 +30,6 @@ const JIRA_PROJECT = () => process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?
 const VERSION_LINK_RE = /\/documents\/([a-f0-9]{24})\/v\/([a-f0-9]{24})\/e\/([a-f0-9]{24})/i;
 
 const DEFAULT_TOLERANCE = 1e-4;
-const BATCH = 8;
 
 /** The relative difference below which two shapes are the same (PART_DIFF_TOLERANCE). */
 export function diffTolerance() {
@@ -73,24 +72,45 @@ export class PartDiff {
     this.onshapeClient = onshapeClient;
     this.bomService = bomService;
     /** shapeKey -> shape. A cut version never changes; a workspace is keyed by its version id. */
-    this._shapes = new Map();
+    this._known = new Map();
   }
 
   /**
-   * `getPartShape`, remembered. Caches the in-flight promise (not the
-   * resolved shape), so two parts compared at once that share an origin
-   * never fire the request twice.
+   * The shapes of these parts, remembered: one call per Part Studio for all
+   * of its parts not yet known. In-flight promises are kept, so parts asked
+   * for at once never fire a request twice.
+   *
+   * @param {object[]} origins
+   * @returns {Map<object, Promise<object>>}  origin -> its shape
    */
-  _shape(origin) {
-    const cacheable = origin.wvmType === 'v' || !!origin.microversionId;
-    const key = cacheable ? shapeKey(origin) : null;
-    if (key && this._shapes.has(key)) return this._shapes.get(key);
-    const promise = this.onshapeClient.getPartShape(origin);
-    if (key) {
-      this._shapes.set(key, promise);
-      promise.catch(() => this._shapes.delete(key));
+  _shapes(origins) {
+    const out = new Map();
+    const pending = new Map();
+    for (const origin of origins) {
+      const cacheable = origin.wvmType === 'v' || !!origin.microversionId;
+      const key = shapeKey(origin);
+      if (cacheable && this._known.has(key)) {
+        out.set(origin, this._known.get(key));
+        continue;
+      }
+      const { partId, ...studio } = origin;
+      const studioKey = shapeKey({ ...studio, partId: '' });
+      if (!pending.has(studioKey)) pending.set(studioKey, { studio, parts: new Map() });
+      pending.get(studioKey).parts.set(partId, { origin, key, cacheable });
     }
-    return promise;
+    for (const { studio, parts } of pending.values()) {
+      const read = this.onshapeClient.getPartStudioShapes(studio, [...parts.keys()]);
+      for (const [partId, { origin, key, cacheable }] of parts) {
+        const promise = read.then((shapes) => {
+          if (!shapes.has(partId)) throw new Error(`OnShape returned no mass properties for ${partId}`);
+          return shapes.get(partId);
+        });
+        promise.catch(() => this._known.delete(key));
+        if (cacheable) this._known.set(key, promise);
+        out.set(origin, promise);
+      }
+    }
+    return out;
   }
 
   /**
@@ -156,25 +176,22 @@ export class PartDiff {
       }
     }
 
-    for (let i = 0; i < toCheck.length; i += BATCH) {
-      // eslint-disable-next-line no-await-in-loop
-      await Promise.all(toCheck.slice(i, i + BATCH).map(async ({ number, part, old }) => {
-        if (part.material !== old.material) {
-          changed.add(number);
-          return;
-        }
-        try {
-          const [now, then] = await Promise.all([
-            this._shape(part.origin),
-            this._shape(old.origin),
-          ]);
-          if (!sameShape(now, then)) changed.add(number);
-        } catch (err) {
-          console.warn('[diff]', number, 'could not be compared; counting it as changed:', err?.status, err?.message);
-          changed.add(number);
-        }
-      }));
-    }
+    // A changed material is a change without reading the shape.
+    const compare = toCheck.filter(({ number, part, old }) => {
+      if (part.material === old.material) return true;
+      changed.add(number);
+      return false;
+    });
+    const shapes = this._shapes(compare.flatMap(({ part, old }) => [part.origin, old.origin]));
+    await Promise.all(compare.map(async ({ number, part, old }) => {
+      try {
+        const [now, then] = await Promise.all([shapes.get(part.origin), shapes.get(old.origin)]);
+        if (!sameShape(now, then)) changed.add(number);
+      } catch (err) {
+        console.warn('[diff]', number, 'could not be compared; counting it as changed:', err?.status, err?.message);
+        changed.add(number);
+      }
+    }));
     return changed;
   }
 }

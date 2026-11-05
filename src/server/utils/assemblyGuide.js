@@ -73,7 +73,16 @@ function originOf(item) {
     elementId: s.elementId,
     ...(s.partId ? { partId: s.partId } : {}),
     configuration: cleanConfiguration(s.configuration),
+    // For a part drawn from its shape: the Part Studio version (to keep the read) and its colour.
+    microversionId: s.sourceElementMicroversionId ?? null,
+    color: colorOf(item.appearance),
   };
+}
+
+/** A BOM row's colour as [r, g, b], or null. */
+function colorOf(appearance) {
+  const c = appearance?.color;
+  return c && [c.red, c.green, c.blue].every(Number.isFinite) ? [c.red, c.green, c.blue] : null;
 }
 
 /**

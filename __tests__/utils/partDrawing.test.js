@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import { analyzeBody } from '../../src/server/utils/partGeometry.js';
-import { axleFeatures, plateFeatures, threadMajor } from '../../src/server/utils/partFeatures.js';
-import { drawingPdf, fraction, tapNotes } from '../../src/server/utils/partDrawing.js';
+import { axleFeatures, plateFeatures } from '../../src/server/utils/partFeatures.js';
+import { drawingPdf, drawingsPdf, fraction, tapNotes } from '../../src/server/utils/partDrawing.js';
+import { allSides, analyzeBody as analyze } from '../../src/server/utils/partGeometry.js';
+import { faceFeatures } from '../../src/server/utils/partFeatures.js';
+import { pngOfPdf } from '../../src/server/utils/drawingPng.js';
 
 const REAL = JSON.parse(fs.readFileSync(new URL('../fixtures/gearboxBodies.json', import.meta.url)));
 const pages = (pdf) => (pdf.toString('latin1').match(/\/Type \/Page\b/g) ?? []).length;
@@ -34,7 +37,11 @@ describe('drawingPdf', () => {
       entities: [['LINE', [0, 0], [210, 0]], ['LINE', [210, 0], [210, 110]], ['LINE', [210, 110], [0, 110]], ['LINE', [0, 110], [0, 0]],
         ...holes.map((h) => ['CIRCLE', [h.x, h.y], 2])],
     };
-    expect(pages(await drawingPdf(plate, { partNumber: 'VR27P-4102A' }))).toBe(2);
+    const pdf = await drawingPdf(plate, { partNumber: 'VR27P-4102A' });
+    expect(pages(pdf)).toBe(2);
+    // The picture holds every page, one under the other.
+    const png = await pngOfPdf(pdf, { scale: 1 });
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([792, 1224]);
   });
 
   it('draws an axle on one page', async () => {
@@ -45,49 +52,29 @@ describe('drawingPdf', () => {
 });
 
 describe('tapNotes', () => {
-  const plate = { kind: 'plate', groups: [
-    { letter: 'A', d: 28.575, count: 1, tap: null },
-    { letter: 'D', d: 0.159 * 25.4, count: 19, tap: '#10-32' },
-  ] };
-  const axle = (tap) => ({ kind: 'axle', bores: [{ end: 'through', d: 0.201 * 25.4, depth: 100, tap }], crossHoles: [] });
+  const plate = (groups, holeData = true) => ({ kind: 'plate', holeData, groups });
+  const tappedGroup = { letter: 'A', d: 0.201 * 25.4, count: 2, tap: '1/4-20', major: 6.35, tapDepth: null };
+  const plain = { letter: 'B', d: 0.201 * 25.4, count: 1, tap: null };
 
-  it('says which holes to tap, and how, when the Part needs tapping', () => {
-    expect(tapNotes(plate, 'Yes').map((n) => n.text)).toEqual([
-      'Tap 19 D holes #10-32 (drilled Ø0.159).',
-      'Tapped holes go through the plate unless the designer says otherwise.',
-    ]);
-    expect(tapNotes(plate, 'Yes').some((n) => n.warn)).toBe(false);
+  it('calls out the holes the Hole feature tapped, through or to a depth', () => {
+    expect(tapNotes(plate([tappedGroup, plain]), 'Yes')).toEqual([{ text: 'Tap 2 A holes 1/4-20 through (drilled Ø0.201).' }]);
+    expect(tapNotes(plate([{ ...tappedGroup, tapDepth: 12.7 }]), 'Yes')[0].text).toBe('Tap 2 A holes 1/4-20 x 0.500 deep (drilled Ø0.201).');
   });
 
-  it('warns when holes are tap drill size but the Part says No', () => {
-    expect(tapNotes(plate, 'No')).toEqual([{
-      text: '19 holes are tap drill size (#10-32), but Needs Tapping? is No. Ask the designer before cutting.', warn: true,
-    }]);
+  it('never guesses from a hole\'s size', () => {
+    expect(tapNotes(plate([plain]), 'No')).toEqual([]);
   });
 
-  it('warns when the Part says Yes but no hole could be tapped', () => {
-    const [note] = tapNotes({ ...plate, groups: [plate.groups[0]] }, 'Yes');
+  it('warns when the Part says Yes but the model has no tapped hole', () => {
+    const [note] = tapNotes(plate([plain]), 'Yes');
     expect(note).toEqual(expect.objectContaining({ warn: true }));
-    expect(note.text).toContain('no hole is a tap drill size');
+    expect(note.text).toContain('no hole in the model is a tapped Hole');
+    expect(tapNotes(plate([plain], false), 'Yes')[0].text).toContain('could not be read');
   });
 
-  it('says nothing when nothing is or could be tapped', () => {
-    expect(tapNotes({ ...plate, groups: [plate.groups[0]] }, 'No')).toEqual([]);
-    expect(tapNotes(axle(null), 'No')).toEqual([]);
-  });
-
-  it('taps an axle\'s through bore at both ends, and says its depth is not in the model', () => {
-    const texts = tapNotes(axle('1/4-20'), 'Yes').map((n) => n.text);
-    expect(texts[0]).toBe('Tap the bore 1/4-20 (drilled Ø0.201).');
-    expect(texts[1]).toContain('both ends');
-  });
-});
-
-describe('threadMajor', () => {
-  it('gives a thread\'s outside diameter', () => {
-    expect(threadMajor('1/4-20')).toBeCloseTo(6.35);
-    expect(threadMajor('#10-32')).toBeCloseTo(4.826);
-    expect(threadMajor('M6')).toBeNull();
+  it('taps an axle bore at both ends when it goes to a depth', () => {
+    const axle = { kind: 'axle', bores: [{ end: 'through', d: 5.1, depth: 100, tap: '1/4-20', tapDepth: 12.7 }], crossHoles: [] };
+    expect(tapNotes(axle, 'Yes')[0].text).toBe('Tap the bore 1/4-20 both ends x 0.500 deep (drilled Ø0.201).');
   });
 });
 
@@ -95,5 +82,17 @@ describe('the title block', () => {
   it('still draws a part number too long for it', async () => {
     const pdf = await drawingPdf(axleFeatures(REAL.PulleyAxle), { partNumber: 'VR27P-4106A-WITH-A-VERY-LONG-NUMBER-INDEED', tapping: 'Yes' });
     expect(pages(pdf)).toBe(1);
+  });
+});
+
+describe('drawingsPdf', () => {
+  it('puts every drawing of a part in one PDF, a face\'s with its side and stock', async () => {
+    const { body } = JSON.parse(fs.readFileSync(new URL('../fixtures/tappedPart.json', import.meta.url)));
+    const a = analyze(body);
+    const faces = allSides(body, a).slice(0, 3).map((side) => faceFeatures(body, side, undefined, null, a));
+    expect(faces.map((f) => [f.kind, f.side])).toEqual([['face', 'TOP'], ['face', 'BOTTOM'], ['face', 'RIGHT']]);
+    expect(faces[0].stock.map((d) => (d / 25.4).toFixed(3))).toEqual(['1.890', '1.176', '1.000']);
+    const pdf = await drawingsPdf([...faces, axleFeatures(REAL.PulleyAxle)], { partNumber: 'VR27P-4107A' });
+    expect(pages(pdf)).toBe(4);
   });
 });

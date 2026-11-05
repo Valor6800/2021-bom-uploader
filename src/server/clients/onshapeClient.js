@@ -96,6 +96,16 @@ const ISO_VIEW_MATRIX = (() => {
   return [right, up, back].flatMap((row) => [...row, 0]).join(',');
 })();
 
+/** A part's shape from OnShape's mass properties: each value's first entry (the rest are bounds). */
+function shapeOf(body) {
+  return {
+    volume: body.volume?.[0] ?? 0,
+    periphery: body.periphery?.[0] ?? 0,
+    mass: body.mass?.[0] ?? 0,
+    principalInertia: (body.principalInertia ?? []).slice(0, 3),
+  };
+}
+
 export class OnshapeClient {
   /**
    * @param {object} [options]
@@ -109,6 +119,8 @@ export class OnshapeClient {
     this.accessKey = options.accessKey ?? process.env.ONSHAPE_ACCESS ?? process.env.API_KEY;
     this.secretKey = options.secretKey ?? process.env.ONSHAPE_SECRET ?? process.env.SECRET_KEY;
     this.teamId = options.teamId ?? process.env.ONSHAPE_TEAM ?? process.env.ONSHAPE_TEAM_ID;
+    /** How long an export is left before it is first checked, and between checks (each check is a call). */
+    this.exportWaitMs = options.exportWaitMs ?? 10_000;
 
     if (!this.baseUrl) throw new Error('Onshape base URL is required (set ONSHAPE_URL env var)');
     if (!this.accessKey) throw new Error('Onshape access key is required (set ONSHAPE_ACCESS env var)');
@@ -157,6 +169,23 @@ export class OnshapeClient {
    * @param {string} [args.configuration]
    * @returns {Promise<{ volume: number, periphery: number, mass: number, principalInertia: number[] }>}
    */
+  /**
+   * `getPartShape` for several parts of one Part Studio, in one call.
+   *
+   * @param {object} studio   `{ documentId, wvmType, wvmId, elementId, configuration? }`
+   * @param {string[]} partIds
+   * @returns {Promise<Map<string, object>>}  part id -> shape; a part OnShape doesn't list is left out
+   */
+  async getPartStudioShapes({ documentId, wvmType, wvmId, elementId, configuration }, partIds) {
+    const path = `/api/partstudios/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}/massproperties`;
+    const params = { partId: partIds, massAsGroup: false };
+    if (configuration) params.configuration = configuration;
+    const res = await this._get(path, params);
+    const out = new Map();
+    for (const [id, body] of Object.entries(res?.bodies ?? {})) out.set(id, shapeOf(body));
+    return out;
+  }
+
   async getPartShape({ documentId, wvmType, wvmId, elementId, partId, configuration }) {
     const path = `/api/parts/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}`
       + `/partid/${encodeURIComponent(partId)}/massproperties`;
@@ -165,13 +194,7 @@ export class OnshapeClient {
     if (!body) {
       throw new OnshapeApiError('OnShape returned no mass properties for the part', 502, path);
     }
-    // Each value comes with its low and high bound; the first is the value.
-    return {
-      volume: body.volume?.[0] ?? 0,
-      periphery: body.periphery?.[0] ?? 0,
-      mass: body.mass?.[0] ?? 0,
-      principalInertia: (body.principalInertia ?? []).slice(0, 3),
-    };
+    return shapeOf(body);
   }
 
   /**
@@ -223,45 +246,69 @@ export class OnshapeClient {
   }
 
   /**
-   * Export one part as a STEP file, in a workspace or a version. OnShape has
-   * no direct STEP download: this starts a translation (kept out of the
-   * document), waits for it, and downloads the result. About 3 seconds.
+   * Start a STEP export of some parts of one Part Studio. Each part comes
+   * back as its own file (in a zip when there are several: `exportResult`).
    *
-   * @param {object} origin  `{ documentId, wvmType, wvmId, elementId, partId, configuration? }`
-   * @param {{ timeoutMs?: number }} [options]
-   * @returns {Promise<Buffer>}
+   * @param {object} studio  `{ documentId, wvmType, wvmId, elementId, configuration? }`
+   * @param {string[]} partIds
+   * @returns {Promise<string>}  The translation's id, for `exportResult`
    */
-  async exportPartStep(origin, { timeoutMs = 60_000 } = {}) {
-    const { documentId, wvmType, wvmId, elementId, partId, configuration } = origin;
-    const base = `/api/partstudios/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}`;
+  async startStepExport({ documentId, wvmType, wvmId, elementId, configuration }, partIds) {
+    const path = `/api/partstudios/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}/translations`;
     // partIds is one string (not a list); the configuration is a query parameter.
     const job = await this._post(
-      `${base}/translations`,
-      { formatName: 'STEP', partIds: partId, storeInDocument: false },
+      path,
+      { formatName: 'STEP', partIds: partIds.join(','), grouping: false, storeInDocument: false },
       configuration ? { configuration } : {},
     );
+    return job.id;
+  }
 
+  /**
+   * Wait for a translation and download what it made. Nothing waits on an
+   * export, so it is checked rarely: first after `firstCheckMs`, then every
+   * `everyMs` (an export takes a few seconds; each check is an API call).
+   *
+   * @param {string} documentId
+   * @param {string} translationId
+   * @returns {Promise<Buffer>}  One file, or a zip of them
+   */
+  async exportResult(documentId, translationId, {
+    firstCheckMs = this.exportWaitMs, everyMs = this.exportWaitMs, timeoutMs = 180_000,
+  } = {}) {
+    const wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
     const deadline = Date.now() + timeoutMs;
+    await wait(firstCheckMs);
     for (;;) {
       // eslint-disable-next-line no-await-in-loop
-      const state = await this._get(`/api/translations/${job.id}`);
+      const state = await this._get(`/api/translations/${translationId}`);
       if (state.requestState === 'DONE' && state.resultExternalDataIds?.length) {
         return this._getBinary(`/api/documents/d/${documentId}/externaldata/${state.resultExternalDataIds[0]}`);
       }
       if (state.requestState !== 'ACTIVE') {
         throw new OnshapeApiError(
-          `OnShape could not export the part as STEP (${state.failureReason ?? state.requestState})`,
+          `OnShape could not export STEP (${state.failureReason ?? state.requestState})`,
           502,
-          `translation ${job.id}`,
+          `translation ${translationId}`,
         );
       }
       if (Date.now() > deadline) {
-        throw new OnshapeApiError('OnShape took too long to export the part as STEP', 504, `translation ${job.id}`);
+        throw new OnshapeApiError('OnShape took too long to export STEP', 504, `translation ${translationId}`);
       }
       // eslint-disable-next-line no-await-in-loop
-      await new Promise((resolve) => { setTimeout(resolve, 400); });
+      await wait(everyMs);
     }
   }
+
+  /**
+   * One part's STEP: an export of it alone, waited for as `exportResult` does.
+   * @returns {Promise<Buffer>}
+   */
+  async exportPartStep(origin, options) {
+    const id = await this.startStepExport(origin, [origin.partId]);
+    return this.exportResult(origin.documentId, id, options);
+  }
+
 
   /**
    * A picture of one part, from the isometric corner (front, right, top;
@@ -322,6 +369,18 @@ export class OnshapeClient {
     const path = `/api/partstudios/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}/bodydetails`;
     const res = await this._get(path, configuration ? { configuration } : {});
     return res.bodies ?? [];
+  }
+
+  /**
+   * Run a read-only FeatureScript function in a Part Studio.
+   *
+   * @param {object} origin  As for `getBodyDetails`
+   * @param {string} script  `function(context is Context, queries) { … }`
+   * @returns {Promise<object>}  OnShape's response (`result` holds typed values)
+   */
+  async evalFeatureScript({ documentId, wvmType, wvmId, elementId, configuration }, script) {
+    const path = `/api/partstudios/d/${documentId}/${wvmType}/${wvmId}/e/${elementId}/featurescript`;
+    return this._post(path, { script, queries: [] }, configuration ? { configuration } : {});
   }
 
   /**
@@ -445,6 +504,25 @@ export class OnshapeClient {
    * @param {Array<{ propertyId: string, value: * }>} args.properties
    * @returns {Promise<object>} Updated metadata payload from Onshape
    */
+  /**
+   * Write properties to several parts of one Part Studio in one call.
+   *
+   * @param {object} studio  `{ documentId, workspaceId, elementId, configuration? }`
+   * @param {{ partId: string, properties: { propertyId: string, value: string }[] }[]} items
+   * @returns {Promise<object>}  OnShape's answer, with a status per property
+   */
+  async updatePartsMetadata({ documentId, workspaceId, elementId, configuration }, items) {
+    const path = `/api/metadata/d/${documentId}/w/${workspaceId}/e/${elementId}`;
+    const body = {
+      jsonType: 'metadata-element',
+      items: items.map(({ partId, properties }) => ({
+        href: `${this.baseUrl}/api/metadata/d/${documentId}/w/${workspaceId}/e/${elementId}/p/${encodeURIComponent(partId)}`,
+        properties,
+      })),
+    };
+    return this._post(path, body, configuration ? { configuration } : {});
+  }
+
   async updatePartMetadata({ documentId, workspaceId, elementId, partId, configuration, properties }) {
     if (!Array.isArray(properties) || properties.length === 0) {
       throw new OnshapeApiError(

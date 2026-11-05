@@ -40,6 +40,9 @@ const DRIFT_MESSAGE = 'The OnShape properties changed since you checked. Review 
 
 const SEASON_NAMES = { R: 'Robot', F: 'Facility' };
 
+/** Sub-assemblies the preview checks at once (each is a tracker search and an OnShape read). */
+const SUB_CHECKS_AT_ONCE = 4;
+
 /** What the BOM reader needs to know about an Assembly: its season prefix and OnShape configuration. */
 function bomContext(a) {
   const context = {};
@@ -529,7 +532,13 @@ export class EpicService {
    */
   async previewOnboarding(url) {
     const ids = this.parseOnshapeUrl(url);
-    const found = await this._classify(ids);
+    // The tracker says which configuration's BOM the sub-assembly check will
+    // read; start that read now (it's the slow one) while the rest is checked.
+    const existing = await this._findExisting(ids);
+    this._prefetchBom(ids, existing && existing.matchedOn !== 'document'
+      ? existing.assembly.configuration ?? null
+      : ids.configuration ?? null);
+    const found = await this._classify(ids, { existing });
 
     if (found.kind === 'exists') {
       const a = found.assembly;
@@ -576,8 +585,9 @@ export class EpicService {
    *
    * @private
    */
-  async _classify(ids, { defaultProject = null } = {}) {
-    const found = await this._findExisting(ids);
+  async _classify(ids, { defaultProject = null, existing } = {}) {
+    // `existing`: the caller already looked (null: nothing there).
+    const found = existing === undefined ? await this._findExisting(ids) : existing;
 
     if (found && found.matchedOn !== 'document') return { kind: 'exists', ...found };
 
@@ -620,10 +630,21 @@ export class EpicService {
    */
   async _listSubAssemblies({ documentId, workspaceId, elementId }, season) {
     if (!this.bomService) return [];
-    const report = await this.bomService.getBOMReport(
-      null, documentId, workspaceId, elementId, season, { fresh: true },
-    );
+    // Not `fresh`: the preview read it moments ago (`_prefetchBom`), and the
+    // BOM cache keeps it for a minute, so Confirm doesn't read it again.
+    const report = await this.bomService.getBOMReport(null, documentId, workspaceId, elementId, season);
     return report.subAssemblies ?? [];
+  }
+
+  /**
+   * Read the assembly's BOM afresh into the cache, without waiting: a pasted
+   * link is checked against OnShape as it is now. A failure is left for the
+   * read that needs the BOM to report.
+   * @private
+   */
+  _prefetchBom({ documentId, workspaceId, elementId }, configuration) {
+    if (!this.bomService?.prefetch) return;
+    this.bomService.prefetch(documentId, workspaceId, elementId, configuration).catch(() => {});
   }
 
   /**
@@ -637,10 +658,14 @@ export class EpicService {
       return String(sub.wvmId).toLowerCase();
     }
     if (!cache.has(documentId)) {
-      const list = await this.onshapeClient.getWorkspaces(documentId);
-      const workspaces = Array.isArray(list) ? list : [];
-      const main = workspaces.find((w) => w.name === 'Main') ?? workspaces[0];
-      cache.set(documentId, main?.id ? String(main.id).toLowerCase() : null);
+      // The promise is kept, so sub-assemblies checked at once share one read.
+      const read = this.onshapeClient.getWorkspaces(documentId).then((list) => {
+        const workspaces = Array.isArray(list) ? list : [];
+        const main = workspaces.find((w) => w.name === 'Main') ?? workspaces[0];
+        return main?.id ? String(main.id).toLowerCase() : null;
+      });
+      cache.set(documentId, read);
+      read.catch(() => cache.delete(documentId));
     }
     return cache.get(documentId);
   }
@@ -704,10 +729,13 @@ export class EpicService {
     }
     const cache = new Map();
     const defaultProject = season ? `V${season.seasonType}${season.year}` : null;
-    const checked = [];
-    for (const sub of subs) {
+    // Read-only, so a few at a time; the list keeps the BOM's order.
+    const checked = new Array(subs.length);
+    for (let i = 0; i < subs.length; i += SUB_CHECKS_AT_ONCE) {
       // eslint-disable-next-line no-await-in-loop
-      checked.push(this._publicSub(await this._checkSubAssembly(sub, cache, defaultProject)));
+      await Promise.all(subs.slice(i, i + SUB_CHECKS_AT_ONCE).map(async (sub, j) => {
+        checked[i + j] = this._publicSub(await this._checkSubAssembly(sub, cache, defaultProject));
+      }));
     }
     return { subAssemblies: checked };
   }

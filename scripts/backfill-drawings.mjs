@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * Backfill: put a drawing (`<Part number>.pdf` and `_drawing.png`) on every
- * plate and axle Part that doesn't have one yet. New Parts get theirs when
+ * Backfill: put the drawings (`<Part number>_drawing*.png` and `_drawings.pdf`) on every
+ * Part that doesn't have them yet. New Parts get theirs when
  * their Build is cut; this is for the Parts cut before drawings existed.
  *
- * Only the drawing is added (no picture, STEP or DXF), measured from the
- * Assembly's OnShape workspace as the cut's file jobs do. Safe to re-run:
- * a Part with both files is skipped.
+ * Whatever the cut would attach and the ticket lacks is added: the drawings
+ * and any DXF of a view it didn't have (a tube's BACK, a plate's REAR); a
+ * picture or STEP already there is left. Measured from the Assembly's
+ * OnShape workspace, as the cut's file jobs are. Safe to re-run: a Part
+ * that has its drawings PDF is skipped. Nothing is removed.
  *
  * Defaults to a dry run that reads Jira only (no OnShape call). --execute
  * reads each Assembly's BOM (one OnShape call or so) and each Part Studio's
@@ -47,7 +49,7 @@ const onshapeWriter = new OnshapeWriter({ jiraClient, onshapeClient, bomService 
 const partFiles = new PartFiles({ onshapeClient, jiraClient });
 const partService = new PartService({ jiraClient });
 
-const DRAWING_FILES = (number) => [`${number}.pdf`, `${number}_drawing.png`];
+const DRAWING_FILES = (number) => [`${number}_drawings.pdf`];
 
 async function main() {
   console.log(`\nDrawings backfill: ${EXECUTE ? 'EXECUTING' : 'DRY RUN (Jira reads only; pass --execute to write)'}\n`);
@@ -90,8 +92,8 @@ async function main() {
         origin,
         thickness: story.thickness,
         material: story.material,
+        machinery: story.machinery,
         tapping: story.tapping,
-        drawingOnly: true,
       });
       if (problems.length) {
         console.log(`  ${story.key} ${story.fullPartNumber}: ${problems.join('; ')}`);
@@ -107,10 +109,10 @@ async function main() {
 
   console.log(`\n${totals.parts} Parts, ${totals.missing} without a drawing.`);
   if (EXECUTE) {
-    console.log(`Drawn: ${totals.attached}. Not a plate or axle: ${totals.notDrawn}. Not in the BOM: ${totals.notFound}. Failed: ${totals.failed}.`);
+    console.log(`Drawn: ${totals.attached}. Nothing to draw: ${totals.notDrawn}. Not in the BOM: ${totals.notFound}. Failed: ${totals.failed}.`);
     console.log(`OnShape calls: ${onshapeCalls}.`);
   } else {
-    console.log('Only plates (a Part with a Thickness) and axles get one; --execute finds out which are which.');
+    console.log("--execute draws each Part's views: a plate's or an axle's own, and its side views.");
   }
 }
 

@@ -167,6 +167,16 @@ describe('BOMService.getBOM / getBOMReport', () => {
     expect(onshapeClient.getAssemblyBOM).toHaveBeenCalledWith('d-report', 'w', 'e', { multiLevel: true });
   });
 
+  it('prefetch reads afresh, and the report that follows shares that read', async () => {
+    const onshapeClient = { getAssemblyBOM: jest.fn().mockResolvedValue(bom([row()])) };
+    const service = new BOMService({ onshapeClient });
+    await service.getBOMReport('HAR-1', 'd-prefetch', 'w', 'e', VF27);
+    service.prefetch('d-prefetch', 'w', 'e', null);
+    const report = await service.getBOMReport('HAR-1', 'd-prefetch', 'w', 'e', VF27);
+    expect(report.parts).toHaveLength(1);
+    expect(onshapeClient.getAssemblyBOM).toHaveBeenCalledTimes(2);
+  });
+
   it('shares one in-flight OnShape request between two callers asking for the same BOM at once', async () => {
     let resolveCall;
     const onshapeClient = {

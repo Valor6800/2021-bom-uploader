@@ -4,7 +4,7 @@
  */
 
 import {
-  MATERIALS, MACHINERY, POWDERCOAT, TAPPING, THICKNESS, PRIORITIES, Tapping,
+  MATERIALS, MACHINERY, POWDERCOAT, TAPPING, THICKNESS, PRIORITIES, Tapping, Thickness,
 } from './bomConstants.js';
 
 /**
@@ -98,9 +98,10 @@ export function validatePartPayload(payload) {
     validateMaterial(payload.material),
     validateMachinery(payload.machinery),
     validatePowdercoat(payload.powdercoat),
-    // Absent is "No", the tracker's default, so older callers stay valid.
+    // Absent is the tracker's default ("No", "None"): the Designer doesn't
+    // send these; the tool sets them when the Build is cut.
     validateTapping(payload.tapping ?? Tapping.NO),
-    validateThickness(payload.thickness),
+    validateThickness(payload.thickness ?? Thickness.NONE),
     validateQuantity(payload.quantity),
     validatePriority(payload.priority),
   ];

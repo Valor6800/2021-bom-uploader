@@ -90,11 +90,11 @@ const revisionService = new RevisionService({ jiraClient });
 const partNumbers = new PartNumbers({ jiraClient });
 const partDiff = new PartDiff({ jiraClient, onshapeClient, bomService });
 const partFiles = new PartFiles({ onshapeClient, jiraClient });
-const pictures = new Pictures({ jiraClient, onshapeClient });
+const pictures = new Pictures({ jiraClient, onshapeClient, partFiles });
 const onshapeWriter = new OnshapeWriter({ jiraClient, onshapeClient, bomService });
 const fileJobs = new FileJobs({ partFiles, onshapeWriter });
 const partService = new PartService({
-  jiraClient, bomService, revisionService, partNumbers, partDiff, partFiles,
+  jiraClient, bomService, revisionService, partNumbers, partDiff,
 });
 const exportService = new ExportService({ onshapeClient });
 // Built before EpicService, which creates Build 1 when onboarding an Assembly.
@@ -102,7 +102,7 @@ const buildService = new BuildService({
   jiraClient, onshapeClient, revisionService, partService, partNumbers, onshapeWriter, fileJobs, pictures,
 });
 const epicService = new EpicService({ jiraClient, onshapeClient, buildService, bomService });
-const guides = new AssemblyGuides({ jiraClient, onshapeClient, bomService, epicService });
+const guides = new AssemblyGuides({ jiraClient, onshapeClient, bomService, epicService, partFiles });
 const vendorCatalog = new VendorCatalog({ jiraClient });
 
 const orderSheetService = sheetsClient ? new OrderSheetService({ sheetsClient }) : null;

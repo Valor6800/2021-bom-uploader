@@ -241,6 +241,7 @@ describe('OnshapeClient', () => {
 
     it('starts a STEP translation, waits for it, and downloads the result', async () => {
       const client = makeClient();
+      client.exportWaitMs = 0;
       mockRequest.mockResolvedValueOnce({ data: { id: 'job1', requestState: 'ACTIVE' } });
       mockGet
         .mockResolvedValueOnce({ data: { requestState: 'ACTIVE' } })
@@ -252,13 +253,14 @@ describe('OnshapeClient', () => {
       expect(Buffer.isBuffer(result)).toBe(true);
       const post = mockRequest.mock.calls[0][0];
       expect(post.url).toBe('/api/partstudios/d/d/w/w/e/e/translations?configuration=List_a%3DX');
-      expect(post.data).toEqual({ formatName: 'STEP', partIds: 'JVD', storeInDocument: false });
+      expect(post.data).toEqual({ formatName: 'STEP', partIds: 'JVD', grouping: false, storeInDocument: false });
       expect(mockGet.mock.calls[0][0]).toContain('/api/translations/job1');
       expect(mockGet.mock.calls[2][0]).toContain('/api/documents/d/d/externaldata/file1');
     });
 
     it('reports a translation OnShape could not finish', async () => {
       const client = makeClient();
+      client.exportWaitMs = 0;
       mockRequest.mockResolvedValueOnce({ data: { id: 'job2', requestState: 'ACTIVE' } });
       mockGet.mockResolvedValueOnce({ data: { requestState: 'FAILED', failureReason: 'bad part' } });
       await expect(client.exportPartStep(origin)).rejects.toMatchObject({ status: 502, message: expect.stringContaining('bad part') });
@@ -266,12 +268,51 @@ describe('OnshapeClient', () => {
 
     it('exportSTEP does the same for a workspace part', async () => {
       const client = makeClient();
+      client.exportWaitMs = 0;
       mockRequest.mockResolvedValueOnce({ data: { id: 'job3', requestState: 'ACTIVE' } });
       mockGet
         .mockResolvedValueOnce({ data: { requestState: 'DONE', resultExternalDataIds: ['f'] } })
         .mockResolvedValueOnce({ data: new Uint8Array([1]).buffer });
       await client.exportSTEP('d', 'w', 'e', 'p');
       expect(mockRequest.mock.calls[0][0].url).toBe('/api/partstudios/d/d/w/w/e/e/translations');
+    });
+  });
+
+  describe('exportResult', () => {
+    it('leaves an export 10 seconds before its first check, by default', async () => {
+      jest.useFakeTimers();
+      try {
+        const client = makeClient();
+        mockGet
+          .mockResolvedValueOnce({ data: { requestState: 'DONE', resultExternalDataIds: ['f'] } })
+          .mockResolvedValueOnce({ data: new Uint8Array([1]).buffer });
+        const done = client.exportResult('d', 'job');
+        await jest.advanceTimersByTimeAsync(9_999);
+        expect(mockGet).not.toHaveBeenCalled();
+        await jest.advanceTimersByTimeAsync(1);
+        await done;
+        expect(mockGet).toHaveBeenCalledTimes(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  describe('startStepExport and getPartStudioShapes', () => {
+    it('exports several parts of a Part Studio as separate files in one translation', async () => {
+      const client = makeClient();
+      mockRequest.mockResolvedValueOnce({ data: { id: 'job9' } });
+      expect(await client.startStepExport({ documentId: 'd', wvmType: 'v', wvmId: 'v', elementId: 'e' }, ['A', 'B'])).toBe('job9');
+      expect(mockRequest.mock.calls[0][0].data).toEqual({ formatName: 'STEP', partIds: 'A,B', grouping: false, storeInDocument: false });
+    });
+
+    it('reads the shapes of several parts in one call', async () => {
+      const client = makeClient();
+      mockGet.mockResolvedValueOnce({ data: { bodies: { A: { volume: [1, 0, 2], mass: [3], periphery: [4], principalInertia: [5, 6, 7] } } } });
+      const shapes = await client.getPartStudioShapes({ documentId: 'd', wvmType: 'v', wvmId: 'v', elementId: 'e' }, ['A', 'B']);
+      expect(shapes.get('A')).toEqual({ volume: 1, mass: 3, periphery: 4, principalInertia: [5, 6, 7] });
+      expect(shapes.has('B')).toBe(false);
+      expect(mockGet.mock.calls[0][0]).toBe('/api/partstudios/d/d/v/v/e/e/massproperties?partId=A&partId=B&massAsGroup=false');
     });
   });
 

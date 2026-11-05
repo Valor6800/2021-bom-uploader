@@ -6,18 +6,17 @@ import {
 } from '../../src/server/utils/bomConstants.js';
 import { MATERIALS, MACHINERY, POWDERCOAT, THICKNESS, PRIORITIES } from '../../src/client/src/api/client.js';
 
-const valid = { material: 'PLA', machinery: '3D Printer', powdercoat: 'None', thickness: 'None', quantity: 1 };
+// Tapping and Thickness aren't saved from the Designer (the cut sets them), so they aren't here.
+const valid = { material: 'PLA', machinery: '3D Printer', powdercoat: 'None', quantity: 1 };
 
 const cases = [
   ...SERVER_MATERIALS.map((material) => ({ ...valid, material })),
   ...SERVER_MACHINERY.map((machinery) => ({ ...valid, machinery })),
   ...SERVER_POWDERCOAT.map((powdercoat) => ({ ...valid, powdercoat })),
-  ...SERVER_THICKNESS.map((thickness) => ({ ...valid, thickness })),
   { ...valid, material: 'Steel' },
   { ...valid, material: '' },
   { ...valid, machinery: 'Laser' },
   { ...valid, powdercoat: 'Red' },
-  { ...valid, thickness: '0.5' },
   { ...valid, quantity: 0 },
   { ...valid, quantity: 1.5 },
   { ...valid, quantity: '2' },

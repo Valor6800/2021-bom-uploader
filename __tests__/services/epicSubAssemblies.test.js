@@ -141,6 +141,32 @@ describe('EpicService onboarding of sub-assemblies', () => {
       expect(jiraClient.createIssue).not.toHaveBeenCalled();
     });
 
+    it('starts the BOM read early, afresh, for the configuration the link names', async () => {
+      const { service, bomService } = setup();
+      bomService.prefetch = jest.fn().mockResolvedValue({});
+      await service.previewOnboarding(`${URL_1000}?configuration=Size%3DLarge`);
+      expect(bomService.prefetch).toHaveBeenCalledTimes(1);
+      expect(bomService.prefetch).toHaveBeenCalledWith(DOC, WS, EL[1000], 'Size=Large');
+      // The list itself shares that read rather than forcing another.
+      for (const call of bomService.getBOMReport.mock.calls) expect(call[5]).toBeUndefined();
+    });
+
+    it('reads the BOM for the configuration an existing Assembly follows', async () => {
+      const { service, bomService, issues } = setup({ alreadyOnboarded: [1000] });
+      issues[0].fields.description = 'Onshape configuration: Size=Small';
+      bomService.prefetch = jest.fn().mockResolvedValue({});
+      await service.previewOnboarding(URL_1000);
+      expect(bomService.prefetch).toHaveBeenCalledWith(DOC, WS, EL[1000], 'Size=Small');
+    });
+
+    it('checks sub-assemblies at once but lists them in BOM order, reading a document\'s workspaces once', async () => {
+      const byVersion = (n) => sub(n, { wvmType: 'v', wvmId: 'f'.repeat(24) });
+      const { service, onshapeClient } = setup({ subs: [byVersion(1100), byVersion(1200), byVersion(1300)] });
+      const result = await service.previewOnboarding(URL_1000);
+      expect(statuses(result)).toEqual([['Intake', 'new'], ['Shooter', 'new'], ['Climber', 'new']]);
+      expect(onshapeClient.getWorkspaces).toHaveBeenCalledTimes(1);
+    });
+
     it('says a sub-assembly that was onboarded before already exists', async () => {
       const { service } = setup({ alreadyOnboarded: [1100] });
       const result = await service.previewOnboarding(URL_1000);

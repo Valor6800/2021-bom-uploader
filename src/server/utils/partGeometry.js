@@ -222,6 +222,63 @@ export function sideViews(body, analysis) {
   return views;
 }
 
+/** Each named side's opposite. */
+export const OPPOSITE = Object.freeze({ TOP: 'BOTTOM', RIGHT: 'LEFT', FRONT: 'BACK' });
+
+/**
+ * The part seen from all six sides of its box: the three `sideViews` names
+ * and their opposites (BOTTOM, LEFT, BACK). Each is the largest flat face
+ * on that side of the box, seen from outside. A side with no flat face is
+ * left out.
+ *
+ * @returns {{ name: string, face: object, outward: number[], longAxis: number[], pair: string }[]}
+ *   `pair`: the named side (TOP, RIGHT or FRONT) this side shares an axis with
+ */
+export function allSides(body, analysis) {
+  const planar = (body.faces ?? []).filter((f) => f.surface?.type === 'plane' && f.area > 0);
+  const facing = (axis, named) => Math.abs(dot(axis.vec, named.direction));
+  const best = ASSIGNMENTS.reduce((winner, order) => {
+    const score = order.reduce((sum, axisIndex, i) => sum + facing(analysis.axes[axisIndex], NAMED_SIDES[i]), 0);
+    return !winner || score > winner.score ? { order, score } : winner;
+  }, null);
+
+  const views = [];
+  best.order.forEach((axisIndex, i) => {
+    const axis = analysis.axes[axisIndex];
+    const named = NAMED_SIDES[i];
+    const sign = dot(axis.vec, named.direction) >= 0 ? 1 : -1;
+    const middle = (axis.min + axis.max) / 2;
+    const parallel = planar.filter((f) => Math.abs(dot(unit(f.surface.normal), axis.vec)) > 0.999);
+    const sideOf = (f) => (dot(f.surface.origin, axis.vec) > middle ? 1 : -1);
+    const inPlane = analysis.axes.filter((_, index) => index !== axisIndex);
+    const longAxis = inPlane.reduce((a, b) => (b.size > a.size ? b : a)).vec;
+    for (const [name, s] of [[named.name, sign], [OPPOSITE[named.name], -sign]]) {
+      const pool = parallel.filter((f) => sideOf(f) === s);
+      if (pool.length === 0) continue;
+      const face = pool.reduce((a, b) => (b.area > a.area ? b : a));
+      views.push({ name, face, outward: scale(axis.vec, s), longAxis, pair: named.name });
+    }
+  });
+  return views;
+}
+
+/** A plate is broad and thin: both its other sides at least this many times its thickness. */
+export const PLATE_ASPECT = 3;
+
+/**
+ * The Thickness a part is cut from, when it is plate stock: its smallest
+ * dimension matches a stock thickness and its other two are at least
+ * PLATE_ASPECT times that (so a 1/4 in hex or round shaft isn't a plate).
+ *
+ * @param {{ dimensions: number[], thickness: number }} analysis  From `analyzeBody`
+ * @returns {string|null}
+ */
+export function plateThickness(analysis) {
+  const [, middle] = analysis.dimensions;
+  if (!(middle >= PLATE_ASPECT * analysis.thickness)) return null;
+  return thicknessOption(analysis.thickness);
+}
+
 /**
  * The Thickness option a part's smallest dimension matches, or null.
  * @param {number} metres
@@ -245,7 +302,7 @@ export function thicknessOption(metres) {
 export function curvedEdgeIds(body, analysis) {
   const edgesById = new Map((body.edges ?? []).map((e) => [e.id, e]));
   const ids = new Set();
-  for (const loop of analysis.face.loops ?? []) {
+  for (const loop of facesOf(analysis).flatMap((f) => f.loops ?? [])) {
     for (const { edgeId } of loop.coedges) {
       const type = edgesById.get(edgeId)?.curve?.type;
       if (type && type !== 'line' && type !== 'circle') ids.add(edgeId);
@@ -257,6 +314,11 @@ export function curvedEdgeIds(body, analysis) {
 const mm = (metres) => metres * 1000;
 const degrees = (radians) => (radians * 180) / Math.PI;
 const mod360 = (d) => ((d % 360) + 360) % 360;
+
+/** The faces a view draws: one (`face`) or several at one level (`faces`). */
+function facesOf(view) {
+  return view.faces ?? [view.face];
+}
 
 /** True when every edge of a loop lies on one circle, and they go all the way round: a round hole. */
 function holeOf(loop, edgesById) {
@@ -276,14 +338,16 @@ function holeOf(loop, edgesById) {
  * other inner loops (cutouts) it has.
  *
  * @param {object} body
- * @param {{ face: object, outward: number[], longAxis: number[] }} analysis  From `analyzeBody`, or one of `sideViews`
+ * @param {{ face?: object, faces?: object[], outward: number[], longAxis: number[] }} analysis
+ *   From `analyzeBody`, one of `sideViews`, or a pocket level of `plateViews`
  * @param {Map<string, number[][]>} [curves]  Points along edges that are neither lines nor circles
+ * @param {{ origin?: number[] }} [options]  Where 0,0 is (as returned by another layout), so layouts of one part line up
  * @returns {{
  *   entities: Array, holes: { x: number, y: number, d: number }[], cutouts: number,
- *   width: number, height: number,
+ *   width: number, height: number, origin: number[],
  * }}
  */
-export function faceLayout(body, analysis, curves = new Map()) {
+export function faceLayout(body, analysis, curves = new Map(), { origin = null } = {}) {
   const edgesById = new Map((body.edges ?? []).map((e) => [e.id, e]));
   const ex = analysis.longAxis;
   const ey = unit(cross(analysis.outward, ex));
@@ -291,7 +355,8 @@ export function faceLayout(body, analysis, curves = new Map()) {
 
   const seen = new Set();
   const edges = [];
-  for (const loop of analysis.face.loops ?? []) {
+  const loops = facesOf(analysis).flatMap((f) => f.loops ?? []);
+  for (const loop of loops) {
     for (const { edgeId } of loop.coedges) {
       if (seen.has(edgeId) || !edgesById.has(edgeId)) continue;
       seen.add(edgeId);
@@ -303,8 +368,7 @@ export function faceLayout(body, analysis, curves = new Map()) {
   const outline = edges.flatMap((e) => (curves.get(e.id) ?? edgePoints(e)).map(project));
   const xs = outline.map((p) => p[0]);
   const ys = outline.map((p) => p[1]);
-  const x0 = Math.min(...xs);
-  const y0 = Math.min(...ys);
+  const [x0, y0] = origin ?? [Math.min(...xs), Math.min(...ys)];
   const at = (p) => { const q = project(p); return [q[0] - x0, q[1] - y0]; };
 
   const entities = [];
@@ -337,12 +401,12 @@ export function faceLayout(body, analysis, curves = new Map()) {
 
   const holes = [];
   let cutouts = 0;
-  for (const loop of analysis.face.loops ?? []) {
+  for (const loop of loops) {
     if (loop.type !== 'inner') continue;
     const hole = holeOf(loop, edgesById);
     if (!hole) { cutouts += 1; continue; }
     const [x, y] = at(hole.origin);
-    holes.push({ x, y, d: mm(hole.radius) * 2 });
+    holes.push({ x, y, d: mm(hole.radius) * 2, edges: loop.coedges.map((c) => c.edgeId) });
   }
 
   return {
@@ -351,7 +415,81 @@ export function faceLayout(body, analysis, curves = new Map()) {
     cutouts,
     width: Math.max(...xs) - x0,
     height: Math.max(...ys) - y0,
+    origin: [x0, y0],
   };
+}
+
+/** Floors closer than this (metres) are one pocket depth. */
+const SAME_DEPTH = 1e-5;
+
+/**
+ * The partial-depth pockets of a plate: its flat faces square to the
+ * thickness that are neither its top nor its bottom, grouped by how deep
+ * they are from the side they are cut from.
+ *
+ * A face looks away from the material (OnShape's face `orientation` says
+ * whether that is its surface normal or the opposite), so a floor that looks
+ * "up" is a pocket cut from the top.
+ *
+ * @returns {{ side: number[], depth: number, faces: object[] }[]}  Shallowest first; `side` the way it is cut from
+ */
+export function pocketsOf(body, analysis) {
+  const n = analysis.thicknessAxis;
+  const thin = analysis.axes[2];
+  const levels = [];
+  for (const face of body.faces ?? []) {
+    if (face.surface?.type !== 'plane' || !(face.area > 0)) continue;
+    const fn = unit(face.surface.normal);
+    const c = dot(fn, n);
+    if (Math.abs(c) < 0.999) continue;
+    const up = Math.sign(c) * (face.orientation === false ? -1 : 1) > 0;
+    const h = dot(face.surface.origin, n);
+    if (h - thin.min < SAME_DEPTH || thin.max - h < SAME_DEPTH) continue;
+    const depth = up ? thin.max - h : h - thin.min;
+    const side = up ? n : scale(n, -1);
+    const level = levels.find((l) => Math.abs(l.depth - depth) < SAME_DEPTH && dot(l.side, side) > 0);
+    if (level) level.faces.push(face);
+    else levels.push({ side, depth, faces: [face] });
+  }
+  return levels.sort((a, b) => a.depth - b.depth);
+}
+
+/**
+ * How a plate is drawn: its through-cut profile (outline and through holes,
+ * the face square to its thickness with the most area) and a view of each
+ * pocket depth, all seen from one side with one 0,0, so its DXFs line up.
+ *
+ * A plate with no pockets is seen as before, from its largest face. One
+ * with pockets is seen from the side most of its pockets are cut from (the
+ * side up on the machine); pockets cut from the other side are seen from
+ * there, and marked `back` (their files are the REAR ones).
+ *
+ * @returns {{
+ *   profile: object,
+ *   pockets: { depth: number, back: boolean, view: object }[],
+ * }}  Each view as `faceLayout` takes it; depths in metres
+ */
+export function plateViews(body, analysis) {
+  const levels = pocketsOf(body, analysis);
+  if (levels.length === 0) return { profile: analysis, pockets: [] };
+  const area = (side) => levels.filter((l) => dot(l.side, side) > 0)
+    .reduce((sum, l) => sum + l.faces.reduce((a, f) => a + f.area, 0), 0);
+  const n = analysis.thicknessAxis;
+  const up = area(n) >= area(scale(n, -1)) ? n : scale(n, -1);
+  const profile = { face: analysis.face, outward: up, longAxis: analysis.longAxis };
+  return {
+    profile,
+    pockets: levels.map((l) => {
+      const back = dot(l.side, up) < 0;
+      return { depth: l.depth, back, view: { faces: l.faces, outward: l.side, longAxis: analysis.longAxis } };
+    }),
+  };
+}
+
+/** A pocket depth for a file name, in inches: "0.125", "0.250", "0.3125". */
+export function depthName(metres) {
+  const four = (metres / METRES_PER_INCH).toFixed(4);
+  return four.endsWith('0') ? four.slice(0, -1) : four;
 }
 
 /**
@@ -364,17 +502,17 @@ export function faceLayout(body, analysis, curves = new Map()) {
  * @param {Map<string, number[][]>} [curves]  Points along edges that are neither lines nor circles
  * @returns {string}
  */
-export function dxfOfFace(body, analysis, curves = new Map()) {
-  return writeDxf(faceLayout(body, analysis, curves).entities);
+export function dxfOfFace(body, analysis, curves = new Map(), { origin = null, layer = '0' } = {}) {
+  return writeDxf(faceLayout(body, analysis, curves, { origin }).entities, layer);
 }
 
 const num = (n) => (Math.abs(n) < 1e-9 ? 0 : Number(n.toFixed(4)));
 
-function writeDxf(entities) {
+function writeDxf(entities, layer = '0') {
   const out = ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1009', '9', '$MEASUREMENT', '70', '1', '0', 'ENDSEC',
     '0', 'SECTION', '2', 'ENTITIES'];
   for (const [kind, ...args] of entities) {
-    out.push('0', kind, '8', '0');
+    out.push('0', kind, '8', layer);
     if (kind === 'LINE') {
       const [a, b] = args;
       out.push('10', num(a[0]), '20', num(a[1]), '30', 0, '11', num(b[0]), '21', num(b[1]), '31', 0);

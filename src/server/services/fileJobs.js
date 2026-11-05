@@ -1,7 +1,15 @@
 /**
- * File Jobs — attaching a Part's picture, STEP and DXFs takes seconds per
- * Part, so Save does not wait for it. It queues a job per Part made and
+ * File Jobs — attaching a Part's picture, DXFs and drawings takes seconds
+ * per Part, so the cut does not wait for it. It queues a job per Part and
  * answers; the jobs run here, a few at a time, in the background.
+ *
+ * Parts are found in the cut version's BOM (`versionLink`), so the files
+ * match what was cut and every read of that version can be kept.
+ *
+ * A 3D print's STEP is left out of its job and gathered: once the queue has
+ * drained, one export per Part Studio covers all its 3D prints (OnShape
+ * sends each as its own file), so the Parts' state stays `pending` until
+ * their STEP is on.
  *
  * The queue lives in memory. A job lost to a restart or a failure is made up
  * on the next Update from CAD, which queues any Part still missing files
@@ -32,6 +40,9 @@ export class FileJobs {
     this._queue = [];
     this._running = 0;
     this._idle = [];
+    /** studio key -> { studio, parts: [{ key, partNumber, partId, name }] }, waiting for the queue to drain */
+    this._stepBatches = new Map();
+    this._stepsRunning = 0;
   }
 
   /**
@@ -43,9 +54,11 @@ export class FileJobs {
    * @param {string} job.partNumber    "VR27P-1103A"
    * @param {string} [job.thickness]   The Part's Thickness (set: one DXF; None: three)
    * @param {string} [job.material]    The Part's Material, for its drawing
+   * @param {string} [job.machinery]   A 3D print gets no Thickness
    * @param {string} [job.tapping]     The Part's Needs Tapping?, for its drawing
    * @param {object} [job.origin]      Where the part lives in OnShape, if known
    * @param {string} [job.assemblyKey] The Assembly to find it in, when `origin` is not known
+   * @param {string} [job.versionLink] The cut version to find it in (else the Assembly's workspace)
    * @returns {boolean} True when it was queued
    */
   enqueue(job) {
@@ -75,9 +88,11 @@ export class FileJobs {
     return out;
   }
 
-  /** Resolves once nothing is queued or running. */
+  /** Resolves once nothing is queued, running or exporting. */
   idle() {
-    if (this._queue.length === 0 && this._running === 0) return Promise.resolve();
+    if (this._queue.length === 0 && this._running === 0 && this._stepsRunning === 0 && this._stepBatches.size === 0) {
+      return Promise.resolve();
+    }
     return new Promise((resolve) => { this._idle.push(resolve); });
   }
 
@@ -89,7 +104,8 @@ export class FileJobs {
         this._running -= 1;
         this._pump();
         if (this._queue.length === 0 && this._running === 0) {
-          for (const resolve of this._idle.splice(0)) resolve();
+          this._flushSteps();
+          this._settle();
         }
       });
     }
@@ -98,19 +114,29 @@ export class FileJobs {
   async _run(job) {
     const finish = (state, problems = []) => this._state.set(job.key, { state, problems, at: Date.now() });
     try {
-      const origin = job.origin ?? await this._originOf(job);
+      const found = job.origin ? { origin: job.origin, name: job.name, color: job.color } : await this._partOf(job);
+      const origin = found?.origin;
       if (!origin) {
         finish('failed', [`couldn't find ${job.partNumber} in OnShape`]);
         return;
       }
-      const { problems } = await this.partFiles.attach({
+      const { problems, needsStep } = await this.partFiles.attach({
+        step: 'later',
+        color: found.color ?? null,
         key: job.key,
         partNumber: job.partNumber,
         origin,
         thickness: job.thickness,
         material: job.material,
+        machinery: job.machinery,
         tapping: job.tapping,
       });
+      if (needsStep) {
+        // Still pending: its STEP comes with its Part Studio's others.
+        this._state.set(job.key, { state: 'pending', problems, at: Date.now() });
+        this._addStep(origin, { key: job.key, partNumber: job.partNumber, partId: origin.partId, name: found.name });
+        return;
+      }
       finish(problems.length ? 'failed' : 'done', problems);
     } catch (err) {
       console.warn('[files]', job.key, 'failed:', err?.status, err?.message);
@@ -118,12 +144,54 @@ export class FileJobs {
     }
   }
 
-  /** The part in the Assembly's BOM with this number (the letter doesn't matter). */
-  async _originOf({ assemblyKey, partNumber }) {
+  /** The part in the Assembly's BOM (the cut version's, when known) with this number; the letter doesn't matter. */
+  async _partOf({ assemblyKey, partNumber, versionLink }) {
     if (!this.onshapeWriter || !assemblyKey) return null;
-    const { parts } = await this.onshapeWriter.readBom(assemblyKey);
+    const { parts } = await this.onshapeWriter.readBom(assemblyKey, { versionLink });
     const wanted = baseNumber({ fullPartNumber: partNumber });
-    return parts.find((p) => p.origin && baseNumber(p) === wanted)?.origin ?? null;
+    const part = parts.find((p) => p.origin && baseNumber(p) === wanted);
+    return part ? { origin: part.origin, name: part.name, color: part.color ?? null } : null;
+  }
+
+  /** Hold a 3D print for its Part Studio's STEP export. */
+  _addStep(origin, part) {
+    const { partId, microversionId, ...studio } = origin;
+    const key = [studio.documentId, studio.wvmType, studio.wvmId, studio.elementId, studio.configuration ?? ''].join(':');
+    if (!this._stepBatches.has(key)) this._stepBatches.set(key, { studio, parts: [] });
+    this._stepBatches.get(key).parts.push(part);
+  }
+
+  /** Start one STEP export per Part Studio for the 3D prints gathered, in the background. */
+  _flushSteps() {
+    const batches = [...this._stepBatches.values()];
+    this._stepBatches.clear();
+    for (const { studio, parts } of batches) {
+      this._stepsRunning += 1;
+      this.partFiles.attachSteps(studio, parts)
+        .then((results) => {
+          for (const part of parts) {
+            const before = this._state.get(part.key)?.problems ?? [];
+            const problems = [...before, ...(results.get(part.key)?.problems ?? [])];
+            this._state.set(part.key, { state: problems.length ? 'failed' : 'done', problems, at: Date.now() });
+          }
+        })
+        .catch((err) => {
+          for (const part of parts) {
+            this._state.set(part.key, { state: 'failed', problems: [describeUpstreamError(err)], at: Date.now() });
+          }
+        })
+        .finally(() => {
+          this._stepsRunning -= 1;
+          this._settle();
+        });
+    }
+  }
+
+  /** Wake `idle()` callers once nothing is queued, running or exporting. */
+  _settle() {
+    if (this._queue.length === 0 && this._running === 0 && this._stepsRunning === 0 && this._stepBatches.size === 0) {
+      for (const resolve of this._idle.splice(0)) resolve();
+    }
   }
 
   _prune() {

@@ -4,8 +4,11 @@ import { FileJobs } from '../../src/server/services/fileJobs.js';
 const origin = { documentId: 'd', wvmType: 'w', wvmId: 'w', elementId: 'e', partId: 'JVD' };
 const job = (n, extra = {}) => ({ key: `HAR-${n}`, partNumber: `VR27P-${1100 + n}A`, thickness: 'None', origin, ...extra });
 
-function make({ attach, concurrency = 4, parts = [] } = {}) {
-  const partFiles = { attach: attach ?? jest.fn().mockResolvedValue({ attached: ['a'], problems: [] }) };
+function make({ attach, attachSteps, concurrency = 4, parts = [] } = {}) {
+  const partFiles = {
+    attach: attach ?? jest.fn().mockResolvedValue({ attached: ['a'], problems: [] }),
+    attachSteps: attachSteps ?? jest.fn(async (studio, list) => new Map(list.map((p) => [p.key, { attached: [`${p.partNumber}.step`], problems: [] }]))),
+  };
   const onshapeWriter = { readBom: jest.fn().mockResolvedValue({ parts }) };
   return { jobs: new FileJobs({ partFiles, onshapeWriter, concurrency }), partFiles, onshapeWriter };
 }
@@ -16,7 +19,7 @@ describe('FileJobs', () => {
     expect(jobs.enqueue(job(1))).toBe(true);
     expect(jobs.status(['HAR-1'])).toEqual({ 'HAR-1': { state: 'pending', problems: [] } });
     await jobs.idle();
-    expect(partFiles.attach).toHaveBeenCalledWith({ key: 'HAR-1', partNumber: 'VR27P-1101A', origin, thickness: 'None' });
+    expect(partFiles.attach).toHaveBeenCalledWith({ key: 'HAR-1', partNumber: 'VR27P-1101A', origin, thickness: 'None', step: 'later', color: null });
     expect(jobs.status(['HAR-1'])).toEqual({ 'HAR-1': { state: 'done', problems: [] } });
   });
 
@@ -40,9 +43,10 @@ describe('FileJobs', () => {
   it('finds the part in the Assembly BOM by its number when the job has no location, whatever the letter', async () => {
     const found = { ...origin, partId: 'FOUND' };
     const { jobs, partFiles, onshapeWriter } = make({ parts: [{ fullPartNumber: 'VR27P-1101A', origin: found }] });
-    jobs.enqueue({ key: 'HAR-9', partNumber: 'VR27P-1101B', thickness: '0.125', assemblyKey: 'HAR-30' });
+    jobs.enqueue({ key: 'HAR-9', partNumber: 'VR27P-1101B', thickness: '0.125', assemblyKey: 'HAR-30', versionLink: 'v-link' });
     await jobs.idle();
-    expect(onshapeWriter.readBom).toHaveBeenCalledWith('HAR-30');
+    // In the cut version's BOM, when the job names it.
+    expect(onshapeWriter.readBom).toHaveBeenCalledWith('HAR-30', { versionLink: 'v-link' });
     expect(partFiles.attach).toHaveBeenCalledWith(expect.objectContaining({ origin: found, thickness: '0.125' }));
     expect(jobs.status(['HAR-9'])['HAR-9'].state).toBe('done');
   });
@@ -91,5 +95,36 @@ describe('FileJobs', () => {
 
   it('knows nothing about a ticket it was never given', () => {
     expect(make().jobs.status(['HAR-1'])).toEqual({});
+  });
+
+  it('exports the 3D prints of a Part Studio in one STEP export once the queue drains, and finishes them then', async () => {
+    const attach = jest.fn(async ({ key }) => ({ attached: [], problems: [], needsStep: key !== 'HAR-3' }));
+    const other = { ...origin, elementId: 'e2' };
+    const { jobs, partFiles } = make({ attach });
+    jobs.enqueue(job(1));
+    jobs.enqueue(job(2, { origin: { ...origin, partId: 'J2D' } }));
+    jobs.enqueue(job(3));
+    jobs.enqueue(job(4, { origin: { ...other, partId: 'J4D' } }));
+    await jobs.idle();
+    expect(partFiles.attachSteps).toHaveBeenCalledTimes(2);
+    const [[studioA, partsA], [studioB, partsB]] = partFiles.attachSteps.mock.calls;
+    expect(studioA).toEqual({ documentId: 'd', wvmType: 'w', wvmId: 'w', elementId: 'e' });
+    expect(partsA.map((p) => [p.key, p.partId])).toEqual([['HAR-1', 'JVD'], ['HAR-2', 'J2D']]);
+    expect(studioB.elementId).toBe('e2');
+    expect(partsB.map((p) => p.key)).toEqual(['HAR-4']);
+    expect(Object.values(jobs.status(['HAR-1', 'HAR-2', 'HAR-3', 'HAR-4'])).map((s) => s.state)).toEqual(['done', 'done', 'done', 'done']);
+  });
+
+  it('keeps a Part pending until its STEP is on, and fails it when the export does', async () => {
+    let release;
+    const attachSteps = jest.fn(() => new Promise((resolve) => { release = resolve; }));
+    const { jobs } = make({ attach: jest.fn().mockResolvedValue({ attached: [], problems: [], needsStep: true }), attachSteps });
+    jobs.enqueue(job(1));
+    await new Promise((r) => { setTimeout(r, 0); });
+    await new Promise((r) => { setTimeout(r, 0); });
+    expect(jobs.status(['HAR-1'])['HAR-1'].state).toBe('pending');
+    release(new Map([['HAR-1', { attached: [], problems: ['VR27P-1101A.step: OnShape took too long'] }]]));
+    await jobs.idle();
+    expect(jobs.status(['HAR-1'])['HAR-1']).toEqual({ state: 'failed', problems: ['VR27P-1101A.step: OnShape took too long'] });
   });
 });

@@ -60,6 +60,11 @@ describe('Pictures.partDrawing', () => {
     expect((await pictures.partImage('HAR-9')).toString()).toContain('/secure/attachment/2/VR27P-1101A.png');
   });
 
+  it('falls back to the first side view for a part with no drawing of its own', async () => {
+    const { pictures } = make({ issues: { 'HAR-9': part([att(5, 'VR27P-1101A_drawing_RIGHT.png'), att(4, 'VR27P-1101A_drawing_TOP.png')]) } });
+    expect((await pictures.partDrawing('HAR-9')).toString()).toContain('/secure/attachment/4/VR27P-1101A_drawing_TOP.png');
+  });
+
   it('answers 404 for a Part with no drawing, and 400 for a ticket that is not a Part', async () => {
     const { pictures } = make({ issues: {
       'HAR-9': part([att(2, 'VR27P-1101A.png')]),
@@ -67,6 +72,29 @@ describe('Pictures.partDrawing', () => {
     } });
     await expect(pictures.partDrawing('HAR-9')).rejects.toMatchObject({ status: 404 });
     await expect(pictures.partDrawing('HAR-30')).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe('Pictures.cadPicture', () => {
+  const origin = { documentId: 'a'.repeat(24), wvmType: 'w', wvmId: 'b'.repeat(24), elementId: 'c'.repeat(24), partId: 'JHD', configuration: null };
+
+  it('draws a part from its shape, and keeps it for a Part Studio version', async () => {
+    const partFiles = { pictureOf: jest.fn().mockResolvedValue(Buffer.from('PNG')) };
+    const pictures = new Pictures({ jiraClient: {}, onshapeClient: {}, partFiles });
+    const at = { ...origin, microversionId: 'd'.repeat(24) };
+    await pictures.cadPicture(at, [1, 2, 3]);
+    await pictures.cadPicture(at, [1, 2, 3]);
+    expect(partFiles.pictureOf).toHaveBeenCalledTimes(1);
+    expect(partFiles.pictureOf).toHaveBeenCalledWith(at, [1, 2, 3]);
+    // No version named: drawn again each time (the shape read itself is kept a minute).
+    await pictures.cadPicture(origin);
+    await pictures.cadPicture(origin);
+    expect(partFiles.pictureOf).toHaveBeenCalledTimes(3);
+  });
+
+  it('answers 404 for a part OnShape doesn\'t list', async () => {
+    const pictures = new Pictures({ jiraClient: {}, onshapeClient: {}, partFiles: { pictureOf: jest.fn().mockResolvedValue(null) } });
+    await expect(pictures.cadPicture(origin)).rejects.toMatchObject({ status: 404 });
   });
 });
 
@@ -179,6 +207,36 @@ describe('picture routes', () => {
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(pictures.partDrawing).toHaveBeenCalledWith('VAL-9');
     expect((await request(app(pictures)).get('/api/pictures/drawing/har-1')).status).toBe(400);
+  });
+
+  it('serves a live part picture, kept for a day when the link names the Part Studio version', async () => {
+    const pictures = { cadPicture: jest.fn().mockResolvedValue(Buffer.from('PNG')) };
+    const q = `d=${'a'.repeat(24)}&wvm=w&wvmid=${'b'.repeat(24)}&e=${'c'.repeat(24)}&p=JHD`;
+    const res = await request(app(pictures)).get(`/api/pictures/cad?${q}&mv=${'d'.repeat(24)}&rgb=ff8000&c=List_a%3DX`);
+    expect(res.status).toBe(200);
+    expect(res.headers['cache-control']).toBe('private, max-age=86400');
+    expect(pictures.cadPicture).toHaveBeenCalledWith(expect.objectContaining({
+      documentId: 'a'.repeat(24), partId: 'JHD', configuration: 'List_a=X', microversionId: 'd'.repeat(24),
+    }), [255, 128, 0]);
+    const now = await request(app(pictures)).get(`/api/pictures/cad?${q}`);
+    expect(now.headers['cache-control']).toBe('private, max-age=60');
+  });
+
+  it('refuses anything that isn\'t an OnShape part', async () => {
+    const pictures = { cadPicture: jest.fn() };
+    const good = `d=${'a'.repeat(24)}&wvm=w&wvmid=${'b'.repeat(24)}&e=${'c'.repeat(24)}&p=JHD`;
+    for (const q of [
+      good.replace('wvm=w', 'wvm=x'),
+      good.replace(`d=${'a'.repeat(24)}`, 'd=../../etc'),
+      `${good}&c=${encodeURIComponent('a&b')}`,
+      `${good}&rgb=red`,
+      `${good}&mv=nope`,
+      good.replace('p=JHD', `p=${'x'.repeat(40)}`),
+    ]) {
+      // eslint-disable-next-line no-await-in-loop
+      expect((await request(app(pictures)).get(`/api/pictures/cad?${q}`)).status).toBe(400);
+    }
+    expect(pictures.cadPicture).not.toHaveBeenCalled();
   });
 
   it('tells the browser not to keep a Draft\'s picture, and passes fresh through', async () => {

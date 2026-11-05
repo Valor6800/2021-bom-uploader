@@ -6,32 +6,29 @@
  * Uses the constants mirrored in api/client.js; a Jest parity test compares
  * it with the server's validatePartPayload so the two lists can't drift.
  */
-import { MATERIALS, MACHINERY, POWDERCOAT, TAPPING, THICKNESS, PRIORITIES } from '../api/client.js';
+import { MATERIALS, MACHINERY, POWDERCOAT, PRIORITIES } from '../api/client.js';
 
 const LISTS = [
   ['material', 'material', MATERIALS],
   ['machinery', 'machinery', MACHINERY],
   ['powdercoat', 'powdercoat', POWDERCOAT],
-  ['tapping', 'tapping', TAPPING],
-  ['thickness', 'thickness', THICKNESS],
 ];
 
 const PART_NUMBER_RE = /^V[RF]\d{2}P-\d{4}([A-Z])/;
 
 /**
  * The first field that fails, as `{ field, error }`, or null.
- * Checked in the server's order: material, machinery, powdercoat, tapping,
- * thickness, quantity, priority, then (creates) revision.
+ * Checked in the server's order: material, machinery, powdercoat,
+ * quantity, priority, then (creates) revision. (Tapping and Thickness are
+ * set when the Build is cut, not saved from here.)
  *
- * @param {{ material: string, machinery: string, powdercoat?: string, tapping?: string, thickness?: string,
+ * @param {{ material: string, machinery: string, powdercoat?: string,
  *   quantity: number, revision?: string, summary?: string }} row
  */
 export function validateRowFields(row) {
   const values = {
     ...row,
     powdercoat: row.powdercoat ?? 'None',
-    tapping: row.tapping ?? 'No',
-    thickness: row.thickness ?? 'None',
   };
   for (const [field, label, list] of LISTS) {
     if (!list.includes(values[field])) {

@@ -40,7 +40,7 @@ describe('BOM Constants', () => {
   test('THICKNESS contains expected values', () => {
     expect(THICKNESS).toEqual([
       Thickness.NONE, Thickness.T_0060, Thickness.T_0090,
-      Thickness.T_0125, Thickness.T_01875, Thickness.T_0250,
+      Thickness.T_0125, Thickness.T_01875, Thickness.T_0250, Thickness.T_0375,
     ]);
   });
 

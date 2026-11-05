@@ -27,12 +27,14 @@ export class AssemblyGuides {
    * @param {import('../clients/onshapeClient.js').OnshapeClient} deps.onshapeClient
    * @param {import('./bomService.js').BOMService} deps.bomService
    * @param {import('./epicService.js').EpicService} deps.epicService
+   * @param {import('./partFiles.js').PartFiles} [deps.partFiles]  Draws a part from its shape, sparing OnShape's picture call
    */
-  constructor({ jiraClient, onshapeClient, bomService, epicService }) {
+  constructor({ jiraClient, onshapeClient, bomService, epicService, partFiles = null }) {
     this.jiraClient = jiraClient;
     this.onshapeClient = onshapeClient;
     this.bomService = bomService;
     this.epicService = epicService;
+    this.partFiles = partFiles;
     /** where-key -> { at, promise of guide } */
     this._guides = new Map();
     /** image key -> { at, promise of Buffer } */
@@ -97,8 +99,12 @@ export class AssemblyGuides {
   }
 
   /**
-   * A picture for the guide: a step's sub-assembly, or one line's part, drawn
-   * by OnShape (isometric). The id is a row path the guide itself handed out.
+   * A picture for the guide: a step's sub-assembly, drawn by OnShape
+   * (isometric), or one line's part, drawn by the tool from its Part
+   * Studio's shape when that shape is already read (by the Designer or the
+   * cut). OnShape is never asked for a part's picture: a line with no read
+   * shape has none here (the page shows the vendor's picture when there is
+   * one). The id is a row path the guide itself handed out.
    *
    * @param {string} buildKey
    * @param {string} imageId
@@ -118,12 +124,25 @@ export class AssemblyGuides {
     const hit = this._images.get(key);
     if (hit && (!live || Date.now() - hit.at < LIVE_IMAGE_TTL_MS)) return { image: await hit.promise, live };
 
+    const partSize = large ? { width: 1200, height: 900 } : { width: 400, height: 300 };
+    // A part is drawn only from a Part Studio shape already read: a guide lists many parts,
+    // and asking OnShape for each would spend the year's calls. None read: no picture.
+    if (origin.partId && !this.partFiles?.hasShape(origin)) {
+      throw new HttpError(404, 'No picture: its Part Studio has not been read.');
+    }
     const draw = origin.partId
-      ? this.onshapeClient.getPartImage(origin, large ? { width: 1200, height: 900 } : { width: 400, height: 300 })
+      ? this._partPicture(origin, partSize)
       : this.onshapeClient.getAssemblyImage(origin, large ? { width: 1600, height: 1120 } : { width: 800, height: 560 });
     this._images.set(key, { at: Date.now(), promise: draw });
     draw.catch(() => this._images.delete(key));
     if (this._images.size > MAX_IMAGES) this._images.delete(this._images.keys().next().value);
     return { image: await draw, live };
+  }
+
+  /** A part drawn from its Part Studio's kept shape; never OnShape's picture. @private */
+  async _partPicture(origin, size) {
+    const drawn = await this.partFiles.pictureOf(origin, origin.color ?? null, size);
+    if (!drawn) throw new HttpError(404, 'No picture: the part has nothing to draw.');
+    return drawn;
   }
 }

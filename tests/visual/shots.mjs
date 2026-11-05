@@ -912,7 +912,7 @@ const drawingsApi = () => assemblyApi({
       body: body.map((s) => ({
         ...s,
         files: s.fullPartNumber === 'VF27P-0003A'
-          ? [`${s.fullPartNumber}.png`, `${s.fullPartNumber}.pdf`, `${s.fullPartNumber}_drawing.png`]
+          ? [`${s.fullPartNumber}.png`, `${s.fullPartNumber}_drawing.png`]
           : [`${s.fullPartNumber}.png`],
       })),
     };

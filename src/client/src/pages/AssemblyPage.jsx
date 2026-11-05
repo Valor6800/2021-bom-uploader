@@ -153,7 +153,8 @@ function AssemblyPage({ assemblyKey: key }) {
   // A plate's or axle's drawing is on the ticket its picture comes from, once its Build was cut.
   const drawingKeyOf = useCallback((row) => {
     const files = partsByKey.get(row.imageKey)?.files;
-    return files?.includes(`${row.fullPartNumber}_drawing.png`) ? row.imageKey : null;
+    const prefix = `${row.fullPartNumber}_drawing`;
+    return files?.some((f) => f.startsWith(prefix) && f.endsWith('.png')) ? row.imageKey : null;
   }, [partsByKey]);
   // The drawings column shows only when some Part in the table has one.
   const showDrawings = useMemo(

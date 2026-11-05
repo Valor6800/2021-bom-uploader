@@ -65,7 +65,7 @@ describe('planSave', () => {
     expect(body.links).toEqual([]);
     expect(body.updates).toEqual([{
       ref: 'HAR-2031', key: 'HAR-2031', quantity: 3, material: 'PLA', machinery: '3D Printer',
-      powdercoat: 'None', thickness: 'None', link: false,
+      powdercoat: 'None', link: false,
     }]);
   });
 
