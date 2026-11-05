@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { guideImageUrl, vendorImageUrl } from '../../api/client.js';
+import { guideImageUrl, hardwarePictureUrl, vendorImageUrl } from '../../api/client.js';
 import { friendlyClause } from '../../lib/friendlyError.js';
 import { Stage, stageOf } from '../../lib/partStage.js';
 import Alert from '../ui/Alert.jsx';
@@ -37,6 +37,10 @@ function LineThumb({ buildKey, line, part, vendor }) {
   if (line.kind === 'made') return <PartThumb partKey={part?.imageKey ?? part?.key ?? null} title={title} />;
   if (vendor?.catalog?.hasImage) {
     return <PartThumb partKey={null} src={vendorImageUrl(line.sku)} largeSrc={vendorImageUrl(line.sku, { large: true })} title={title} />;
+  }
+  // No name the tool can draw from, but an order that describes the hardware (McMaster).
+  if (!line.drawable && vendor?.drawing) {
+    return <PartThumb partKey={null} src={hardwarePictureUrl(vendor.drawing)} largeSrc={hardwarePictureUrl(vendor.drawing, { large: true })} title={title} />;
   }
   return (
     <PartThumb

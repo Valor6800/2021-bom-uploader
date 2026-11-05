@@ -13,9 +13,14 @@ const PREFIXES = Object.freeze({
   AM: 'Andymark',
 });
 
-const PREFIXED_RE = /\b(WCP|TTB|REV|AM)-(\d[\d-]*\d|\d)\b/i;
+// Ends at anything but a letter or digit, so "am-3945_blue" (a colour variant) reads as AM-3945.
+const PREFIXED_RE = /\b(WCP|TTB|REV|AM)-(\d[\d-]*\d|\d)(?![A-Za-z0-9])/i;
 /** McMaster-Carr catalog numbers: "91251A540". */
 const MCMASTER_RE = /^\d{4,5}[A-Z]\d{1,4}$/;
+/** VEXpro part numbers: "217-2737". */
+const VEX_RE = /^217-\d{4}$/;
+/** CTR Electronics part numbers: "24-676873". */
+const CTRE_RE = /^\d{2}-\d{6}$/;
 
 /** A string that is safe to search for and to put in a URL path. */
 export const SKU_PATTERN = /^[A-Z0-9][A-Z0-9-]{2,39}$/;
@@ -37,7 +42,11 @@ function fromText(text) {
     }
     return { sku: `${prefix}-${match[2]}`, vendor: PREFIXES[prefix] };
   }
-  if (MCMASTER_RE.test(value.toUpperCase())) return { sku: value.toUpperCase(), vendor: 'McMaster-Carr' };
+  // Unprefixed numbers only when they are the whole cell: "217-2737", not a number inside a name.
+  const whole = value.toUpperCase();
+  if (MCMASTER_RE.test(whole)) return { sku: whole, vendor: 'McMaster-Carr' };
+  if (VEX_RE.test(whole)) return { sku: whole, vendor: 'VEX' };
+  if (CTRE_RE.test(whole)) return { sku: whole, vendor: 'CTR Electronics' };
   return null;
 }
 
@@ -66,6 +75,7 @@ export function productPageOf({ sku, vendor }) {
     case 'Rev': return `https://www.revrobotics.com/${lower}/`;
     case 'Andymark': return `https://andymark.com/products/${lower}`;
     case 'McMaster-Carr': return `https://www.mcmaster.com/${sku}/`;
+    case 'VEX': return `https://www.vexrobotics.com/${lower}.html`;
     default: return null;
   }
 }

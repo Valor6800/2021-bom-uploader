@@ -8,6 +8,9 @@ describe('skuOf', () => {
     [{ partNumber: 'N/A', name: 'thing', description: 'rev-21-1650 NEO' }, 'REV-21-1650', 'Rev'],
     [{ partNumber: 'am-0005' }, 'AM-0005', 'Andymark'],
     [{ partNumber: '91251a540' }, '91251A540', 'McMaster-Carr'],
+    [{ partNumber: 'am-3945_blue' }, 'AM-3945', 'Andymark'],
+    [{ partNumber: '217-2737', name: '1/2" Hex Clamping Shaft Collar' }, '217-2737', 'VEX'],
+    [{ partNumber: '24-676873', name: 'CANdi' }, '24-676873', 'CTR Electronics'],
   ])('reads %j', (row, sku, vendor) => {
     expect(skuOf(row)).toEqual({ sku, vendor });
   });
@@ -16,6 +19,9 @@ describe('skuOf', () => {
     [{ partNumber: 'N/A', name: 'WCP Swerve X2' }],
     [{ partNumber: '1101', name: 'FrontChassisTube' }],
     [{ partNumber: 'ES17-12', name: 'Robot Battery' }],
+    [{ partNumber: 'N/A', name: 'Collar 217-2737 copy' }],
+    [{ partNumber: '2024-676873' }],
+    [{ partNumber: 'WCP-0940A' }],
     [{}],
   ])('finds none in %j', (row) => {
     expect(skuOf(row)).toBeNull();
@@ -26,6 +32,7 @@ describe('productPageOf', () => {
   it('builds the vendor page from the SKU', () => {
     expect(productPageOf({ sku: 'WCP-1706', vendor: 'WCP' })).toBe('https://wcproducts.com/products/wcp-1706');
     expect(productPageOf({ sku: '91251A540', vendor: 'McMaster-Carr' })).toBe('https://www.mcmaster.com/91251A540/');
+    expect(productPageOf({ sku: '217-2737', vendor: 'VEX' })).toBe('https://www.vexrobotics.com/217-2737.html');
     expect(productPageOf({ sku: 'X-1', vendor: 'Nobody' })).toBeNull();
   });
 

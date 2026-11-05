@@ -18,6 +18,7 @@ import { describeUpstreamError, jiraErrorsForLog, upstreamSource } from '../util
 import { baseNumber, preferNewestRevision } from '../utils/partChain.js';
 import { withKeyedLock } from '../utils/keyedLock.js';
 import { blockOf } from './partNumbers.js';
+import { missingFiles } from '../utils/partFileCheck.js';
 import {
   buildLabelOf, cutBuildConflict, cutBuildsAmong, isCutStatus, sharedPartConflict, usedInKeys,
 } from '../utils/cutBuilds.js';
@@ -1040,6 +1041,50 @@ export class BuildService {
    * failed is handled by FileJobs' own dedup; this never waits for them.
    * @private
    */
+  /**
+   * Make the files a cut Build's Parts are missing (a job lost to a restart,
+   * one that failed, a Part added since): queue only those Parts, from the
+   * Build's own cut version. The files each already has are kept, so a job
+   * makes only what's missing.
+   *
+   * @param {string} buildKey
+   * @returns {Promise<{ queued: string[], missing: Record<string, string[]> }>}
+   */
+  async queueMissingFiles(buildKey) {
+    if (!this.fileJobs || !this.partService) throw new HttpError(503, 'Files can\'t be made on this server.');
+    const build = await this.jiraClient.getIssue(buildKey, {
+      fields: ['status', 'issuetype', BuildField.ASSEMBLY_LINK, BuildField.ONSHAPE_VERSION_LINK],
+    });
+    if (build?.fields?.issuetype?.name && build.fields.issuetype.name !== 'Build') throw badRequest(`${buildKey} is not a Build.`);
+    const status = build?.fields?.status?.name ?? null;
+    const versionLink = build?.fields?.[BuildField.ONSHAPE_VERSION_LINK] ?? null;
+    if (status === BuildStatus.DRAFT || !versionLink) {
+      throw conflict('Files are made when the Build is cut; this one is still a Draft.', { buildStatus: status });
+    }
+    const assemblyKey = build.fields[BuildField.ASSEMBLY_LINK];
+    const keys = await this.getLinkedParts(buildKey);
+    const stories = keys.length ? await this.partService.getStoriesByKeys(keys, { files: true }) : [];
+    const queued = [];
+    const missing = {};
+    for (const story of stories) {
+      const gaps = missingFiles(story);
+      if (!story.fullPartNumber || !gaps?.length) continue;
+      missing[story.key] = gaps;
+      const added = this.fileJobs.enqueue({
+        key: story.key,
+        partNumber: story.fullPartNumber,
+        thickness: story.thickness,
+        material: story.material,
+        machinery: story.machinery,
+        tapping: story.tapping,
+        assemblyKey,
+        versionLink,
+      });
+      if (added) queued.push(story.key);
+    }
+    return { queued, missing };
+  }
+
   _queuePartFiles(buildKey, assemblyKey, versionLink = null) {
     if (!this.fileJobs || !this.partService) return undefined;
     // Returns the promise so a test (or a future caller) can await it;

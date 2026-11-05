@@ -50,6 +50,41 @@ describe('PartService.clonePart (Create spare)', () => {
     });
   });
 
+  it('copies the original\'s own files onto the spare, and nothing else', async () => {
+    const att = (filename) => ({ filename, content: `https://jira.example/secure/attachment/1/${filename}` });
+    const jiraClient = cloneClient({
+      getIssue: jest.fn().mockResolvedValue({
+        fields: {
+          attachment: [
+            att('VR26P-0001C.png'), att('VR26P-0001C_drawings.pdf'), att('VR26P-0001C_drawing_REAR.png'), att('VR26P-0001C.dxf'),
+            att('VR26P-0001CX.png'), att('photo.jpg'), att('VR26P-0001C notes.txt'),
+          ],
+        },
+      }),
+      getAttachmentContent: jest.fn(async (url) => Buffer.from(url)),
+      addAttachment: jest.fn().mockResolvedValue(undefined),
+    });
+    const result = await new PartService({ jiraClient }).clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
+    expect(jiraClient.getIssue).toHaveBeenCalledWith('VAL-50', { fields: ['attachment'] });
+    expect(jiraClient.addAttachment.mock.calls.map(([key, name]) => `${key} ${name}`)).toEqual([
+      'VAL-99 VR26P-0001C.png', 'VAL-99 VR26P-0001C_drawings.pdf', 'VAL-99 VR26P-0001C_drawing_REAR.png', 'VAL-99 VR26P-0001C.dxf',
+    ]);
+    expect(result.filesCopied).toEqual({ copied: expect.arrayContaining(['VR26P-0001C.png']), problems: [] });
+  });
+
+  it('still makes the spare when its files can\'t be copied', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const jiraClient = cloneClient({
+      getIssue: jest.fn().mockResolvedValue({ fields: { attachment: [{ filename: 'VR26P-0001C.png', content: 'https://j/secure/attachment/1/x' }] } }),
+      getAttachmentContent: jest.fn().mockRejectedValue(new Error('gone')),
+      addAttachment: jest.fn(),
+    });
+    const result = await new PartService({ jiraClient }).clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });
+    warn.mockRestore();
+    expect(result.key).toBe('VAL-99');
+    expect(result.filesCopied).toEqual({ copied: [], problems: ['VR26P-0001C.png'] });
+  });
+
   it('reads the source once and allocates nothing', async () => {
     const jiraClient = cloneClient();
     await new PartService({ jiraClient }).clonePart({ sourceKey: 'VAL-50', epicKey: 'VAL-1' });

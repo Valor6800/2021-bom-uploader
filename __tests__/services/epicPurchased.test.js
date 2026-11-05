@@ -71,4 +71,17 @@ describe('EpicService.getPurchasedParts', () => {
     expect(result.parts).toEqual([]);
     expect(result.error).toEqual(expect.any(String));
   });
+
+  it("reads a cut Build's sub-assemblies from its version too, and a Draft's from the workspace", async () => {
+    const { service, bomService } = setup({
+      builds: { 'HAR-2083': build(), 'HAR-2084': build({ customfield_10502: null }) },
+      cut: { external: [], subAssemblies: [] },
+      live: { external: [], subAssemblies: [] },
+    });
+    await service.getSubAssemblies('HAR-2075', 'HAR-2083');
+    expect(bomService.getVersionReport).toHaveBeenCalledWith(DOC, VER, EL, { seasonType: 'R', year: '27' });
+    expect(bomService.getBOMReport).not.toHaveBeenCalled();
+    await service.getSubAssemblies('HAR-2075', 'HAR-2084');
+    expect(bomService.getBOMReport).toHaveBeenCalledTimes(1);
+  });
 });

@@ -4,19 +4,24 @@
  * - **Orders**: the PARTS order tickets whose vendor Part Number is that SKU
  *   (status, quantity, price, the link the requester gave).
  * - **Catalog**: the vendor's own product listing (title, picture, price,
- *   in stock), for vendors whose store answers Shopify's public product JSON
- *   (`/products/<handle>.js`). Only the stores below are ever asked, only by
- *   SKUs that pass `SKU_PATTERN`, and only pictures on those stores' CDN are
- *   fetched, so nothing a user types decides where the server connects.
+ *   in stock). Shopify stores (WCP, Thrifty, AndyMark, CTRE) are asked
+ *   through their storefront search, limited to the SKU field, which they
+ *   answer even when they refuse the product JSON; REV through its product
+ *   page (the address is the SKU), kept only when the page names that SKU.
+ *   Only the stores below are ever asked, only by SKUs that pass
+ *   `SKU_PATTERN`, and only pictures on those stores' CDNs are fetched, so
+ *   nothing a user types decides where the server connects.
  *
  * Every answer is kept a while (a day when found, an hour when not) so a page
- * load costs the vendor nothing after the first.
+ * load costs the vendor nothing after the first. A store that says "too many
+ * requests" (429) is left alone until it says it may be asked again.
  */
 
 import axios from 'axios';
 import { PARTS_PROJECT_KEY, PartField } from '../utils/purchasingConstants.js';
 import { SKU_PATTERN, productPageOf, skuOf } from '../utils/vendorSku.js';
 import { isUnusableVendor, normalizeVendor } from '../utils/vendorNormalize.js';
+import { hardwareOf, hardwareQuery } from '../utils/hardwareSpec.js';
 
 /** A vendor name, normalized; null when blank or unusable. */
 const vendorOf = (raw) => (isUnusableVendor(raw) ? null : normalizeVendor(raw));
@@ -25,19 +30,30 @@ const vendorOf = (raw) => (isUnusableVendor(raw) ? null : normalizeVendor(raw));
 const SHOPIFY_STORES = Object.freeze({
   WCP: 'wcproducts.com',
   Thrifty: 'www.thethriftybot.com',
+  Andymark: 'andymark.com',
+  'CTR Electronics': 'store.ctr-electronics.com',
 });
+const REV_HOST = 'www.revrobotics.com';
 /** Hosts a PARTS ticket's link may point at for its catalog entry. */
-const STORE_HOSTS = new Set(['wcproducts.com', 'www.wcproducts.com', 'www.thethriftybot.com', 'thethriftybot.com']);
-const IMAGE_HOSTS = new Set(['cdn.shopify.com', ...STORE_HOSTS]);
+const STORE_HOSTS = new Set([
+  'wcproducts.com', 'www.wcproducts.com', 'www.thethriftybot.com', 'thethriftybot.com',
+  'andymark.com', 'www.andymark.com', 'store.ctr-electronics.com',
+]);
+const SHOPIFY_CDN = 'cdn.shopify.com';
+const IMAGE_HOSTS = new Set([SHOPIFY_CDN, 'cdn11.bigcommerce.com', ...STORE_HOSTS]);
 
 const FOUND_TTL_MS = 24 * 60 * 60 * 1000;
 const MISSING_TTL_MS = 60 * 60 * 1000;
+/** How long a store that answered 429 without saying when is left alone. */
+const BACKOFF_MS = 10 * 60 * 1000;
+const MAX_BACKOFF_MS = 60 * 60 * 1000;
 const TIMEOUT_MS = 6000;
 const MAX_JSON_BYTES = 2_000_000;
 const MAX_IMAGE_BYTES = 3_000_000;
 const MAX_IMAGES = 300;
 const MAX_SKUS = 60;
 const CONCURRENCY = 4;
+const USER_AGENT = 'ValorBOM (FRC team 6800 parts lookup)';
 
 /** Run `fn` over `items`, `n` at a time. */
 async function pool(items, n, fn) {
@@ -62,6 +78,29 @@ function safeUrl(raw, hosts) {
   }
 }
 
+/** Shopify prices: "8.99" in search answers, 899 (cents) in product JSON. */
+const dollars = (v, { cents = false } = {}) => {
+  const n = Number(v);
+  if (v === null || v === undefined || v === '' || !Number.isFinite(n)) return null;
+  return cents ? n / 100 : n;
+};
+
+/** The content of `<meta property="…" content="…">`, HTML entities for quotes and ampersands undone. */
+function metaOf(html, property) {
+  const re = new RegExp(`<meta[^>]+property=["']${property.replace(/[.:]/g, '\\$&')}["'][^>]+content=["']([^"']*)["']`, 'i');
+  const raw = re.exec(html)?.[1];
+  return raw == null ? null : raw.replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').trim();
+}
+
+/** The hardware drawing query from the first order summary that describes hardware, or null. */
+function drawingFrom(orders) {
+  for (const o of orders) {
+    const spec = hardwareOf({ name: o.summary });
+    if (spec) return hardwareQuery(spec);
+  }
+  return null;
+}
+
 export class VendorCatalog {
   /**
    * @param {object} deps
@@ -75,6 +114,8 @@ export class VendorCatalog {
     this._catalog = new Map();
     /** sku -> { at, promise of Buffer|null } */
     this._images = new Map();
+    /** host -> when it may be asked again, after a 429 */
+    this._backoff = new Map();
   }
 
   /**
@@ -106,6 +147,9 @@ export class VendorCatalog {
           ?? (SHOPIFY_STORES[vendor] ? `https://${SHOPIFY_STORES[vendor]}/search?q=${encodeURIComponent(sku)}` : productPageOf({ sku, vendor }))
           ?? null,
         orders: orders ? mine : null,
+        // No vendor picture: the tool's drawing, when an order's summary describes hardware
+        // ("Socket Head Screw 10-32 Thread Size, 2-1/4\" Long", as McMaster orders do).
+        drawing: catalog?.image ? null : drawingFrom(mine),
         catalog: catalog ? { title: catalog.title, price: catalog.price, available: catalog.available, url: catalog.url, hasImage: !!catalog.image } : null,
       }];
     });
@@ -152,38 +196,80 @@ export class VendorCatalog {
     return promise;
   }
 
+  /**
+   * @throws {Error} when the store asked us to slow down (so "not found" isn't remembered)
+   */
   async _findListing(sku, vendor, links) {
     const host = SHOPIFY_STORES[vendor];
     if (host) {
-      // 1. The store's product named after the SKU (WCP: /products/wcp-1706).
-      const direct = await this._product(host, sku.toLowerCase());
-      const fromDirect = direct && this._listing(host, direct, sku);
-      if (fromDirect) return fromDirect;
-
-      // 2. The store's search, keeping only a product that lists this exact SKU.
-      const search = await this._json(`https://${host}/search/suggest.json?q=${encodeURIComponent(sku)}&resources%5Btype%5D=product&resources%5Blimit%5D=4`);
-      for (const p of search?.resources?.results?.products ?? []) {
-        if (!/^[a-z0-9-]+$/i.test(p?.handle ?? '')) continue;
-        const product = await this._product(host, p.handle);
-        const found = product && this._listing(host, product, sku);
-        if (found) return found;
-      }
+      // 1. The store's search, over SKUs only: an unknown SKU finds nothing.
+      const found = await this._searchSku(host, sku);
+      if (found) return found;
+    }
+    if (vendor === 'Rev') {
+      const found = await this._revPage(sku);
+      if (found) return found;
     }
 
-    // 3. The link a requester put on a PARTS ticket for this SKU.
+    // 2. The link a requester put on a PARTS ticket for this SKU.
     for (const link of links) {
       const url = safeUrl(link, STORE_HOSTS);
       const handle = url && /\/products\/([a-z0-9-]+)/i.exec(url.pathname)?.[1];
       if (!handle) continue;
-      const product = await this._product(url.hostname, handle);
+      const product = await this._json(`https://${url.hostname}/products/${encodeURIComponent(handle)}.js`).catch(() => null);
       if (product) return this._listing(url.hostname, product, sku, { trusted: true });
     }
     return null;
   }
 
+  /** A Shopify store's product with this SKU, from its search; null when none. */
+  async _searchSku(host, sku) {
+    const params = new URLSearchParams({
+      q: sku,
+      'resources[type]': 'product',
+      'resources[limit]': '4',
+      'resources[options][fields]': 'variants.sku',
+    });
+    const answer = await this._json(`https://${host}/search/suggest.json?${params}`);
+    const products = (answer?.resources?.results?.products ?? []).filter((p) => /^[a-z0-9-]+$/i.test(p?.handle ?? ''));
+    // The product named after the SKU when there is one (WCP: wcp-1706), else the best match.
+    const product = products.find((p) => p.handle.toUpperCase() === sku) ?? products[0];
+    if (!product) return null;
+    // A product whose variants cost different amounts: its price is not this SKU's.
+    const lo = dollars(product.price_min ?? product.price);
+    const hi = dollars(product.price_max ?? product.price);
+    const image = safeUrl(product.image ?? product.featured_image?.url, IMAGE_HOSTS);
+    return {
+      title: String(product.title ?? '').trim() || sku,
+      price: lo !== null && lo === hi ? lo : null,
+      available: typeof product.available === 'boolean' ? product.available : null,
+      url: `https://${host}/products/${product.handle}`,
+      image: image ? image.toString() : null,
+    };
+  }
+
+  /** REV's product page (www.revrobotics.com/rev-41-1163/), when it names this SKU. */
+  async _revPage(sku) {
+    if (!/^REV-[\d-]+$/.test(sku)) return null;
+    const html = await this._get(`https://${REV_HOST}/${sku.toLowerCase()}/`, 'text/html');
+    if (typeof html !== 'string') return null;
+    // An unknown SKU redirects (not followed); a page for another product doesn't carry this SKU.
+    const skus = [...html.matchAll(/"sku"\s*:\s*"([^"]+)"/g)].map((m) => m[1].trim().toUpperCase());
+    if (!skus.includes(sku)) return null;
+    const image = safeUrl(metaOf(html, 'og:image'), IMAGE_HOSTS);
+    const stock = /"availability"\s*:\s*"[^"]*schema\.org\/(InStock|OutOfStock|PreOrder|BackOrder|SoldOut)"/i.exec(html)?.[1];
+    return {
+      title: metaOf(html, 'og:title') || sku,
+      price: dollars(metaOf(html, 'product:price:amount')),
+      available: stock ? /^InStock$/i.test(stock) : null,
+      url: `https://${REV_HOST}/${sku.toLowerCase()}/`,
+      image: image ? image.toString() : null,
+    };
+  }
+
   /**
-   * A listing when the product is this SKU: a variant with the SKU, or the
-   * product's handle is the SKU. `trusted`: a person linked it to this SKU.
+   * A listing from product JSON (a ticket's link): a variant with the SKU, or
+   * the product's handle is the SKU. `trusted`: a person linked it to this SKU.
    */
   _listing(host, product, sku, { trusted = false } = {}) {
     const variants = Array.isArray(product.variants) ? product.variants : [];
@@ -192,36 +278,54 @@ export class VendorCatalog {
     if (!variant && !named && !trusted) return null;
     // A product with several variants and none of them this SKU: its price is not this SKU's.
     const chosen = variant ?? (variants.length === 1 ? variants[0] : {});
-    const cents = Number(chosen.price ?? (variants.length <= 1 ? product.price : NaN));
+    const price = dollars(chosen.price ?? (variants.length <= 1 ? product.price : null), { cents: true });
     const image = safeUrl(chosen.featured_image?.src ?? product.featured_image ?? product.images?.[0], IMAGE_HOSTS);
     const available = typeof chosen.available === 'boolean' ? chosen.available : (variant || variants.length <= 1 ? (product.available ?? null) : null);
     return {
       title: [product.title, variant && variants.length > 1 ? variant.title : null].filter(Boolean).join(' — '),
-      price: Number.isFinite(cents) ? cents / 100 : null,
+      price,
       available,
       url: `https://${host}/products/${product.handle}${variant && variants.length > 1 ? `?variant=${encodeURIComponent(variant.id)}` : ''}`,
       image: image ? image.toString() : null,
     };
   }
 
-  _product(host, handle) {
-    return this._json(`https://${host}/products/${encodeURIComponent(handle)}.js`);
+  /** GET JSON from a store; null when missing, slow, redirected, too big or not JSON. */
+  async _json(url) {
+    const body = await this._get(url, 'application/json');
+    if (body === null) return null;
+    try {
+      return typeof body === 'string' ? JSON.parse(body) : body;
+    } catch {
+      return null;
+    }
   }
 
-  /** GET JSON from a store; null on any failure (missing, slow, redirected, too big). */
-  async _json(url) {
+  /**
+   * GET a store page as text; null on any failure but "too many requests".
+   * @throws {Error} when the host answered 429, or is still being left alone after one
+   */
+  async _get(url, accept) {
+    const { hostname } = new URL(url);
+    const until = this._backoff.get(hostname) ?? 0;
+    if (Date.now() < until) throw new Error(`${hostname} asked us to wait`);
     try {
       const res = await this.http.get(url, {
         timeout: TIMEOUT_MS,
         maxRedirects: 0,
         maxContentLength: MAX_JSON_BYTES,
         responseType: 'text',
-        headers: { Accept: 'application/json', 'User-Agent': 'ValorBOM (FRC team 6800 parts lookup)' },
+        headers: { Accept: accept, 'User-Agent': USER_AGENT },
         validateStatus: (s) => s === 200,
       });
-      return typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-    } catch {
-      return null;
+      return res.data ?? null;
+    } catch (err) {
+      if (err?.response?.status !== 429) return null;
+      const seconds = Number(err.response.headers?.['retry-after']);
+      const wait = Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, MAX_BACKOFF_MS) : BACKOFF_MS;
+      this._backoff.set(hostname, Date.now() + wait);
+      console.warn(`[vendor] ${hostname} answered 429; leaving it alone for ${Math.round(wait / 1000)} s`);
+      throw new Error(`${hostname} asked us to wait`);
     }
   }
 
@@ -244,7 +348,8 @@ export class VendorCatalog {
         ?? this._catalogFor(key, skuOf({ partNumber: key })?.vendor ?? null)).catch(() => null);
       const url = safeUrl(listing?.image, IMAGE_HOSTS);
       if (!url) return null;
-      url.searchParams.set('width', large ? '1200' : '300');
+      // Shopify's CDN sizes a picture to order; REV's pictures come one size (500 px).
+      if (url.hostname === SHOPIFY_CDN) url.searchParams.set('width', large ? '1200' : '300');
       const res = await this.http.get(url.toString(), {
         timeout: TIMEOUT_MS,
         maxRedirects: 0,

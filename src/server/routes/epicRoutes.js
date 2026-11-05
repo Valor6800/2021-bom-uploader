@@ -1,6 +1,6 @@
 /**
  * Epic Routes — GET /api/epics/search, GET /api/epics/:key,
- * GET /api/epics/:key/sub-assemblies, GET /api/epics/:key/purchased-parts, POST /api/epics/onboard/preview, POST /api/epics/onboard
+ * GET /api/epics/:key/sub-assemblies, GET /api/epics/:key/purchased-parts, GET /api/epics/:key/activity, POST /api/epics/onboard/preview, POST /api/epics/onboard
  */
 
 import { Router } from 'express';
@@ -25,7 +25,7 @@ function requireOnshapeUrl(body) {
  * @param {import('../services/epicService.js').EpicService} deps.epicService
  * @returns {Router}
  */
-export default function epicRoutes({ epicService }) {
+export default function epicRoutes({ epicService, activityLog }) {
   const router = Router();
 
   /**
@@ -59,6 +59,16 @@ export default function epicRoutes({ epicService }) {
   }));
 
   /**
+   * GET /api/epics/:key/activity — who did what to this Assembly, newest
+   * first: [{ at, action, who, text }] (empty when the log isn't kept here).
+   */
+  router.get('/:key/activity', asyncHandler(async (req, res) => {
+    const check = validateIssueKey(req.params.key);
+    if (!check.valid) throw badRequest(check.error);
+    res.json({ entries: activityLog ? await activityLog.list(req.params.key) : [] });
+  }));
+
+  /**
    * GET /api/epics/:key/purchased-parts?build=HAR-123 — the off-the-shelf
    * parts of the Assembly (rows from other OnShape documents), from the
    * Build's cut version, or the live BOM for a Draft.
@@ -76,8 +86,9 @@ export default function epicRoutes({ epicService }) {
   }));
 
   /**
-   * GET /api/epics/:key/sub-assemblies — the Assembly's sub-assemblies from
-   * its OnShape BOM, each matched to its own Assembly where one exists.
+   * GET /api/epics/:key/sub-assemblies?build=HAR-123 — the Assembly's
+   * sub-assemblies from its OnShape BOM (a cut Build's version, else the
+   * workspace), each matched to its own Assembly where one exists.
    * → { subAssemblies: [{ name, status: 'exists'|'missing', assembly? }], error? }
    */
   router.get('/:key/sub-assemblies', asyncHandler(async (req, res) => {
@@ -85,7 +96,12 @@ export default function epicRoutes({ epicService }) {
     if (!check.valid) {
       throw badRequest(check.error);
     }
-    res.json(await epicService.getSubAssemblies(req.params.key));
+    const build = typeof req.query.build === 'string' && req.query.build ? req.query.build : undefined;
+    if (build) {
+      const buildCheck = validateIssueKey(build);
+      if (!buildCheck.valid) throw badRequest(buildCheck.error);
+    }
+    res.json(await epicService.getSubAssemblies(req.params.key, build));
   }));
 
   /**
@@ -130,6 +146,14 @@ export default function epicRoutes({ epicService }) {
     }
     const result = await epicService.onboardAssembly({ url, expectedSummary });
     res.json(result);
+    if (result?.status === 'created' && result.assembly?.key) {
+      activityLog?.record({
+        assemblyKey: result.assembly.key,
+        user: req.user,
+        action: 'onboard',
+        text: `added ${result.assembly.summary ?? result.assembly.key} from OnShape${result.build?.key ? `, with Build 1 (${result.build.key})` : ''}`,
+      });
+    }
   }));
 
   return router;

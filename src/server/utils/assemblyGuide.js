@@ -21,6 +21,7 @@
 
 import { stripBrackets } from './cleanName.js';
 import { skuOf } from './vendorSku.js';
+import { hardwareOf } from './hardwareSpec.js';
 import { cleanConfiguration } from './onshapeConfiguration.js';
 
 const PART_NUMBER_RE = /^\d{4}$/;
@@ -173,6 +174,14 @@ export function buildGuide(bomTable, { documentId, name }) {
           ? skuOf({ partNumber: read(child, 'partNumber'), name: read(child, 'name'), description: read(child, 'description') })
           : null;
         remember(childPath, child);
+        // Hardware (standard content, or a bought screw, spacer or bearing) the tool can draw itself.
+        if (kind === LineKind.VENDOR || kind === LineKind.HARDWARE) {
+          const hardware = hardwareOf({
+            name: read(child, 'name'), description: read(child, 'description'), configuration: child.itemSource?.configuration,
+          });
+          if (hardware) origins.set(childPath, { ...(origins.get(childPath) ?? {}), hardware });
+        }
+        const drawable = !!origins.get(childPath)?.hardware;
         line = {
           kind,
           name: nameText,
@@ -186,6 +195,8 @@ export function buildGuide(bomTable, { documentId, name }) {
           sku: sku?.sku ?? null,
           mass: read(child, 'mass') || null,
           imageId: origins.has(childPath) ? childPath : null,
+          // The tool can draw it from its name (so its picture never depends on a Part Studio read).
+          drawable,
         };
       }
 
@@ -256,6 +267,7 @@ export function buildGuide(bomTable, { documentId, name }) {
           material: line.material,
           description: line.description,
           imageId: line.imageId,
+          drawable: line.drawable,
           total: line.total,
           steps: [step.number],
         });

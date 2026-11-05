@@ -19,11 +19,11 @@ afterAll(() => {
   else process.env.PROJECT_KEY = savedProject;
 });
 
-function buildApp(buildService) {
+function buildApp(buildService, activityLog) {
   const app = express();
   app.use(cors);
   app.use(express.json());
-  app.use('/api/builds', buildRoutes({ buildService }));
+  app.use('/api/builds', buildRoutes({ buildService, activityLog }));
   app.use('/api', apiNotFound);
   app.use(errorHandler);
   return app;
@@ -487,5 +487,35 @@ describe('POST /api/builds/:key/cut-version (INC-4)', () => {
     spy.mockRestore();
     expect(res.status).toBe(503);
     expect(res.body).toMatchObject({ cutStage: 'supersede', onshapeVersionLink: 'l', source: 'tracker' });
+  });
+});
+
+describe('activity', () => {
+  it('records who saved, cut and archived, after answering', async () => {
+    const activityLog = { record: jest.fn().mockResolvedValue(undefined) };
+    const buildService = {
+      saveBuildParts: jest.fn().mockResolvedValue({ results: [{ op: 'create', ok: true }] }),
+      cutVersionFromOnshape: jest.fn().mockResolvedValue({ onshapeVersionLink: 'x', superseded: ['VAL-10'], resumed: false }),
+      archiveBuild: jest.fn().mockResolvedValue(undefined),
+    };
+    const app = buildApp(buildService, activityLog);
+    const codes = [
+      (await request(app).post('/api/builds/VAL-11/save').send({ links: [{ ref: 'a', key: 'VAL-33' }] })).status,
+      (await request(app).post('/api/builds/VAL-11/cut-version').send({ assemblyKey: 'VAL-1' })).status,
+      (await request(app).post('/api/builds/VAL-11/archive').send({})).status,
+    ];
+    expect(codes).toEqual([200, 200, 200]);
+    expect(activityLog.record.mock.calls.map(([e]) => [e.action, e.buildKey, e.text])).toEqual([
+      ['save', 'VAL-11', 'saved {build}: 1 Part made'],
+      ['cut', 'VAL-11', 'cut {build} from OnShape; VAL-10 superseded'],
+      ['archive', 'VAL-11', 'archived {build}'],
+    ]);
+  });
+
+  it('records nothing for a save that did nothing', async () => {
+    const activityLog = { record: jest.fn() };
+    const app = buildApp({ saveBuildParts: jest.fn().mockResolvedValue({ results: [{ op: 'update', ok: false }] }) }, activityLog);
+    await request(app).post('/api/builds/VAL-11/save').send({ links: [{ ref: 'a', key: 'VAL-33' }] });
+    expect(activityLog.record).not.toHaveBeenCalled();
   });
 });

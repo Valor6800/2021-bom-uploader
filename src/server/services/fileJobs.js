@@ -11,9 +11,9 @@
  * sends each as its own file), so the Parts' state stays `pending` until
  * their STEP is on.
  *
- * The queue lives in memory. A job lost to a restart or a failure is made up
- * on the next Update from CAD, which queues any Part still missing files
- * (see PartService), so a gap never lasts.
+ * The queue lives in memory. A job lost to a restart or a failure shows on
+ * the Assembly page as Parts missing files, and its "Make missing files"
+ * queues just those again (BuildService.queueMissingFiles).
  */
 
 import { baseNumber } from '../utils/partChain.js';
