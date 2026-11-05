@@ -31,8 +31,8 @@ COPY --from=build /app/src/server ./src/server
 COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/package.json ./
 
-# Runtime state the app writes (the OnShape call count, cut versions' BOMs).
-# Mount a volume here (e.g. `-v valorbom-data:/app/data`) to keep it across deploys.
+# Runtime state the app writes (the OnShape call count, cut versions' BOMs, the
+# parts order mentors are putting together). Mount a volume here (e.g. `-v valorbom-data:/app/data`) to keep it across deploys.
 RUN mkdir -p /app/data && chown node:node /app/data
 
 USER node

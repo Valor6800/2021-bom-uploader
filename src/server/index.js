@@ -31,6 +31,7 @@ import { ReceivingService } from './services/receivingService.js';
 import { AssemblyGuides } from './services/assemblyGuides.js';
 import { VendorCatalog } from './services/vendorCatalog.js';
 import { ActivityLog } from './services/activityLog.js';
+import { OrderDraft } from './services/orderDraft.js';
 import { VersionStore } from './utils/versionStore.js';
 import { onshapeUsage } from './utils/onshapeUsage.js';
 
@@ -110,7 +111,7 @@ const activityLog = new ActivityLog({ jiraClient });
 
 const orderSheetService = sheetsClient ? new OrderSheetService({ sheetsClient }) : null;
 const purchasingService = orderSheetService
-  ? new PurchasingService({ jiraClient, orderSheetService })
+  ? new PurchasingService({ jiraClient, orderSheetService, orderDraft: new OrderDraft() })
   : null;
 const receivingService = orderSheetService
   ? new ReceivingService({ jiraClient, orderSheetService })

@@ -48,10 +48,12 @@ export class PurchasingService {
    * @param {object} deps
    * @param {import('../clients/jiraClient.js').JiraClient} deps.jiraClient
    * @param {import('./orderSheetService.js').OrderSheetService} deps.orderSheetService
+   * @param {import('./orderDraft.js').OrderDraft} deps.orderDraft
    */
-  constructor({ jiraClient, orderSheetService }) {
+  constructor({ jiraClient, orderSheetService, orderDraft }) {
     this.jiraClient = jiraClient;
     this.orderSheetService = orderSheetService;
+    this.orderDraft = orderDraft;
     this._historyCache = null;
   }
 
@@ -144,6 +146,8 @@ export class PurchasingService {
       },
       budget,
       wishList,
+      // What mentors have ticked and chosen so far, for tickets still in the queue.
+      draft: await this.orderDraft.retain(lines.map((line) => line.key)),
       options: {
         classifications: options.classifications.length ? options.classifications : CLASSIFICATIONS,
         sources: SOURCES,
@@ -230,7 +234,28 @@ export class PurchasingService {
       }
     }
 
+    // Every line is on the sheet now, even one whose transition failed, so none
+    // of them should stay ticked for the next order.
+    await this.orderDraft.remove(lines.map((line) => line.jiraKey));
+
     return { startRow, endRow, dateRow, orderDate, submitted, errors };
+  }
+
+  // -----------------------------------------------------------------------
+  // Draft
+  // -----------------------------------------------------------------------
+
+  /** The order so far: each ticket's saved tick, Classification and bucket. */
+  getDraft() {
+    return this.orderDraft.read();
+  }
+
+  /**
+   * Save changes to some rows of the order so far.
+   * @param {{ key: string, selected?: boolean, classification?: string, wishId?: number|null }[]} rows
+   */
+  updateDraft(rows) {
+    return this.orderDraft.update(rows);
   }
 
   // -----------------------------------------------------------------------

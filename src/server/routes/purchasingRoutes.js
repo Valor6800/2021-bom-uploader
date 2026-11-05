@@ -1,9 +1,11 @@
 /**
  * Purchasing Routes — the mentor-approved -> submitted-to-purchaser flow.
  *
- * GET  /api/purchasing/queue
- * POST /api/purchasing/preview
- * POST /api/purchasing/submit
+ * GET   /api/purchasing/queue
+ * GET   /api/purchasing/draft
+ * PATCH /api/purchasing/draft
+ * POST  /api/purchasing/preview
+ * POST  /api/purchasing/submit
  */
 
 import { Router } from 'express';
@@ -25,6 +27,25 @@ export default function purchasingRoutes({ purchasingService }) {
   router.get('/queue', asyncHandler(async (req, res) => {
     const queue = await purchasingService.getQueue();
     res.json(queue);
+  }));
+
+  /**
+   * GET /api/purchasing/draft
+   * The order so far, without the cost of rebuilding the queue. Polled so that
+   * mentors see each other's changes.
+   */
+  router.get('/draft', asyncHandler(async (req, res) => {
+    res.json({ rows: await purchasingService.getDraft() });
+  }));
+
+  /**
+   * PATCH /api/purchasing/draft
+   *   { rows: [{ key, selected?, classification?, wishId? }] }
+   * Saves only the fields named.
+   */
+  router.patch('/draft', asyncHandler(async (req, res) => {
+    await purchasingService.updateDraft(req.body?.rows);
+    res.json({ ok: true });
   }));
 
   /**

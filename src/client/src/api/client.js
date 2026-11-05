@@ -364,6 +364,25 @@ export function fetchPurchasingQueue() {
 }
 
 /**
+ * The order so far, as all mentors have left it.
+ * @returns {Promise<{ rows: Record<string, { selected?: boolean, classification?: string, wishId?: number|null }> }>}
+ */
+export function fetchOrderDraft() {
+  return request('/api/purchasing/draft');
+}
+
+/**
+ * Save changes to some rows of the order so far. Only the fields named change.
+ * @param {{ key: string, selected?: boolean, classification?: string, wishId?: number|null }[]} rows
+ */
+export function saveOrderDraft(rows) {
+  return request('/api/purchasing/draft', {
+    method: 'PATCH',
+    body: JSON.stringify({ rows }),
+  });
+}
+
+/**
  * Resolve target sheet rows and projected budget without writing anything.
  * @param {{ source: string, rows: { key: string, classification: string, wishId: number|null }[] }} payload
  */

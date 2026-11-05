@@ -113,7 +113,11 @@ function matchRoute(route, method, url) {
 /** Why a legacy screen may carry known colour findings. */
 const LEGACY_COLOURS = ['color-contrast', 'link-in-text-block'];
 
-const purchasingSignedIn = [{ method: 'GET', path: '/api/purchasing/queue', fixture: 'purchasing-queue' }];
+const purchasingSignedIn = [
+  { method: 'GET', path: '/api/purchasing/queue', fixture: 'purchasing-queue' },
+  { method: 'GET', path: '/api/purchasing/draft', respond: () => ({ status: 200, body: { rows: {} } }) },
+  { method: 'PATCH', path: '/api/purchasing/draft', respond: () => ({ status: 200, body: { ok: true } }) },
+];
 const receivingSignedIn = [{ method: 'GET', path: '/api/receiving', fixture: 'receiving' }];
 
 // ---------------------------------------------------------------------------

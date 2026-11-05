@@ -2,11 +2,41 @@
  * Purchasing slice — the submit queue and the per-row choices the coordinator
  * makes before handing an order to the purchaser.
  *
- * `selections` is keyed by Jira issue key so a row's checkbox, Classification
- * and Wish ID survive a queue refresh. `vendorSources` is keyed by canonical
- * vendor name, because a vendor order is one purchase drawn from one pot of
- * money — LISD, VFF, or nothing recorded.
+ * `selections` is keyed by Jira issue key. A row's checkbox, Classification and
+ * Wish ID are saved on the server (see useOrderDraft), so they come back with
+ * the queue and are shared between mentors. `vendorSources` is keyed by
+ * canonical vendor name, because a vendor order is one purchase drawn from one
+ * pot of money — LISD, VFF, or nothing recorded. It lives only in this browser.
  */
+
+/**
+ * Each queue line's row choices, from what the server has saved.
+ *
+ * What was saved may have gone out of date since. A row blocked since it was
+ * ticked comes back unticked: its checkbox is disabled, so a tick could not be
+ * undone, yet would still count toward the budget. A Classification or bucket no
+ * longer on the sheet is dropped, since the server would refuse it at submit.
+ */
+function selectionsFromDraft(queue, draft) {
+  const classifications = new Set(queue?.options?.classifications ?? []);
+  const wishIds = new Set((queue?.wishList ?? []).map((bucket) => bucket.wishId));
+  const selections = {};
+
+  for (const group of queue?.vendorGroups ?? []) {
+    for (const line of group.items) {
+      const saved = draft?.[line.key];
+      selections[line.key] = {
+        selected: Boolean(saved?.selected) && !line.blocked,
+        classification: classifications.has(saved?.classification)
+          ? saved.classification
+          : line.classification,
+        wishId: wishIds.has(saved?.wishId) ? saved.wishId : null,
+      };
+    }
+  }
+
+  return selections;
+}
 
 export const createPurchasingSlice = (set, get) => ({
   /** Raw queue payload from GET /api/purchasing/queue. */
@@ -30,30 +60,30 @@ export const createPurchasingSlice = (set, get) => ({
   setQueueError: (queueError) => set({ queueError, queueLoading: false }),
 
   /**
-   * Replace the queue, seeding a selection entry for every line so each row
-   * carries its default Classification.
+   * Replace the queue, seeding a selection entry for every line from the order
+   * saved on the server; a row with nothing saved gets its default Classification.
    */
   setQueue: (queue) =>
     set((state) => {
-      const selections = {};
       const vendorSources = {};
 
       for (const group of queue?.vendorGroups ?? []) {
         // Blank by default — funding source should be a deliberate choice.
         vendorSources[group.vendor] = state.vendorSources[group.vendor] ?? '';
-
-        for (const line of group.items) {
-          const previous = state.selections[line.key];
-          selections[line.key] = {
-            selected: previous?.selected ?? false,
-            classification: previous?.classification ?? line.classification,
-            wishId: previous?.wishId ?? null,
-          };
-        }
       }
 
-      return { queue, selections, vendorSources, queueLoading: false, queueError: null };
+      return {
+        queue,
+        selections: selectionsFromDraft(queue, queue?.draft),
+        vendorSources,
+        queueLoading: false,
+        queueError: null,
+      };
     }),
+
+  /** Take on the order as saved on the server, including other mentors' changes. */
+  applyDraft: (draft) =>
+    set((state) => ({ selections: selectionsFromDraft(state.queue, draft) })),
 
   /** Set the funding source for one vendor's whole group. */
   setVendorSource: (vendor, source) =>

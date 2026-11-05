@@ -21,6 +21,7 @@ import BudgetPanel from '../components/purchasing/BudgetPanel.jsx';
 import VendorGroup from '../components/purchasing/VendorGroup.jsx';
 import SubmitBar from '../components/purchasing/SubmitBar.jsx';
 import SubmitConfirmModal from '../components/purchasing/SubmitConfirmModal.jsx';
+import { useOrderDraft } from '../components/purchasing/useOrderDraft.js';
 import {
   projectBudget,
   projectVouchers,
@@ -78,6 +79,12 @@ export default function PurchasingQueuePage() {
   useEffect(() => {
     loadQueue();
   }, [loadQueue]);
+
+  const onAuthRequired = useCallback(
+    (err) => setQueueError(asPageError(err)),
+    [setQueueError],
+  );
+  const { saveDraft, saveError } = useOrderDraft({ enabled: Boolean(queue), onAuthRequired });
 
   // --- Derived selection state -------------------------------------------
   const allLines = useMemo(
@@ -144,6 +151,22 @@ export default function PurchasingQueuePage() {
       ).length,
     [projectedWishList],
   );
+
+  // --- Row changes, saved so they last and other mentors see them ----------
+  const handleRowChange = (key, fields) => {
+    updateSelection(key, fields);
+    saveDraft([{ key, ...fields }]);
+  };
+
+  const handleToggleGroup = (keys, selected) => {
+    setManySelected(keys, selected);
+    saveDraft(keys.map((key) => ({ key, selected })));
+  };
+
+  const handleClear = () => {
+    saveDraft(selectedLines.map((line) => ({ key: line.key, selected: false })));
+    clearSelections();
+  };
 
   // --- Submission ---------------------------------------------------------
   const submissionRows = useMemo(
@@ -224,6 +247,12 @@ export default function PurchasingQueuePage() {
         hasSelection={selectedLines.length > 0}
       />
 
+      {saveError && (
+        <Alert variant="error">
+          Your last change could not be saved, so it will be undone shortly: {saveError}
+        </Alert>
+      )}
+
       {submitError && <Alert variant="error">{submitError}</Alert>}
 
       {submitResult && (
@@ -256,8 +285,8 @@ export default function PurchasingQueuePage() {
             vendorSource={vendorSources[group.vendor]}
             wishList={projectedWishList}
             jiraBaseUrl={queue.jiraBaseUrl}
-            onChange={updateSelection}
-            onToggleGroup={setManySelected}
+            onChange={handleRowChange}
+            onToggleGroup={handleToggleGroup}
             onSourceChange={setVendorSource}
           />
         ))
@@ -269,7 +298,7 @@ export default function PurchasingQueuePage() {
         budgetTotal={budgetTotal}
         overspentBucketCount={overspentBucketCount}
         busy={busy}
-        onClear={clearSelections}
+        onClear={handleClear}
         onSubmit={handlePreview}
       />
 

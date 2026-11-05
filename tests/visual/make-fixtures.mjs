@@ -196,6 +196,7 @@ const purchasing = new PurchasingService({
     ],
   }),
   orderSheetService: fakeOrderSheet({ orders: [sheetRow(40, { jiraKey: 'PARTS-300', description: 'Hex bearing 1/2in', orderStatus: 'Delivered' })] }),
+  orderDraft: { retain: async () => ({}) },
 });
 fixtures['purchasing-queue'] = { status: 200, body: await purchasing.getQueue() };
 
