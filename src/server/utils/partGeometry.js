@@ -22,20 +22,20 @@ const TIE = 1e-3;
 
 // ---------------------------------------------------------------- vectors
 
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const cross = (a, b) => [
+export const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+export const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+export const cross = (a, b) => [
   a[1] * b[2] - a[2] * b[1],
   a[2] * b[0] - a[0] * b[2],
   a[0] * b[1] - a[1] * b[0],
 ];
-const length = (a) => Math.hypot(a[0], a[1], a[2]);
-const unit = (a) => {
+export const length = (a) => Math.hypot(a[0], a[1], a[2]);
+export const unit = (a) => {
   const l = length(a);
   return l === 0 ? [0, 0, 0] : [a[0] / l, a[1] / l, a[2] / l];
 };
-const scale = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
-const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+export const scale = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+export const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
 /** Some unit vector square to `n`. */
 function anyPerpendicular(n) {
@@ -64,14 +64,14 @@ function arcPoints(edge, steps = ARC_STEPS) {
 }
 
 /** The points that bound an edge: its ends, plus samples along a curve. */
-function edgePoints(edge) {
+export function edgePoints(edge) {
   const g = edge.geometry ?? {};
   if (edge.curve?.type === 'line') return [g.startPoint, g.endPoint].filter(Boolean);
   if (edge.curve?.type === 'circle' && g.startPoint) return arcPoints(edge);
   return [g.startPoint, g.quarterPoint, g.midPoint, g.endPoint].filter(Boolean);
 }
 
-function bodyPoints(body) {
+export function bodyPoints(body) {
   const points = (body.vertices ?? []).map((v) => v.point);
   for (const edge of body.edges ?? []) points.push(...edgePoints(edge));
   return points;
@@ -258,17 +258,32 @@ const mm = (metres) => metres * 1000;
 const degrees = (radians) => (radians * 180) / Math.PI;
 const mod360 = (d) => ((d % 360) + 360) % 360;
 
+/** True when every edge of a loop lies on one circle, and they go all the way round: a round hole. */
+function holeOf(loop, edgesById) {
+  const edges = loop.coedges.map(({ edgeId }) => edgesById.get(edgeId));
+  if (edges.length === 0 || edges.some((e) => e?.curve?.type !== 'circle')) return null;
+  const [first] = edges;
+  const same = edges.every((e) => Math.abs(e.curve.radius - first.curve.radius) < 1e-7
+    && length(sub(e.curve.origin, first.curve.origin)) < 1e-7);
+  const sweep = edges.reduce((sum, e) => sum + (e.geometry?.arcSweep ?? FULL_TURN), 0);
+  return same && sweep >= FULL_TURN - 1e-6 ? first.curve : null;
+}
+
 /**
- * The outline of the part's chosen face as a DXF (millimetres, one layer):
- * lines, arcs and circles, with other curves as short lines. Seen from
- * outside the part, lower left at the origin.
+ * The part's chosen face laid flat, in millimetres, seen from outside the
+ * part with the lower left of its outline at the origin: what the DXF draws,
+ * plus its round holes (an inner loop that is one whole circle) and how many
+ * other inner loops (cutouts) it has.
  *
  * @param {object} body
- * @param {object} analysis                 From `analyzeBody`
+ * @param {{ face: object, outward: number[], longAxis: number[] }} analysis  From `analyzeBody`, or one of `sideViews`
  * @param {Map<string, number[][]>} [curves]  Points along edges that are neither lines nor circles
- * @returns {string}
+ * @returns {{
+ *   entities: Array, holes: { x: number, y: number, d: number }[], cutouts: number,
+ *   width: number, height: number,
+ * }}
  */
-export function dxfOfFace(body, analysis, curves = new Map()) {
+export function faceLayout(body, analysis, curves = new Map()) {
   const edgesById = new Map((body.edges ?? []).map((e) => [e.id, e]));
   const ex = analysis.longAxis;
   const ey = unit(cross(analysis.outward, ex));
@@ -286,8 +301,10 @@ export function dxfOfFace(body, analysis, curves = new Map()) {
 
   // Lower left of the outline at the origin.
   const outline = edges.flatMap((e) => (curves.get(e.id) ?? edgePoints(e)).map(project));
-  const x0 = Math.min(...outline.map((p) => p[0]));
-  const y0 = Math.min(...outline.map((p) => p[1]));
+  const xs = outline.map((p) => p[0]);
+  const ys = outline.map((p) => p[1]);
+  const x0 = Math.min(...xs);
+  const y0 = Math.min(...ys);
   const at = (p) => { const q = project(p); return [q[0] - x0, q[1] - y0]; };
 
   const entities = [];
@@ -317,7 +334,38 @@ export function dxfOfFace(body, analysis, curves = new Map()) {
       for (let i = 1; i < points.length; i += 1) line(points[i - 1], points[i]);
     }
   }
-  return writeDxf(entities);
+
+  const holes = [];
+  let cutouts = 0;
+  for (const loop of analysis.face.loops ?? []) {
+    if (loop.type !== 'inner') continue;
+    const hole = holeOf(loop, edgesById);
+    if (!hole) { cutouts += 1; continue; }
+    const [x, y] = at(hole.origin);
+    holes.push({ x, y, d: mm(hole.radius) * 2 });
+  }
+
+  return {
+    entities,
+    holes,
+    cutouts,
+    width: Math.max(...xs) - x0,
+    height: Math.max(...ys) - y0,
+  };
+}
+
+/**
+ * The outline of the part's chosen face as a DXF (millimetres, one layer):
+ * lines, arcs and circles, with other curves as short lines. Seen from
+ * outside the part, lower left at the origin.
+ *
+ * @param {object} body
+ * @param {object} analysis                 From `analyzeBody`
+ * @param {Map<string, number[][]>} [curves]  Points along edges that are neither lines nor circles
+ * @returns {string}
+ */
+export function dxfOfFace(body, analysis, curves = new Map()) {
+  return writeDxf(faceLayout(body, analysis, curves).entities);
 }
 
 const num = (n) => (Math.abs(n) < 1e-9 ? 0 : Number(n.toFixed(4)));

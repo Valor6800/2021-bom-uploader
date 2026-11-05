@@ -42,6 +42,8 @@ export class FileJobs {
    * @param {string} job.key           The Part's ticket
    * @param {string} job.partNumber    "VR27P-1103A"
    * @param {string} [job.thickness]   The Part's Thickness (set: one DXF; None: three)
+   * @param {string} [job.material]    The Part's Material, for its drawing
+   * @param {string} [job.tapping]     The Part's Needs Tapping?, for its drawing
    * @param {object} [job.origin]      Where the part lives in OnShape, if known
    * @param {string} [job.assemblyKey] The Assembly to find it in, when `origin` is not known
    * @returns {boolean} True when it was queued
@@ -102,7 +104,12 @@ export class FileJobs {
         return;
       }
       const { problems } = await this.partFiles.attach({
-        key: job.key, partNumber: job.partNumber, origin, thickness: job.thickness,
+        key: job.key,
+        partNumber: job.partNumber,
+        origin,
+        thickness: job.thickness,
+        material: job.material,
+        tapping: job.tapping,
       });
       finish(problems.length ? 'failed' : 'done', problems);
     } catch (err) {

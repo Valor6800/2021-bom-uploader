@@ -2,7 +2,8 @@
  * Pictures — what the tool shows as images.
  *
  * - A Part's picture is the `<Part number>.png` attached to its ticket when
- *   the Part was made.
+ *   the Part was made; its drawing (plates and axles) is the
+ *   `<Part number>_drawing.png` attached when its Build was cut.
  * - A Build's picture is its Assembly in OnShape's isometric view. A cut Build
  *   gets one attached to its ticket, rendered from the version it was cut at
  *   (so it never changes). A Draft has none yet: it is rendered live from the
@@ -83,11 +84,26 @@ export class Pictures {
    * @throws {HttpError} 400 for a ticket that is not a Part, 404 when it has no picture
    */
   async partImage(key) {
+    return this._partFile(key, '.png', 'This Part has no picture.');
+  }
+
+  /**
+   * A Part's drawing, as a picture.
+   * @param {string} key
+   * @returns {Promise<Buffer>}
+   * @throws {HttpError} 400 for a ticket that is not a Part, 404 when it has no drawing
+   */
+  async partDrawing(key) {
+    return this._partFile(key, '_drawing.png', 'This Part has no drawing.');
+  }
+
+  /** The `<Part number><suffix>` attached to a Part's ticket. */
+  async _partFile(key, suffix, missing) {
     const issue = await this._issue(key, ['issuetype', 'summary', 'attachment']);
     if (issue?.fields?.issuetype?.name !== 'Part') throw badRequest(`"${key}" is not a Part`);
     const number = applyPartMask(issue.fields.summary ?? '')?.fullPartNumber;
-    const attachment = (issue.fields.attachment ?? []).find((a) => a.filename === `${number}.png`);
-    if (!attachment) throw new HttpError(404, 'This Part has no picture.');
+    const attachment = (issue.fields.attachment ?? []).find((a) => a.filename === `${number}${suffix}`);
+    if (!attachment) throw new HttpError(404, missing);
     return this._attachment(attachment);
   }
 

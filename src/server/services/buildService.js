@@ -1053,7 +1053,12 @@ export class BuildService {
         for (const story of stories) {
           if (!story.fullPartNumber) continue;
           this.fileJobs.enqueue({
-            key: story.key, partNumber: story.fullPartNumber, thickness: story.thickness, assemblyKey,
+            key: story.key,
+            partNumber: story.fullPartNumber,
+            thickness: story.thickness,
+            material: story.material,
+            tapping: story.tapping,
+            assemblyKey,
           });
         }
       })

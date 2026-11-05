@@ -15,7 +15,7 @@ import PurchasedParts from '../components/assembly/PurchasedParts.jsx';
 import BuildGuide from '../components/assembly/BuildGuide.jsx';
 import KitSheet from '../components/assembly/KitSheet.jsx';
 import BuildReadiness from '../components/assembly/BuildReadiness.jsx';
-import { useBoardColumns, useGuide } from '../components/assembly-shared/useGuideData.js';
+import { useGuide } from '../components/assembly-shared/useGuideData.js';
 import BuildImage from '../components/assembly-shared/BuildImage.jsx';
 import CloneDialog from '../components/assembly/CloneDialog.jsx';
 import SubAssemblyLinks from '../components/assembly-shared/SubAssemblyLinks.jsx';
@@ -27,7 +27,7 @@ import DisclosureMenu from '../components/ui/DisclosureMenu.jsx';
 import EmptyState from '../components/ui/EmptyState.jsx';
 import { friendlyClause } from '../lib/friendlyError.js';
 import {
-  buildLabel, currentBuildOf, defaultAssembleBuildKey, dropAgreedStatus, overlayBuildStatus, visibleBuilds,
+  buildLabel, defaultAssembleBuildKey, dropAgreedStatus, overlayBuildStatus, visibleBuilds,
 } from '../lib/buildNames.js';
 import {
   deriveDesignerRows, dropAgreedParts, mergeLinks, mergeParts,
@@ -149,8 +149,17 @@ function AssemblyPage({ assemblyKey: key }) {
   }), [data.parts, createdParts, data.chain, data.linkedByPart, selectedKey, builds]);
 
   // ----- Manufacturing status and the guide -----
-  const columns = useBoardColumns();
   const partsByKey = useMemo(() => new Map(allParts.map((p) => [p.key, p])), [allParts]);
+  // A plate's or axle's drawing is on the ticket its picture comes from, once its Build was cut.
+  const drawingKeyOf = useCallback((row) => {
+    const files = partsByKey.get(row.imageKey)?.files;
+    return files?.includes(`${row.fullPartNumber}_drawing.png`) ? row.imageKey : null;
+  }, [partsByKey]);
+  // The drawings column shows only when some Part in the table has one.
+  const showDrawings = useMemo(
+    () => [...groups.inBuild, ...groups.other].some((row) => drawingKeyOf(row)),
+    [groups, drawingKeyOf],
+  );
   /** The selected Build's Parts with their tracker status, for readiness and the guide. */
   const buildParts = useMemo(() => groups.inBuild
     .map((r) => {
@@ -279,7 +288,6 @@ function AssemblyPage({ assemblyKey: key }) {
         guideState={guideState}
         partsByNumber={partsByNumber}
         buildParts={buildParts}
-        columns={columns}
         backTo={viewUrl(null)}
         kitTo={viewUrl('kit')}
       />
@@ -411,7 +419,6 @@ function AssemblyPage({ assemblyKey: key }) {
                     <th scope="col">Tapping</th>
                     <th scope="col">Thickness</th>
                     <th scope="col">Priority</th>
-                    <th scope="col">Current?</th>
                   </tr>
                 </thead>
                 <tbody className="parts-group parts-group-in">
@@ -428,22 +435,15 @@ function AssemblyPage({ assemblyKey: key }) {
                       </td>
                     </tr>
                   )}
-                  {groups.inBuild.map((row) => {
-                    const cur = currentBuildOf(row.buildKeys, builds);
-                    const current = cur && cur.key !== selectedKey
-                      ? { current: false, label: `${buildLabel(cur)} is newer` }
-                      : { current: true, label: 'Current' };
-                    return (
-                      <AssemblyPartRow
-                        key={row.rowId}
-                        row={row}
-                        inBuild
-                        current={current}
-                        tracker={partsByKey.get(row.key)}
-                        columns={columns}
-                      />
-                    );
-                  })}
+                  {groups.inBuild.map((row) => (
+                    <AssemblyPartRow
+                      key={row.rowId}
+                      row={row}
+                      inBuild
+                      tracker={partsByKey.get(row.key)}
+                      drawingKey={showDrawings ? drawingKeyOf(row) : undefined}
+                    />
+                  ))}
                 </tbody>
                 {groups.other.length > 0 && (
                   <tbody className="parts-group parts-group-other">
@@ -454,7 +454,12 @@ function AssemblyPage({ assemblyKey: key }) {
                       </th>
                     </tr>
                     {groups.other.map((row) => (
-                      <AssemblyPartRow key={row.rowId} row={row} inBuild={false} />
+                      <AssemblyPartRow
+                        key={row.rowId}
+                        row={row}
+                        inBuild={false}
+                        drawingKey={showDrawings ? drawingKeyOf(row) : undefined}
+                      />
                     ))}
                   </tbody>
                 )}

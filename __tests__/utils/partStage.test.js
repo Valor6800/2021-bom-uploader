@@ -1,4 +1,4 @@
-import { Stage, boardPlaceOf, readinessOf, stageOf } from '../../src/client/src/lib/partStage.js';
+import { Stage, readinessOf, stageOf } from '../../src/client/src/lib/partStage.js';
 
 describe('stageOf', () => {
   it.each([
@@ -24,14 +24,6 @@ describe('stageOf', () => {
   });
 });
 
-describe('boardPlaceOf', () => {
-  it('names the board and column', () => {
-    const columns = { 10200: { board: 'Assembly', column: 'Powder Coat' } };
-    expect(boardPlaceOf('10200', columns)).toBe('Assembly board · Powder Coat');
-    expect(boardPlaceOf('1', columns)).toBeNull();
-    expect(boardPlaceOf(null, columns)).toBeNull();
-  });
-});
 
 describe('readinessOf', () => {
   it('counts ready Parts and lists the blockers, furthest behind first', () => {

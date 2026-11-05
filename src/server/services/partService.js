@@ -49,7 +49,6 @@ export function partFromWritten(key, summary, fields = {}) {
     priority: fields.priority?.name ?? null,
     // Not written by the tool: a new ticket starts at the workflow's first status, read on the next search.
     status: null,
-    statusId: null,
   };
 }
 
@@ -666,7 +665,6 @@ export class PartService {
         priority: issue.fields?.priority?.name ?? null,
         // Where the Part is in manufacturing (its workflow status); null when the search left it out.
         status: issue.fields?.status?.name ?? null,
-        statusId: issue.fields?.status?.id ?? null,
         project: issue.fields?.project?.key ?? JIRA_PROJECT,
         // Only when the search asked for attachments: undefined means "not known".
         ...(Array.isArray(issue.fields?.attachment) ? { files: issue.fields.attachment.map((a) => a.filename) } : {}),

@@ -6,7 +6,6 @@
  * GET /api/guide/:buildKey/image/:imageId   a step's or a part's picture (?size=large for the enlarged view)
  * GET /api/vendor/lookup?skus=A,B           order tickets and vendor listings by SKU
  * GET /api/vendor/image/:sku                a vendor listing's picture (?size=large for the enlarged view)
- * GET /api/boards/columns                   which board column each Part status is in
  */
 
 import { Router } from 'express';
@@ -24,10 +23,9 @@ function requireKey(value) {
  * @param {object} deps
  * @param {import('../services/assemblyGuides.js').AssemblyGuides} deps.guides
  * @param {import('../services/vendorCatalog.js').VendorCatalog} deps.vendorCatalog
- * @param {import('../services/boardColumns.js').BoardColumns} deps.boardColumns
  * @returns {Router}
  */
-export default function guideRoutes({ guides, vendorCatalog, boardColumns }) {
+export default function guideRoutes({ guides, vendorCatalog }) {
   const router = Router();
 
   router.get('/guide/:key', asyncHandler(async (req, res) => {
@@ -60,11 +58,6 @@ export default function guideRoutes({ guides, vendorCatalog, boardColumns }) {
     res.set('Cache-Control', 'private, max-age=86400');
     res.set('X-Content-Type-Options', 'nosniff');
     res.send(found.image);
-  }));
-
-  router.get('/boards/columns', asyncHandler(async (req, res) => {
-    res.set('Cache-Control', 'private, max-age=300');
-    res.json(await boardColumns.get());
   }));
 
   return router;

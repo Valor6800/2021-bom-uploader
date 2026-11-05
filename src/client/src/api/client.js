@@ -422,8 +422,13 @@ export function exportSTL(params) {
 }
 
 // ---------------------------------------------------------------------------
-// Assembly guide, vendor parts, board columns (read-only)
+// Assembly guide and vendor parts (read-only)
 // ---------------------------------------------------------------------------
+
+/** A Part's drawing (plates and axles), as a picture. */
+export function partDrawingUrl(partKey) {
+  return `/api/pictures/drawing/${encodeURIComponent(partKey)}`;
+}
 
 /** The Build's build steps and kits: `{ source, steps, kit }`. */
 export function fetchGuide(buildKey) {
@@ -445,9 +450,4 @@ export function lookupVendorParts(skus) {
 /** A vendor listing's picture URL. */
 export function vendorImageUrl(sku, { large = false } = {}) {
   return `/api/vendor/image/${encodeURIComponent(sku)}${large ? '?size=large' : ''}`;
-}
-
-/** Which board column each Part status is in: `{ columns: { [statusId]: { board, column } } }`. */
-export function fetchBoardColumns() {
-  return request('/api/boards/columns');
 }

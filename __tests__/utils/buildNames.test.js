@@ -2,7 +2,7 @@ import {
   buildLabel, buildSummaryPreview, nextBuildNumber, visibleBuilds, pickerBuilds, defaultBuildKey,
   mergeBuilds, overlayBuildStatus, dropAgreedStatus, activeConflict, conflictSignature,
   statusCheckKeys, repairCandidates, supersedeTargets, cutResultEntries, cutErrorEntries,
-  statusCheckEntries, listLabels, defaultAssembleBuildKey, currentBuildOf,
+  statusCheckEntries, listLabels, defaultAssembleBuildKey,
 } from '../../src/client/src/lib/buildNames.js';
 
 const DOC = '8c64dfdcb66184646a7a3f17';
@@ -191,14 +191,3 @@ describe('defaultAssembleBuildKey', () => {
   });
 });
 
-describe('currentBuildOf', () => {
-  const list = [build('HAR-1', 1, 'Superseded'), build('HAR-2', 2, 'Active'), build('HAR-3', 3, 'Draft')];
-  it('is the highest-numbered linked Build', () => {
-    expect(currentBuildOf(new Set(['HAR-1', 'HAR-3']), list).key).toBe('HAR-3');
-    expect(currentBuildOf(['HAR-2'], list).key).toBe('HAR-2');
-  });
-  it('ignores Builds outside the list and is null with none', () => {
-    expect(currentBuildOf(['HAR-9'], list)).toBeNull();
-    expect(currentBuildOf([], list)).toBeNull();
-  });
-});

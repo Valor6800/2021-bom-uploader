@@ -5,7 +5,7 @@ import { STAGES, Stage, readinessOf } from '../../lib/partStage.js';
  * stage. Each Part's own status is in the table below.
  *
  * @param {object} props
- * @param {object[]} props.parts    The Build's Parts (with `status`, `statusId`)
+ * @param {object[]} props.parts    The Build's Parts (with `status`)
  * @param {string} props.buildName  "Build 2"
  */
 export default function BuildReadiness({ parts, buildName }) {
