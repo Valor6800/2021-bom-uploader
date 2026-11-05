@@ -32,7 +32,7 @@ function requireKey(field, value) {
  * @param {import('../services/exportService.js').ExportService} deps.exportService
  * @returns {Router}
  */
-export default function partRoutes({ partService, exportService }) {
+export default function partRoutes({ partService, exportService, activityLog }) {
   const router = Router();
 
   /**
@@ -122,6 +122,13 @@ export default function partRoutes({ partService, exportService }) {
 
     const result = await partService.clonePart({ sourceKey: req.params.key, epicKey, quantity });
     res.json(result);
+    activityLog?.record({
+      assemblyKey: result.part?.epic ?? epicKey,
+      user: req.user,
+      action: 'spare',
+      text: `made a spare of ${result.fullPartNumber} (${result.key}, qty ${result.part?.quantity ?? quantity ?? '?'}) from ${req.params.key}`
+        + `${result.filesCopied?.copied?.length ? `, with its ${result.filesCopied.copied.length} files` : ''}`,
+    });
   }));
 
   /**

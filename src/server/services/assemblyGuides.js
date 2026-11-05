@@ -10,6 +10,7 @@
 import { HttpError, badRequest } from '../middleware/httpError.js';
 import { BuildField } from '../utils/buildConstants.js';
 import { buildGuide } from '../utils/assemblyGuide.js';
+import { hardwarePicture } from '../utils/hardwarePicture.js';
 
 const VERSION_LINK_RE = /\/documents\/([a-f0-9]{24})\/v\/([a-f0-9]{24})\/e\/([a-f0-9]{24})/i;
 /** A BOM row path ("2.4.3") or the root step. */
@@ -119,20 +120,22 @@ export class AssemblyGuides {
       : (await this._guideAt(where, assembly)).origins.get(imageId);
     if (!origin) throw new HttpError(404, 'This guide has no such picture.');
 
-    const live = origin.wvmType !== 'v';
-    const key = [origin.documentId, origin.wvmType, origin.wvmId, origin.elementId, origin.partId ?? '', origin.configuration ?? '', large ? 'L' : ''].join(':');
+    // Hardware drawn from its name never changes; anything from a workspace may.
+    const live = !origin.hardware && origin.wvmType !== 'v';
+    const key = [origin.documentId, origin.wvmType, origin.wvmId, origin.elementId, origin.partId ?? '', origin.configuration ?? '', large ? 'L' : '', origin.hardware ? JSON.stringify(origin.hardware) : ''].join(':');
     const hit = this._images.get(key);
     if (hit && (!live || Date.now() - hit.at < LIVE_IMAGE_TTL_MS)) return { image: await hit.promise, live };
 
     const partSize = large ? { width: 1200, height: 900 } : { width: 400, height: 300 };
     // A part is drawn only from a Part Studio shape already read: a guide lists many parts,
-    // and asking OnShape for each would spend the year's calls. None read: no picture.
-    if (origin.partId && !this.partFiles?.hasShape(origin)) {
-      throw new HttpError(404, 'No picture: its Part Studio has not been read.');
-    }
-    const draw = origin.partId
-      ? this._partPicture(origin, partSize)
-      : this.onshapeClient.getAssemblyImage(origin, large ? { width: 1600, height: 1120 } : { width: 800, height: 560 });
+    // and asking OnShape for each would spend the year's calls. None read: hardware the
+    // tool can draw from its name and size; anything else has no picture.
+    const shaped = !!origin.partId && !!this.partFiles?.hasShape(origin);
+    let draw;
+    if (shaped) draw = this._partPicture(origin, partSize);
+    else if (origin.hardware) draw = Promise.resolve().then(() => hardwarePicture(origin.hardware, partSize));
+    else if (origin.partId || !origin.documentId) throw new HttpError(404, 'No picture: its Part Studio has not been read.');
+    else draw = this.onshapeClient.getAssemblyImage(origin, large ? { width: 1600, height: 1120 } : { width: 800, height: 560 });
     this._images.set(key, { at: Date.now(), promise: draw });
     draw.catch(() => this._images.delete(key));
     if (this._images.size > MAX_IMAGES) this._images.delete(this._images.keys().next().value);

@@ -42,7 +42,7 @@ describe('settle', () => {
 describe('failureText', () => {
   it('names the Parts and says what to do', () => {
     expect(failureText([{ key: 'HAR-3', name: 'VR27P-1103A', problems: [] }, { key: 'HAR-4', name: 'VR27P-1104A', problems: [] }]))
-      .toBe("Couldn't attach all the files to VR27P-1103A, VR27P-1104A. Update from CAD tries again.");
+      .toBe("Couldn't attach all the files to VR27P-1103A, VR27P-1104A. Once the Build is cut, the Assembly page can make them again.");
     expect(failureText([])).toBe('');
   });
 });

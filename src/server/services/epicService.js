@@ -436,24 +436,10 @@ export class EpicService {
     const season = bomContext(assembly);
 
     try {
-      let version = null;
-      if (buildKey) {
-        const build = await this.jiraClient.getIssue(buildKey, {
-          fields: ['issuetype', BuildField.ASSEMBLY_LINK, BuildField.ONSHAPE_VERSION_LINK],
-        }).catch((err) => { if (err?.status === 404) return null; throw err; });
-        const f = build?.fields ?? {};
-        if (f.issuetype?.name === 'Build' && f[BuildField.ASSEMBLY_LINK] === key) {
-          version = /\/documents\/([a-f0-9]{24})\/v\/([a-f0-9]{24})\/e\/([a-f0-9]{24})/i
-            .exec(f[BuildField.ONSHAPE_VERSION_LINK] ?? '');
-        }
-      }
-      const report = version
-        ? await this.bomService.getVersionReport(version[1], version[2], version[3], season)
-        : await this.bomService.getBOMReport(
-          null, assembly.documentId, assembly.workspaceId, assembly.elementId, season,
-        );
+      const report = await this._reportFor(assembly, key, buildKey, season);
       return { parts: report.external ?? [] };
     } catch (err) {
+      console.warn('[purchased]', key, buildKey ?? '(workspace)', 'BOM read failed:', err?.status ?? '', err?.message);
       return { parts: [], error: describeUpstreamError(err) };
     }
   }
@@ -467,9 +453,32 @@ export class EpicService {
    * A failure to read the BOM never fails the page: it comes back as `error`.
    *
    * @param {string} key  Assembly key (already validated)
+   * @param {string} [buildKey]  The Build being looked at (already validated): a cut one's version is read
    * @returns {Promise<{ subAssemblies: object[], error?: string }>}
    */
-  async getSubAssemblies(key) {
+  /**
+   * The Assembly's BOM report: the cut version's when `buildKey` is one of its
+   * cut Builds (read once, kept), else the workspace's (kept a minute).
+   * @private
+   */
+  async _reportFor(assembly, key, buildKey, season) {
+    let version = null;
+    if (buildKey) {
+      const build = await this.jiraClient.getIssue(buildKey, {
+        fields: ['issuetype', BuildField.ASSEMBLY_LINK, BuildField.ONSHAPE_VERSION_LINK],
+      }).catch((err) => { if (err?.status === 404) return null; throw err; });
+      const f = build?.fields ?? {};
+      if (f.issuetype?.name === 'Build' && f[BuildField.ASSEMBLY_LINK] === key) {
+        version = /\/documents\/([a-f0-9]{24})\/v\/([a-f0-9]{24})\/e\/([a-f0-9]{24})/i
+          .exec(f[BuildField.ONSHAPE_VERSION_LINK] ?? '');
+      }
+    }
+    return version
+      ? this.bomService.getVersionReport(version[1], version[2], version[3], season)
+      : this.bomService.getBOMReport(null, assembly.documentId, assembly.workspaceId, assembly.elementId, season);
+  }
+
+  async getSubAssemblies(key, buildKey) {
     const assembly = await this.getEpicByKey(key);
     if (!assembly) throw badRequest(`"${key}" is not an Assembly`);
     if (!this.bomService || !assembly.documentId || !assembly.workspaceId || !assembly.elementId) {
@@ -479,11 +488,11 @@ export class EpicService {
     const season = bomContext(assembly);
     let subs;
     try {
-      const report = await this.bomService.getBOMReport(
-        null, assembly.documentId, assembly.workspaceId, assembly.elementId, season,
-      );
+      // A cut Build's sub-assemblies are those of its version; a Draft's (or none named), the workspace's.
+      const report = await this._reportFor(assembly, key, buildKey, season);
       subs = report.subAssemblies ?? [];
     } catch (err) {
+      console.warn('[sub-assemblies]', key, buildKey ?? '(workspace)', 'BOM read failed:', err?.status ?? '', err?.message);
       return { subAssemblies: [], error: describeUpstreamError(err) };
     }
 

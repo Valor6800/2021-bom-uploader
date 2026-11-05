@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { fetchGuide, lookupVendorParts } from '../../api/client.js';
+import { useCallback, useEffect, useState } from 'react';
+import { fetchGuide, fetchPurchasedParts, lookupVendorParts } from '../../api/client.js';
 
 /**
  * Order tickets and vendor listings for these SKUs, by SKU. Empty until
@@ -43,4 +43,29 @@ export function useGuide(buildKey) {
     return () => { live = false; };
   }, [buildKey, attempt]);
   return { ...state, retry: () => setAttempt((n) => n + 1) };
+}
+
+/**
+ * The Build's off-the-shelf parts and hardware (from its OnShape BOM).
+ * `parts` is empty until loaded; `error` says why they couldn't be read
+ * (the request failed, or the server couldn't read the BOM).
+ *
+ * @param {string} assemblyKey
+ * @param {string|null} buildKey
+ * @returns {{ parts: object[], loading: boolean, error: string|null, retry: () => void }}
+ */
+export function usePurchasedParts(assemblyKey, buildKey) {
+  const [state, setState] = useState({ parts: [], loading: false, error: null });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let live = true;
+    if (!assemblyKey || !buildKey) { setState({ parts: [], loading: false, error: null }); return undefined; }
+    setState({ parts: [], loading: true, error: null });
+    fetchPurchasedParts(assemblyKey, buildKey)
+      .then((res) => { if (live) setState({ parts: res.parts ?? [], loading: false, error: res.error ?? null }); })
+      .catch((err) => { if (live) setState({ parts: [], loading: false, error: err?.message || 'the request failed' }); });
+    return () => { live = false; };
+  }, [assemblyKey, buildKey, attempt]);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  return { ...state, retry };
 }

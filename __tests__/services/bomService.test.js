@@ -314,6 +314,7 @@ describe('BOMService._parseBOM — sub-assemblies', () => {
     expect(subAssemblies.map((s) => s.name)).toEqual(['Swerve module']);
     expect(external).toEqual([{
       name: 'M4 bolt', partNumber: '', quantity: 12, sku: null, vendor: null, standard: true,
+      hardware: expect.objectContaining({ kind: 'socket', d: '0.1575' }),
     }]);
   });
 

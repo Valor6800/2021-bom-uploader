@@ -12,6 +12,8 @@ import AssemblyPartRow, { COLUMN_COUNT } from '../components/assembly/AssemblyPa
 import BuildCompare from '../components/assembly/BuildCompare.jsx';
 import PrintView from '../components/assembly/PrintView.jsx';
 import PurchasedParts from '../components/assembly/PurchasedParts.jsx';
+import MissingFiles from '../components/assembly/MissingFiles.jsx';
+import ActivityView from '../components/assembly/ActivityView.jsx';
 import BuildGuide from '../components/assembly/BuildGuide.jsx';
 import KitSheet from '../components/assembly/KitSheet.jsx';
 import BuildReadiness from '../components/assembly/BuildReadiness.jsx';
@@ -297,6 +299,8 @@ function AssemblyPage({ assemblyKey: key }) {
     body = (
       <KitSheet assembly={assembly} build={selectedBuild} guideState={guideState} backTo={viewUrl(null)} guideTo={viewUrl('guide')} />
     );
+  } else if (view === 'activity') {
+    body = <ActivityView assembly={assembly} backTo={viewUrl(null)} />;
   } else if (view === 'print' && selectedBuild) {
     body = <PrintView assembly={assembly} build={selectedBuild} parts={inBuildParts} backTo={viewUrl(null)} />;
   } else {
@@ -358,6 +362,9 @@ function AssemblyPage({ assemblyKey: key }) {
                 <Link to={viewUrl('print')} className="btn btn-secondary">
                   <span aria-hidden="true">🖨 </span>Print
                 </Link>
+                <Link to={viewUrl('activity')} className="btn btn-secondary">
+                  <span aria-hidden="true">🕘 </span>Activity
+                </Link>
                 <Button
                   variant="secondary"
                   onClick={() => { setCloneError(null); setCloneOpen(true); }}
@@ -405,6 +412,8 @@ function AssemblyPage({ assemblyKey: key }) {
             <BuildImage buildKey={selectedBuild.key} label={buildName} />
 
             <BuildReadiness parts={buildParts} buildName={buildName} />
+
+            <MissingFiles build={selectedBuild} parts={buildParts} onDone={data.refresh} />
 
             <div className="parts-table-wrap">
               <table className="table parts-table assembly-table">
@@ -486,7 +495,7 @@ function AssemblyPage({ assemblyKey: key }) {
       </div>
 
       <div className={view === 'print' || view === 'kit' ? 'no-print' : undefined}>
-        <SubAssemblyLinks assemblyKey={key} mode="assemble" />
+        <SubAssemblyLinks assemblyKey={key} mode="assemble" buildKey={selectedKey} ready={data.ready} />
       </div>
 
       {wrongBuild && (

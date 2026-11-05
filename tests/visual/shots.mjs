@@ -1182,13 +1182,61 @@ const INC7_SCENARIOS = [
     bom: true,
     assemble: true,
     skipMainShot: true,
-    api: assemblyApi(),
+    api: assemblyApi({
+      extra: [{
+        method: 'GET',
+        path: '/api/epics/HAR-2030/purchased-parts',
+        respond: () => ({
+          status: 200,
+          body: {
+            parts: [
+              { name: 'Kraken X60 Brushless Motor', partNumber: 'WCP-0940', quantity: 2, sku: 'WCP-0940', vendor: 'WCP', standard: false, hardware: null },
+              { name: '1/2" Hex Clamping Shaft Collar', partNumber: '217-2737', quantity: 4, sku: '217-2737', vendor: 'VEX', standard: false, hardware: null },
+              { name: 'Socket button head cap screw #10-32 x 0.75', partNumber: '', quantity: 12, sku: null, vendor: null, standard: true, hardware: null },
+            ],
+          },
+        }),
+      }, {
+        method: 'GET',
+        path: '/api/guide/HAR-2052',
+        respond: () => ({
+          status: 200,
+          body: {
+            source: 'version',
+            kit: [],
+            steps: [
+              {
+                id: '1', number: 1, name: 'Intake roller', count: 2, hasImage: true,
+                lines: [
+                  { kind: 'made', name: 'Bash bar 2"', number: '0003', total: 2, perUnit: 1 },
+                  { kind: 'hardware', name: 'Socket button head cap screw #10-32 x 0.75', total: 8, perUnit: 4, drawable: true },
+                ],
+              },
+              {
+                id: 'root', number: 2, name: 'Test Assembly', count: 1, hasImage: false,
+                lines: [{ kind: 'step', name: 'Intake roller', stepId: '1', total: 2, perUnit: 2 }],
+              },
+            ],
+          },
+        }),
+      },
+      { method: 'GET', path: /^\/api\/guide\/HAR-2052\/image\/1$/, respond: pngFixture('part-iso.png') }],
+    }),
     waitFor: '.print-sheet',
     async run(page, ctx) {
       await expectText(page, 'VF27A-0000A Test Assembly — Build 2 (Active)');
       await expectText(page, 'Printed 2026-10-30');
       await expectText(page, 'OnShape link: https://cad.onshape.com/documents/');
-      assertEqual(await page.locator('.print-table tbody tr').count(), 2, 'two Parts in Build 2');
+      assertEqual(await page.locator('.print-table').first().locator('tbody tr').count(), 2, 'two Parts in Build 2');
+      await expectText(page, 'Off-the-shelf (2)');
+      await expectText(page, 'Hardware (1)');
+      assertEqual(await page.locator('.print-table:not(.print-step-table)').count(), 3, 'Parts, off-the-shelf and hardware tables');
+      await expectText(page, 'Socket button head cap screw #10-32 x 0.75');
+      await page.locator('.print-guide').waitFor();
+      await expectText(page, 'Step 1: Intake roller (make 2)');
+      await expectText(page, 'Step 2: Put together Test Assembly');
+      await expectText(page, 'Intake roller (from an earlier step)');
+      assertEqual(await page.locator('.print-step-image').count(), 1, 'one step picture');
       assertEqual(await page.locator('.print-table input').count(), 0, 'the tick column is not interactive');
       await ctx.shot('print-preview');
       await page.emulateMedia({ media: 'print' });

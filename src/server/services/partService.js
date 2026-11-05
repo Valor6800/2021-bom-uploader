@@ -14,6 +14,7 @@ import { configurationFrom } from '../utils/onshapeConfiguration.js';
 import { nextRevisionLetter } from './revisionService.js';
 import { cutBuildsAmong, sharedPartConflict, usedInKeys } from '../utils/cutBuilds.js';
 import { baseNumber } from '../utils/partChain.js';
+import { isPartFile, missingFiles } from '../utils/partFileCheck.js';
 
 const JIRA_PROJECT = process.env.PROJECT_KEY ?? process.env.JIRA_PROJECT ?? 'VAL';
 
@@ -157,12 +158,12 @@ export class PartService {
    * @param {string[]} keys
    * @returns {Promise<object[]>}
    */
-  async getStoriesByKeys(keys) {
+  async getStoriesByKeys(keys, { files = false } = {}) {
     if (!Array.isArray(keys) || keys.length === 0) return [];
 
     const safeKeys = keys.map((k) => sanitizeJQL(k)).join(', ');
     const jql = `project = ${JIRA_PROJECT} AND issuetype = Part AND key in (${safeKeys})`;
-    const issues = await this.jiraClient.searchIssues(jql, { paginate: true });
+    const issues = await this.jiraClient.searchIssues(jql, { paginate: true, ...(files ? { fields: ['*navigable', 'attachment'] } : {}) });
     return this._parseStories(issues);
   }
 
@@ -206,7 +207,41 @@ export class PartService {
       priority: source.priority && source.priority !== 'Medium' ? source.priority : undefined,
     });
     const part = partFromWritten(key, source.summary, fields);
-    return { key, fullPartNumber: part.fullPartNumber, part };
+    const filesCopied = await this._copyPartFiles(sourceKey, key, part.fullPartNumber);
+    return { key, fullPartNumber: part.fullPartNumber, part, filesCopied };
+  }
+
+  /**
+   * A spare is the same part, so it gets the original's files (picture,
+   * drawings, DXFs, STEP) copied from its ticket: no OnShape call, and the
+   * same files the original was cut with. Never throws.
+   *
+   * @returns {Promise<{ copied: string[], problems: string[] }>}
+   * @private
+   */
+  async _copyPartFiles(sourceKey, key, partNumber) {
+    const copied = [];
+    const problems = [];
+    let attachments = [];
+    try {
+      attachments = (await this.jiraClient.getIssue(sourceKey, { fields: ['attachment'] }))?.fields?.attachment ?? [];
+    } catch (err) {
+      console.warn('[spare] could not read', sourceKey, 'to copy its files:', err?.status, err?.message);
+      return { copied, problems: [`couldn't read ${sourceKey}'s files`] };
+    }
+    for (const a of attachments.filter((x) => isPartFile(x?.filename, partNumber) && x?.content)) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const data = await this.jiraClient.getAttachmentContent(a.content);
+        // eslint-disable-next-line no-await-in-loop
+        await this.jiraClient.addAttachment(key, a.filename, data);
+        copied.push(a.filename);
+      } catch (err) {
+        console.warn('[spare] could not copy', a.filename, 'to', key, ':', err?.status, err?.message);
+        problems.push(a.filename);
+      }
+    }
+    return { copied, problems };
   }
 
   /**
@@ -646,6 +681,10 @@ export class PartService {
         // Only when the search asked for attachments: undefined means "not known".
         ...(Array.isArray(issue.fields?.attachment) ? { files: issue.fields.attachment.map((a) => a.filename) } : {}),
       });
+      // What of the cut's files it lacks (a picture, its drawings, a DXF, a STEP), when its files are known.
+      const last = stories[stories.length - 1];
+      const gaps = missingFiles(last);
+      if (gaps) last.filesMissing = gaps;
     }
     return stories;
   }

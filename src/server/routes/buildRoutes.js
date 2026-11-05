@@ -10,6 +10,7 @@
  * POST /api/builds/:key/parts
  * POST /api/builds/:key/save
  * POST /api/builds/:key/cut-version
+ * POST /api/builds/:key/files
  * POST /api/builds/:key/archive
  */
 
@@ -97,6 +98,21 @@ function validateSaveBody(body) {
 }
 
 /** Throw a 400 naming `field` unless `value` is a valid key of this project. */
+/** A save's results in words ("2 Parts made, 1 updated"), or '' when nothing was done. */
+export function saveSummary(results) {
+  const ok = (op) => (results ?? []).filter((r) => r.op === op && r.ok).length;
+  const failed = (results ?? []).filter((r) => !r.ok).length;
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const parts = [
+    ok('create') && plural(ok('create'), 'Part made', 'Parts made'),
+    ok('copy') && plural(ok('copy'), 'copy made', 'copies made'),
+    ok('update') && plural(ok('update'), 'Part changed', 'Parts changed'),
+    ok('link') && plural(ok('link'), 'Part added', 'Parts added'),
+  ].filter(Boolean);
+  if (!parts.length) return '';
+  return `${parts.join(', ')}${failed ? ` (${failed} failed)` : ''}`;
+}
+
 function requireKey(field, value) {
   const check = validateIssueKey(value);
   if (!check.valid) throw badRequest(`${field}: ${check.error}`);
@@ -107,7 +123,7 @@ function requireKey(field, value) {
  * @param {import('../services/buildService.js').BuildService} deps.buildService
  * @returns {Router}
  */
-export default function buildRoutes({ buildService }) {
+export default function buildRoutes({ buildService, activityLog }) {
   const router = Router();
 
   /**
@@ -210,6 +226,10 @@ export default function buildRoutes({ buildService }) {
     }
 
     res.json({ build, linked, failed, cloneError });
+    activityLog?.record({
+      assemblyKey, buildKey: build?.key, user: req.user, action: 'build',
+      text: `made {build}${cloneFromBuildKey ? ` from ${cloneFromBuildKey}` : ''}`,
+    });
   }));
 
   /**
@@ -256,6 +276,8 @@ export default function buildRoutes({ buildService }) {
       buildKey: req.params.key, creates, updates, links, copies,
     });
     res.json(result);
+    const done = saveSummary(result.results);
+    if (done) activityLog?.record({ buildKey: req.params.key, user: req.user, action: 'save', text: `saved {build}: ${done}` });
   }));
 
   /**
@@ -277,6 +299,33 @@ export default function buildRoutes({ buildService }) {
       assemblyKey,
     });
     res.json(result);
+    const superseded = (result.superseded ?? []).map((b) => b?.key ?? b).filter(Boolean);
+    activityLog?.record({
+      assemblyKey,
+      buildKey: req.params.key,
+      user: req.user,
+      action: 'cut',
+      text: `cut {build} from OnShape${result.resumed ? ' (finishing an earlier try)' : ''}`
+        + `${superseded.length ? `; ${superseded.join(', ')} superseded` : ''}`,
+    });
+  }));
+
+  /**
+   * POST /api/builds/:key/files
+   * Make the files a cut Build's Parts are missing (picture, drawings, DXF,
+   * STEP), in the background. → { queued: [partKey], missing: { partKey: [kind] } };
+   * 409 for a Draft.
+   */
+  router.post('/:key/files', asyncHandler(async (req, res) => {
+    requireKey('key', req.params.key);
+    const result = await buildService.queueMissingFiles(req.params.key);
+    res.json(result);
+    if (result.queued.length) {
+      activityLog?.record({
+        buildKey: req.params.key, user: req.user, action: 'files',
+        text: `asked for the missing files of ${result.queued.length} Part${result.queued.length === 1 ? '' : 's'} in {build}`,
+      });
+    }
   }));
 
   /**
@@ -285,6 +334,7 @@ export default function buildRoutes({ buildService }) {
   router.post('/:key/archive', asyncHandler(async (req, res) => {
     requireKey('key', req.params.key);
     await buildService.archiveBuild(req.params.key);
+    activityLog?.record({ buildKey: req.params.key, user: req.user, action: 'archive', text: 'archived {build}' });
     res.json({ success: true });
   }));
 

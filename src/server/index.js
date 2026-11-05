@@ -30,6 +30,8 @@ import { PurchasingService } from './services/purchasingService.js';
 import { ReceivingService } from './services/receivingService.js';
 import { AssemblyGuides } from './services/assemblyGuides.js';
 import { VendorCatalog } from './services/vendorCatalog.js';
+import { ActivityLog } from './services/activityLog.js';
+import { VersionStore } from './utils/versionStore.js';
 import { onshapeUsage } from './utils/onshapeUsage.js';
 
 // Routes
@@ -84,7 +86,7 @@ try {
 // ---------------------------------------------------------------------------
 // Instantiate services (dependency injection)
 // ---------------------------------------------------------------------------
-const bomService = new BOMService({ onshapeClient });
+const bomService = new BOMService({ onshapeClient, versionStore: new VersionStore() });
 // Built before PartService, which scopes Part reads to the Revision chain.
 const revisionService = new RevisionService({ jiraClient });
 const partNumbers = new PartNumbers({ jiraClient });
@@ -104,6 +106,7 @@ const buildService = new BuildService({
 const epicService = new EpicService({ jiraClient, onshapeClient, buildService, bomService });
 const guides = new AssemblyGuides({ jiraClient, onshapeClient, bomService, epicService, partFiles });
 const vendorCatalog = new VendorCatalog({ jiraClient });
+const activityLog = new ActivityLog({ jiraClient });
 
 const orderSheetService = sheetsClient ? new OrderSheetService({ sheetsClient }) : null;
 const purchasingService = orderSheetService
@@ -179,12 +182,12 @@ app.use(teamGate);
 // ---------------------------------------------------------------------------
 // Team API — the BOM features (behind the team gate above)
 // ---------------------------------------------------------------------------
-app.use('/api/epics', epicRoutes({ epicService }));
-app.use('/api/builds', buildRoutes({ buildService }));
+app.use('/api/epics', epicRoutes({ epicService, activityLog }));
+app.use('/api/builds', buildRoutes({ buildService, activityLog }));
 app.use('/api/pictures', pictureRoutes({ pictures, fileJobs }));
 app.use('/api', guideRoutes({ guides, vendorCatalog }));
 app.use('/api/revisions', revisionRoutes({ revisionService }));
-app.use('/api', partRoutes({ partService, exportService }));
+app.use('/api', partRoutes({ partService, exportService, activityLog }));
 app.use('/api/bom', bomRoutes({ bomService }));
 app.use('/api/export', exportRoutes({ exportService }));
 

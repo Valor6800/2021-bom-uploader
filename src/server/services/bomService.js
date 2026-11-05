@@ -13,6 +13,7 @@ import { OnshapeProperty } from '../utils/onshapeProperties.js';
 import { cleanConfiguration } from '../utils/onshapeConfiguration.js';
 import { powdercoatFromAppearance } from '../utils/appearance.js';
 import { skuOf } from '../utils/vendorSku.js';
+import { hardwareOf, hardwareQuery } from '../utils/hardwareSpec.js';
 
 const REQUIRED_COLUMNS = ['quantity', 'partNumber', 'material', 'name'];
 
@@ -155,9 +156,12 @@ export class BOMService {
   /**
    * @param {object} deps
    * @param {import('../clients/onshapeClient.js').OnshapeClient} deps.onshapeClient
+   * @param {import('../utils/versionStore.js').VersionStore} [deps.versionStore]
+   *   Keeps version BOMs on disk, so a restart doesn't read them again
    */
-  constructor({ onshapeClient }) {
+  constructor({ onshapeClient, versionStore = null }) {
     this.onshapeClient = onshapeClient;
+    this.versionStore = versionStore;
   }
 
   /**
@@ -188,13 +192,23 @@ export class BOMService {
     return this._workspaceBOM(cacheKey, documentId, workspaceId, elementId, configuration);
   }
 
-  /** The raw BOM at a version: fetched once per version, ever, shared the same way. */
+  /**
+   * The raw BOM at a version: fetched once per version, ever, shared the same
+   * way; kept on disk too when there's a store, so a restart doesn't fetch it again.
+   */
   _versionBOM(cacheKey, documentId, versionId, elementId, configuration) {
     const hit = VERSION_CACHE.get(cacheKey);
     if (hit) return hit;
-    const promise = this.onshapeClient.getAssemblyBOMAtVersion(
-      documentId, versionId, elementId, ...(configuration ? [{ configuration }] : []),
-    );
+    const store = this.versionStore;
+    const promise = (async () => {
+      const kept = store ? await store.get(cacheKey) : null;
+      if (kept) return kept;
+      const raw = await this.onshapeClient.getAssemblyBOMAtVersion(
+        documentId, versionId, elementId, ...(configuration ? [{ configuration }] : []),
+      );
+      if (store && raw) store.set(cacheKey, raw);
+      return raw;
+    })();
     VERSION_CACHE.set(cacheKey, promise);
     promise.catch(() => VERSION_CACHE.delete(cacheKey));
     return promise;
@@ -462,6 +476,9 @@ export class BOMService {
         const sku = skuOf({
           partNumber: readValue(item, keys.partNumber), name: readValue(item, keys.name), description: readValue(item, 'description'),
         });
+        const hardware = hardwareOf({
+          name: readValue(item, keys.name), description: readValue(item, 'description'), configuration: source.configuration,
+        });
         external.set(id, {
           name: readValue(item, keys.name),
           partNumber: readValue(item, keys.partNumber),
@@ -470,6 +487,8 @@ export class BOMService {
           vendor: readValue(item, 'vendor') || sku?.vendor || null,
           // OnShape's standard content: screws, nuts, washers (kitting hardware).
           standard: source.isStandardContent === true,
+          // A screw, nut, spacer or bearing the tool can draw: its picture's query.
+          hardware: hardware ? hardwareQuery(hardware) : null,
         });
       }
     };

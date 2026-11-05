@@ -25,7 +25,8 @@ const R = unit(cross(V, [0, 0, 1]));         // screen right
 const U = cross(R, V);                       // screen up
 const LIGHT = unit(add(EYE, [0.3, 0.2, 0.6]));
 
-class Iso {
+/** The isometric canvas: a z-buffer (and, for `outline`, which surface each pixel shows). */
+export class Iso {
   constructor(points, { width = 800, height = 600, margin = 40 } = {}) {
     let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
     for (const p of points) {
@@ -38,6 +39,8 @@ class Iso {
     this.w = width; this.h = height;
     this.z = new Float64Array(width * height).fill(Infinity);
     this.rgb = new Uint8ClampedArray(width * height * 4).fill(255);
+    /** Surface id per pixel (-1: background), for triangles drawn with one. */
+    this.ids = new Int32Array(width * height).fill(-1);
   }
   /** Screen x, y and depth (smaller is nearer). */
   at(p) { return [this.ox + dot(p, R) * this.k, this.oy - dot(p, U) * this.k, dot(p, V)]; }
@@ -46,7 +49,8 @@ class Iso {
     const i = 0.38 + 0.62 * Math.max(0, dot(unit(m), LIGHT));
     return color.map((c) => Math.round(c * i));
   }
-  tri(a, b, c, color) {
+  /** A filled triangle; `id` names the surface it belongs to, for `outline`. */
+  tri(a, b, c, color, id = 0) {
     const [A, B, C] = [this.at(a), this.at(b), this.at(c)];
     const minX = Math.max(0, Math.floor(Math.min(A[0], B[0], C[0])));
     const maxX = Math.min(this.w - 1, Math.ceil(Math.max(A[0], B[0], C[0])));
@@ -65,7 +69,38 @@ class Iso {
         const i = y * this.w + x;
         if (z >= this.z[i]) continue;
         this.z[i] = z;
+        this.ids[i] = id;
         this.rgb.set([color[0], color[1], color[2], 255], i * 4);
+      }
+    }
+  }
+  /**
+   * Edge lines from the picture itself: wherever a pixel and its neighbour
+   * show different surfaces (or one shows nothing), so a solid's outline and
+   * its creases are drawn without knowing its edges.
+   */
+  outline(color = [40, 44, 52], width = 1) {
+    const { w, h, ids } = this;
+    const mark = new Uint8Array(w * h);
+    for (let y = 0; y < h; y += 1) {
+      for (let x = 0; x < w; x += 1) {
+        const i = y * w + x;
+        if ((x + 1 < w && ids[i] !== ids[i + 1]) || (y + 1 < h && ids[i] !== ids[i + w])) {
+          // The line goes on the nearer side's pixel (the one with a surface).
+          const j = ids[i] === -1 ? (x + 1 < w && ids[i + 1] !== -1 ? i + 1 : i + w) : i;
+          mark[j] = 1;
+        }
+      }
+    }
+    const r = Math.max(0, Math.round(width) - 1);
+    for (let i = 0; i < w * h; i += 1) {
+      if (!mark[i]) continue;
+      const x = i % w; const y = (i - x) / w;
+      for (let dy = -r; dy <= r; dy += 1) {
+        for (let dx = -r; dx <= r; dx += 1) {
+          const xx = x + dx; const yy = y + dy;
+          if (xx >= 0 && yy >= 0 && xx < w && yy < h) this.rgb.set([color[0], color[1], color[2], 255], (yy * w + xx) * 4);
+        }
       }
     }
   }

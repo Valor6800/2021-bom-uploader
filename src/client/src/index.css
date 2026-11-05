@@ -1810,6 +1810,13 @@ a { color: inherit; text-decoration: none; }
 }
 .print-title { font-size: var(--text-lg); font-weight: 700; color: #111111; }
 .print-meta { font-size: var(--text-sm); color: #333333; margin-top: var(--space-1); word-break: break-all; }
+.print-subtitle { margin: var(--space-5) 0 0; font-size: var(--text-md); color: #111111; break-after: avoid; }
+.print-steps { list-style: none; margin: 0; padding: 0; }
+.print-step { break-inside: avoid; margin-top: var(--space-4); }
+.print-step-title { margin: 0; font-size: var(--text-sm); color: #111111; }
+.print-step-body { display: flex; gap: var(--space-4); align-items: flex-start; }
+.print-step-image { width: 200px; height: auto; flex: none; margin-top: var(--space-4); border: 1px solid #cccccc; }
+.print-step-table { flex: 1; }
 .print-table { width: 100%; margin-top: var(--space-4); border-collapse: collapse; font-size: var(--text-sm); }
 .print-table th,
 .print-table td { border: 1px solid #555555; padding: var(--space-1) var(--space-2); text-align: left; color: #111111; }

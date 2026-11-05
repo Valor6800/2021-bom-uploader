@@ -30,9 +30,19 @@ const product = (handle, variants, extra = {}) => ({
   handle, title: `Title ${handle}`, featured_image: '//cdn.shopify.com/s/files/x.png', available: true, price: 2499, variants, ...extra,
 });
 
+/** A store's SKU search address, as the catalog builds it. */
+const search = (host, sku) => `https://${host}/search/suggest.json?${new URLSearchParams({
+  q: sku, 'resources[type]': 'product', 'resources[limit]': '4', 'resources[options][fields]': 'variants.sku',
+})}`;
+const found = (...products) => ({ resources: { results: { products } } });
+const hit = (handle, extra = {}) => ({
+  handle, title: `Title ${handle}`, price: '24.99', price_min: '24.99', price_max: '24.99', available: true,
+  image: 'https://cdn.shopify.com/s/files/x.png?v=1', ...extra,
+});
+
 describe('VendorCatalog.lookup', () => {
-  it('finds the listing named after the SKU and the order tickets with that exact SKU', async () => {
-    const http = fakeHttp({ 'https://wcproducts.com/products/wcp-1706.js': product('wcp-1706', [{ sku: 'WCP-1706', price: 2499, available: true }]) });
+  it('finds the listing by SKU search and the order tickets with that exact SKU', async () => {
+    const http = fakeHttp({ [search('wcproducts.com', 'WCP-1706')]: found(hit('wcp-1706')) });
     const jiraClient = jiraWith([order('PARTS-2', 'WCP-1706'), order('PARTS-1', 'WCP-17060')]);
     const { results } = await new VendorCatalog({ jiraClient, http }).lookup([{ sku: 'wcp-1706' }]);
     expect(results['WCP-1706']).toMatchObject({
@@ -45,17 +55,34 @@ describe('VendorCatalog.lookup', () => {
     expect(jql).toBe('project = PARTS AND (cf[10203] ~ "\\"WCP-1706\\"") ORDER BY created DESC');
   });
 
-  it('keeps a search result only when one of its variants is this SKU', async () => {
-    const suggest = 'https://wcproducts.com/search/suggest.json?q=WCP-0001&resources%5Btype%5D=product&resources%5Blimit%5D=4';
+  it('prefers the product named after the SKU, and claims no price when its variants differ', async () => {
     const http = fakeHttp({
-      [suggest]: { resources: { results: { products: [{ handle: 'bundle' }, { handle: 'tubing' }] } } },
-      'https://wcproducts.com/products/bundle.js': product('bundle', [{ sku: 'BND-1' }]),
-      'https://wcproducts.com/products/tubing.js': product('tubing', [{ id: 7, sku: 'WCP-0002', title: '1x1', price: 100 }, { id: 8, sku: 'WCP-0001', title: '2x2', price: 3999, available: false }]),
+      [search('andymark.com', 'AM-3945')]: found(
+        hit('compliant-wheels', { price_min: '6.20', price_max: '9.10' }),
+        hit('am-3945', { title: 'Exact', price: '7.00', price_min: '7.00', price_max: '7.00' }),
+      ),
+      [search('store.ctr-electronics.com', '24-676873')]: found(hit('candi', { price_min: '73.49', price_max: '80.00', available: false })),
     });
-    const { results } = await new VendorCatalog({ jiraClient: jiraWith(), http }).lookup([{ sku: 'WCP-0001' }]);
-    expect(results['WCP-0001'].catalog).toEqual({
-      title: 'Title tubing — 2x2', price: 39.99, available: false, url: 'https://wcproducts.com/products/tubing?variant=8', hasImage: true,
+    const { results } = await new VendorCatalog({ jiraClient: jiraWith(), http }).lookup([{ sku: 'AM-3945' }, { sku: '24-676873' }]);
+    expect(results['AM-3945']).toMatchObject({ vendor: 'Andymark', catalog: { title: 'Exact', price: 7, url: 'https://andymark.com/products/am-3945' } });
+    expect(results['24-676873']).toMatchObject({ vendor: 'CTR Electronics', catalog: { title: 'Title candi', price: null, available: false } });
+  });
+
+  it('reads REV from its product page, only when the page names this SKU', async () => {
+    const page = (sku) => `<meta property="og:title" content="Surgical Tubing &amp; More" />
+      <meta property="og:image" content="https://cdn11.bigcommerce.com/s-x/products/227/a.png?c=2" />
+      <meta property="product:price:amount" content="7.75" />
+      <script type="application/ld+json">{"sku": "${sku}", "offers": {"availability" : "https://schema.org/InStock"}}</script>`;
+    const http = fakeHttp({
+      'https://www.revrobotics.com/rev-41-1163/': page('REV-41-1163'),
+      'https://www.revrobotics.com/rev-11-1956/': page('REV-11-9999'),
     });
+    const { results } = await new VendorCatalog({ jiraClient: jiraWith(), http }).lookup([{ sku: 'REV-41-1163' }, { sku: 'REV-11-1956' }]);
+    expect(results['REV-41-1163'].catalog).toEqual({
+      title: 'Surgical Tubing & More', price: 7.75, available: true, url: 'https://www.revrobotics.com/rev-41-1163/', hasImage: true,
+    });
+    expect(results['REV-11-1956'].catalog).toBeNull();
+    expect(results['REV-11-1956'].productUrl).toBe('https://www.revrobotics.com/rev-11-1956/');
   });
 
   it('uses a ticket link on a known store, but claims no price for a product with other variants', async () => {
@@ -76,14 +103,37 @@ describe('VendorCatalog.lookup', () => {
     expect(http.get.mock.calls.every(([url]) => url.startsWith('https://wcproducts.com/'))).toBe(true);
   });
 
+  it('leaves a store alone after a 429, without remembering the SKU as missing', async () => {
+    const url = search('wcproducts.com', 'WCP-0001');
+    const http = fakeHttp({ [url]: 429 });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const catalog = new VendorCatalog({ jiraClient: jiraWith(), http });
+    expect((await catalog.lookup([{ sku: 'WCP-0001' }])).results['WCP-0001'].catalog).toBeNull();
+    expect((await catalog.lookup([{ sku: 'WCP-0001' }, { sku: 'WCP-0002' }])).results['WCP-0002'].catalog).toBeNull();
+    expect(http.get).toHaveBeenCalledTimes(1);
+    // Once the wait is over, the same SKU is asked again.
+    catalog._backoff.clear();
+    http.get.mockClear();
+    await catalog.lookup([{ sku: 'WCP-0001' }]);
+    expect(http.get).toHaveBeenCalledWith(url, expect.anything());
+    warn.mockRestore();
+  });
+
   it('asks no store for a vendor it cannot read, and still answers when the order search fails', async () => {
     const http = fakeHttp({});
     const jiraClient = { searchIssues: jest.fn().mockRejectedValue(Object.assign(new Error('down'), { status: 503 })) };
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const { results } = await new VendorCatalog({ jiraClient, http }).lookup([{ sku: 'REV-21-1650' }]);
+    const { results } = await new VendorCatalog({ jiraClient, http }).lookup([{ sku: '217-2737' }, { sku: '91251A540' }]);
     warn.mockRestore();
     expect(http.get).not.toHaveBeenCalled();
-    expect(results['REV-21-1650']).toMatchObject({ vendor: 'Rev', orders: null, catalog: null, productUrl: 'https://www.revrobotics.com/rev-21-1650/' });
+    expect(results['217-2737']).toMatchObject({ vendor: 'VEX', orders: null, catalog: null, productUrl: 'https://www.vexrobotics.com/217-2737.html' });
+    expect(results['91251A540']).toMatchObject({ vendor: 'McMaster-Carr', productUrl: 'https://www.mcmaster.com/91251A540/' });
+  });
+
+  it('offers the tool\'s drawing when an order describes hardware and the vendor has no picture', async () => {
+    const jiraClient = jiraWith([order('PARTS-5', '91251A354', { summary: 'Black-Oxide Alloy Steel Socket Head Screw 10-32 Thread Size, 2-1/4" Long' })]);
+    const { results } = await new VendorCatalog({ jiraClient, http: fakeHttp({}) }).lookup([{ sku: '91251A354' }]);
+    expect(results['91251A354'].drawing).toMatchObject({ kind: 'socket', finish: 'black', length: '2.25' });
   });
 
   it('drops SKUs that are not plain part numbers', async () => {
@@ -94,7 +144,7 @@ describe('VendorCatalog.lookup', () => {
   });
 
   it('remembers a listing, so a second page load asks the store nothing', async () => {
-    const http = fakeHttp({ 'https://wcproducts.com/products/wcp-1706.js': product('wcp-1706', [{ sku: 'WCP-1706' }]) });
+    const http = fakeHttp({ [search('wcproducts.com', 'WCP-1706')]: found(hit('wcp-1706')) });
     const catalog = new VendorCatalog({ jiraClient: jiraWith(), http });
     await catalog.lookup([{ sku: 'WCP-1706' }]);
     await catalog.lookup([{ sku: 'WCP-1706' }]);
@@ -106,17 +156,17 @@ describe('VendorCatalog.image', () => {
   it('fetches the listing picture from the store CDN, small', async () => {
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
     const http = fakeHttp({
-      'https://wcproducts.com/products/wcp-1706.js': product('wcp-1706', [{ sku: 'WCP-1706' }]),
-      'https://cdn.shopify.com/s/files/x.png?width=300': { body: png, type: 'image/png' },
+      [search('wcproducts.com', 'WCP-1706')]: found(hit('wcp-1706')),
+      'https://cdn.shopify.com/s/files/x.png?v=1&width=300': { body: png, type: 'image/png' },
     });
-    const found = await new VendorCatalog({ jiraClient: jiraWith(), http }).image('WCP-1706');
-    expect(found).toEqual({ image: png, contentType: 'image/png' });
+    const found2 = await new VendorCatalog({ jiraClient: jiraWith(), http }).image('WCP-1706');
+    expect(found2).toEqual({ image: png, contentType: 'image/png' });
   });
 
   it('refuses a picture that is off the store CDN or not an image', async () => {
     const http = fakeHttp({
-      'https://wcproducts.com/products/wcp-1.js': product('wcp-1', [{ sku: 'WCP-1' }], { featured_image: 'https://evil.example/x.png' }),
-      'https://wcproducts.com/products/wcp-2.js': product('wcp-2', [{ sku: 'WCP-2' }], { featured_image: 'https://cdn.shopify.com/y.svg' }),
+      [search('wcproducts.com', 'WCP-1')]: found(hit('wcp-1', { image: 'https://evil.example/x.png' })),
+      [search('wcproducts.com', 'WCP-2')]: found(hit('wcp-2', { image: 'https://cdn.shopify.com/y.svg' })),
       'https://cdn.shopify.com/y.svg?width=300': { body: Buffer.from('<svg/>'), type: 'image/svg+xml' },
     });
     const catalog = new VendorCatalog({ jiraClient: jiraWith(), http });

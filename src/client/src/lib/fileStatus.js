@@ -26,7 +26,7 @@ export function addWatch(watching, added) {
  * Sort the watched Parts by a status answer.
  *
  * A Part the server doesn't know (it restarted) is let go without a word:
- * Update from CAD queues any Part still missing files.
+ * the Assembly page lists any Part still missing files once its Build is cut.
  *
  * @param {{ key: string, name: string }[]} watching
  * @param {Record<string, { state: string, problems: string[] }>} statuses
@@ -49,5 +49,5 @@ export function settle(watching, statuses) {
 export function failureText(failed) {
   if (failed.length === 0) return '';
   const names = failed.map((f) => f.name).join(', ');
-  return `Couldn't attach all the files to ${names}. Update from CAD tries again.`;
+  return `Couldn't attach all the files to ${names}. Once the Build is cut, the Assembly page can make them again.`;
 }

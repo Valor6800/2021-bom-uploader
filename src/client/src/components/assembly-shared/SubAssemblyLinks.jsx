@@ -15,14 +15,17 @@ import { TrackerKey } from './AssemblyHeader.jsx';
  * @param {object} props
  * @param {string} props.assemblyKey
  * @param {'design'|'assemble'} props.mode  Which page the links open
+ * @param {string|null} [props.buildKey]  The Build shown: a cut one's sub-assemblies are its version's
+ * @param {boolean} [props.ready]  False until the Build is known, so the BOM is read once, for the right Build
  */
-export default function SubAssemblyLinks({ assemblyKey, mode }) {
+export default function SubAssemblyLinks({ assemblyKey, mode, buildKey = null, ready = true }) {
   const [state, setState] = useState({ loading: true, subs: [], error: null });
 
   useEffect(() => {
     let live = true;
     setState({ loading: true, subs: [], error: null });
-    fetchSubAssemblies(assemblyKey)
+    if (!ready) return undefined;
+    fetchSubAssemblies(assemblyKey, buildKey)
       .then((res) => {
         if (live) setState({ loading: false, subs: res.subAssemblies ?? [], error: res.error ?? null });
       })
@@ -30,7 +33,7 @@ export default function SubAssemblyLinks({ assemblyKey, mode }) {
         if (live) setState({ loading: false, subs: [], error: friendlyClause(err) });
       });
     return () => { live = false; };
-  }, [assemblyKey]);
+  }, [assemblyKey, buildKey, ready]);
 
   if (state.loading) return null;
   if (state.error) {

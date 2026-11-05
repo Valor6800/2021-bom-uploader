@@ -6,6 +6,8 @@
  * GET /api/pictures/cad?d&wvm&wvmid&e&p[&c][&mv][&rgb]
  *                                a part as it is in OnShape now, drawn from its shape (the Designer's)
  * GET /api/pictures/build/:key   a Build's Assembly picture (?fresh=1 draws a Draft again)
+ * GET /api/pictures/hardware?kind&finish&d&length&head&headHeight&od&id[&hex][&flange][&size=large]
+ *                                a screw, nut, washer, spacer or bearing drawn by the tool (no OnShape call)
  * GET /api/pictures/status?keys= where the background file jobs for Part tickets stand
  */
 
@@ -14,6 +16,12 @@ import { validateIssueKey } from '../utils/validators.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { badRequest } from '../middleware/httpError.js';
 import { isConfigurationText } from '../utils/onshapeConfiguration.js';
+import { hardwareFromQuery } from '../utils/hardwareSpec.js';
+import { hardwarePicture } from '../utils/hardwarePicture.js';
+
+/** Hardware pictures drawn lately, by query: a page shows the same screw many times. */
+const HARDWARE_CACHE = new Map();
+const MAX_HARDWARE = 200;
 
 const ID = /^[a-f0-9]{24}$/i;
 const PART_ID = /^[A-Za-z0-9+/=_-]{1,32}$/;
@@ -85,6 +93,24 @@ export default function pictureRoutes({ pictures, fileJobs }) {
     res.set('X-Content-Type-Options', 'nosniff');
     res.send(image);
   }));
+
+  router.get('/hardware', (req, res) => {
+    const spec = hardwareFromQuery(req.query);
+    if (!spec) throw badRequest('Not a piece of hardware the tool can draw.');
+    const large = req.query.size === 'large';
+    const key = `${JSON.stringify(spec)}:${large ? 'L' : ''}`;
+    let image = HARDWARE_CACHE.get(key);
+    if (!image) {
+      image = hardwarePicture(spec, large ? { width: 1200, height: 900 } : { width: 400, height: 300 });
+      HARDWARE_CACHE.set(key, image);
+      if (HARDWARE_CACHE.size > MAX_HARDWARE) HARDWARE_CACHE.delete(HARDWARE_CACHE.keys().next().value);
+    }
+    res.set('Content-Type', 'image/png');
+    // Drawn from the address alone: the same address is always the same picture.
+    res.set('Cache-Control', 'private, max-age=604800, immutable');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.send(image);
+  });
 
   router.get('/build/:key', asyncHandler(async (req, res) => {
     requireKey(req.params.key);

@@ -319,6 +319,33 @@ export class JiraClient {
   }
 
   /**
+   * Add a comment to an issue.
+   * @param {string} key
+   * @param {string} body  Plain text (Jira wiki markup)
+   * @returns {Promise<void>}
+   */
+  async addComment(key, body) {
+    const endpoint = `issueComments.addComment(${key})`;
+    return this._retry(async () => {
+      await this.client.issueComments.addComment({ issueIdOrKey: key, body });
+    }, endpoint);
+  }
+
+  /**
+   * An issue's comments, oldest first (at most `max`).
+   * @param {string} key
+   * @param {{ max?: number }} [options]
+   * @returns {Promise<{ id: string, body: string, created: string, author?: object }[]>}
+   */
+  async getComments(key, { max = 1000 } = {}) {
+    const endpoint = `issueComments.getComments(${key})`;
+    return this._retry(async () => {
+      const res = await this.client.issueComments.getComments({ issueIdOrKey: key, startAt: 0, maxResults: max });
+      return res?.comments ?? [];
+    }, endpoint);
+  }
+
+  /**
    * Attach a file to an issue.
    *
    * @param {string} key       Issue key
